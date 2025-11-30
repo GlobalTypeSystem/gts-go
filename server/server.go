@@ -41,6 +41,7 @@ func NewServer(store *gts.GtsStore, host string, port int, verbose int) *Server 
 func (s *Server) registerRoutes() {
 	// Entity management
 	s.mux.HandleFunc("GET /entities", s.handleGetEntities)
+	s.mux.HandleFunc("GET /entities/{id}", s.handleGetEntity)
 	s.mux.HandleFunc("POST /entities", s.handleAddEntity)
 	s.mux.HandleFunc("POST /entities/bulk", s.handleAddEntities)
 	s.mux.HandleFunc("POST /schemas", s.handleAddSchema)

@@ -6,7 +6,9 @@ Released under Apache License 2.0
 package server
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/GlobalTypeSystem/gts-go/gts"
 )
@@ -26,6 +28,25 @@ func (s *Server) handleGetEntities(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) handleGetEntity(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		s.writeError(w, http.StatusBadRequest, "Missing entity ID")
+		return
+	}
+
+	entity := s.store.Get(id)
+	if entity == nil {
+		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Entity not found: %s", id))
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"id":      entity.GtsID.ID,
+		"content": entity.Content,
+	})
+}
+
 func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 	var content map[string]any
 	if err := s.readJSON(r, &content); err != nil {
@@ -38,6 +59,54 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]any{
 			"ok":    false,
 			"error": "Unable to extract GTS ID from entity",
+		})
+		return
+	}
+
+	// Always validate x-gts-ref constraints for schemas
+	if entity.IsSchema {
+		// Create a validator to validate x-gts-ref patterns in schema definition
+		xGtsRefValidator := gts.NewXGtsRefValidator(s.store)
+		xGtsRefErrors := xGtsRefValidator.ValidateSchema(entity.Content, "", nil)
+		if len(xGtsRefErrors) > 0 {
+			var errorMsgs []string
+			for _, err := range xGtsRefErrors {
+				errorMsgs = append(errorMsgs, err.Error())
+			}
+			s.writeJSON(w, http.StatusOK, map[string]any{
+				"ok":    false,
+				"error": fmt.Sprintf("Validation failed: %s", strings.Join(errorMsgs, "; ")),
+			})
+			return
+		}
+	}
+
+	// Check if instance validation is requested via query parameter
+	validation := r.URL.Query().Get("validation")
+	if validation == "true" && !entity.IsSchema {
+		// For non-schema entities with validation=true, register first then validate
+		err := s.store.Register(entity)
+		if err != nil {
+			s.writeJSON(w, http.StatusOK, map[string]any{
+				"ok":    false,
+				"error": err.Error(),
+			})
+			return
+		}
+
+		// Validate the instance
+		result := s.store.ValidateInstance(entity.GtsID.ID)
+		if !result.OK {
+			s.writeJSON(w, http.StatusOK, map[string]any{
+				"ok":    false,
+				"error": result.Error,
+			})
+			return
+		}
+
+		s.writeJSON(w, http.StatusOK, map[string]any{
+			"ok":     true,
+			"gts_id": entity.GtsID.ID,
 		})
 		return
 	}

@@ -7,6 +7,7 @@ package gts
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -101,6 +102,21 @@ func (s *GtsStore) ValidateInstance(gtsID string) *ValidationResult {
 		}
 	}
 
+	// Validate x-gts-ref constraints
+	xGtsRefValidator := NewXGtsRefValidator(s)
+	xGtsRefErrors := xGtsRefValidator.ValidateInstance(obj.Content, schemaEntity.Content, "")
+	if len(xGtsRefErrors) > 0 {
+		var errorMsgs []string
+		for _, err := range xGtsRefErrors {
+			errorMsgs = append(errorMsgs, err.Error())
+		}
+		return &ValidationResult{
+			ID:    gtsID,
+			OK:    false,
+			Error: fmt.Sprintf("x-gts-ref validation failed: %s", strings.Join(errorMsgs, "; ")),
+		}
+	}
+
 	return &ValidationResult{
 		ID:    gtsID,
 		OK:    true,
@@ -110,6 +126,19 @@ func (s *GtsStore) ValidateInstance(gtsID string) *ValidationResult {
 
 // validateWithSchema performs the actual JSON Schema validation
 func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string]any) error {
+	// Normalize schema to convert $$id to $id and $$schema to $schema for JSON Schema validation
+	normalizedSchema := make(map[string]any)
+	for k, v := range schema {
+		switch k {
+		case "$$id":
+			normalizedSchema["$id"] = v
+		case "$$schema":
+			normalizedSchema["$schema"] = v
+		default:
+			normalizedSchema[k] = v
+		}
+	}
+
 	// Create a custom compiler with GTS reference resolution
 	compiler := jsonschema.NewCompiler()
 
@@ -131,14 +160,14 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 	// Set up custom loader for GTS ID references (matches Python's resolve_gts_ref handler)
 	compiler.UseLoader(&gtsURLLoader{store: s})
 
-	// Get schema ID for compilation
-	schemaID, ok := schema["$id"].(string)
+	// Get schema ID for compilation (now from normalized schema)
+	schemaID, ok := normalizedSchema["$id"].(string)
 	if !ok || schemaID == "" {
 		return fmt.Errorf("schema must have a valid $id field")
 	}
 
-	// Add the main schema to the compiler
-	if err := compiler.AddResource(schemaID, schema); err != nil {
+	// Add the main schema to the compiler (use normalized schema)
+	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
 		return fmt.Errorf("add schema resource: %v", err)
 	}
 

@@ -107,7 +107,10 @@ func isJSONSchema(content map[string]any) bool {
 
 	schemaURL, ok := content["$schema"]
 	if !ok {
-		return false
+		schemaURL, ok = content["$$schema"]
+		if !ok {
+			return false
+		}
 	}
 
 	schemaStr, ok := schemaURL.(string)
@@ -115,10 +118,67 @@ func isJSONSchema(content map[string]any) bool {
 		return false
 	}
 
-	return strings.HasPrefix(schemaStr, "http://json-schema.org/") ||
-		strings.HasPrefix(schemaStr, "https://json-schema.org/") ||
-		strings.HasPrefix(schemaStr, "gts://") ||
-		strings.HasPrefix(schemaStr, "gts.")
+	// Check if this is a JSON Schema meta-schema reference
+	if strings.HasPrefix(schemaStr, "http://json-schema.org/") ||
+		strings.HasPrefix(schemaStr, "https://json-schema.org/") {
+		return true
+	}
+
+	// Special GTS schema protocol
+	if strings.HasPrefix(schemaStr, "gts://") {
+		return true
+	}
+
+	// If $schema points to a GTS type ID, determine if this is a schema or instance
+	if strings.HasPrefix(schemaStr, "gts.") {
+		// Check for entity ID fields that might indicate this is a schema
+		entityIDFields := []string{"$id", "gtsId", "gtsIid", "gtsOid", "gtsI", "gts_id", "gts_oid", "gts_iid", "id"}
+
+		for _, field := range entityIDFields {
+			if idVal, hasID := content[field]; hasID {
+				if idStr, ok := idVal.(string); ok && strings.HasSuffix(idStr, "~") {
+					// Entity ID ends with ~ - this is definitely a schema
+					return true
+				}
+			}
+		}
+
+		// No entity ID field ending with ~
+		// Check if this could be a schema without explicit entity ID based on content
+		if strings.HasSuffix(schemaStr, "~") {
+			// Additional heuristic: if it has schema-like properties, consider it a schema
+			if _, hasType := content["type"]; hasType {
+				if _, hasProps := content["properties"]; hasProps {
+					return true
+				}
+				if _, hasItems := content["items"]; hasItems {
+					return true
+				}
+				if _, hasEnum := content["enum"]; hasEnum {
+					return true
+				}
+			}
+
+			// Check if it has NO entity ID fields at all (pure schema)
+			hasEntityID := false
+			for _, field := range entityIDFields {
+				if _, exists := content[field]; exists {
+					hasEntityID = true
+					break
+				}
+			}
+
+			if !hasEntityID {
+				// No entity ID and $schema ends with ~ - likely a schema definition
+				return true
+			}
+		}
+
+		// Has entity ID but doesn't end with ~, or has other characteristics of an instance
+		return false
+	}
+
+	return false
 }
 
 // getFieldValue retrieves a string value from content field

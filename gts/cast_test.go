@@ -373,6 +373,7 @@ func TestCast_NestedObjects(t *testing.T) {
 
 	// Register v1.0 instance
 	v10Instance := map[string]any{
+		"gtsId":   "gts.x.core.nested.type.v1.0",
 		"$schema": "gts.x.core.nested.type.v1.0~",
 		"id":      "test-123",
 		"details": map[string]any{
@@ -385,7 +386,7 @@ func TestCast_NestedObjects(t *testing.T) {
 	}
 
 	// Cast from v1.0 to v1.1
-	result, err := store.Cast("gts.x.core.nested.type.v1.0~", "gts.x.core.nested.type.v1.1~")
+	result, err := store.Cast("gts.x.core.nested.type.v1.0", "gts.x.core.nested.type.v1.1~")
 
 	if err != nil {
 		t.Fatalf("Cast failed: %v", err)
@@ -477,6 +478,7 @@ func TestCast_ArrayOfObjects(t *testing.T) {
 
 	// Register v1.0 instance with array
 	v10Instance := map[string]any{
+		"gtsId":   "gts.x.core.array.type.v1.0",
 		"$schema": "gts.x.core.array.type.v1.0~",
 		"items": []any{
 			map[string]any{"id": "item1"},
@@ -489,7 +491,7 @@ func TestCast_ArrayOfObjects(t *testing.T) {
 	}
 
 	// Cast from v1.0 to v1.1
-	result, err := store.Cast("gts.x.core.array.type.v1.0~", "gts.x.core.array.type.v1.1~")
+	result, err := store.Cast("gts.x.core.array.type.v1.0", "gts.x.core.array.type.v1.1~")
 
 	if err != nil {
 		t.Fatalf("Cast failed: %v", err)
@@ -600,6 +602,7 @@ func TestCast_MissingRequiredFieldNoDefault(t *testing.T) {
 
 	// Register v1.0 instance
 	v10Instance := map[string]any{
+		"gtsId":   "gts.x.core.required.type.v1.0",
 		"$schema": "gts.x.core.required.type.v1.0~",
 		"id":      "test-123",
 	}
@@ -609,7 +612,7 @@ func TestCast_MissingRequiredFieldNoDefault(t *testing.T) {
 	}
 
 	// Cast from v1.0 to v1.1 should fail
-	result, err := store.Cast("gts.x.core.required.type.v1.0~", "gts.x.core.required.type.v1.1~")
+	result, err := store.Cast("gts.x.core.required.type.v1.0", "gts.x.core.required.type.v1.1~")
 
 	if err != nil {
 		t.Fatalf("Cast should not error at top level: %v", err)
