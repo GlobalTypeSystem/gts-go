@@ -13,7 +13,7 @@ Featureset:
 - [x] **OP#3 - ID Parsing**: Decompose identifiers into constituent parts (vendor, package, namespace, type, version, etc.)
 - [x] **OP#4 - ID Pattern Matching**: Match identifiers against patterns containing wildcards
 - [x] **OP#5 - ID to UUID Mapping**: Generate deterministic UUIDs from GTS identifiers
-- [x] **OP#6 - Schema Validation**: Validate object instances against their corresponding schemas
+- [x] **OP#6 - Instance Validation**: Validate object instances against their corresponding schemas
 - [x] **OP#7 - Relationship Resolution**: Load all schemas and instances, resolve inter-dependencies, and detect broken references
 - [x] **OP#8 - Compatibility Checking**: Verify that schemas with different MINOR versions are compatible
 - [x] **OP#8.1 - Backward compatibility checking**
@@ -22,6 +22,7 @@ Featureset:
 - [x] **OP#9 - Version Casting**: Transform instances between compatible MINOR versions
 - [x] **OP#10 - Query Execution**: Filter identifier collections using the GTS query language
 - [x] **OP#11 - Attribute Access**: Retrieve property values and metadata using the attribute selector (`@`)
+- [ ] **OP#12 - Schema Validation**: Validate schema against its precedent schema
 
 TODO - need a file with Go code snippets for all Ops above
 
