@@ -57,6 +57,11 @@ func TestToUUID_Instances(t *testing.T) {
 			gtsID:    "gts.x.test5.events.type.v1~abc.app._.custom_event.v1.2",
 			expected: "c7f8cca7-3af6-58af-b72b-3febfd93f1a8",
 		},
+		{
+			name:     "Combined anonymous instance (UUID tail)",
+			gtsID:    "gts.x.core.events.type.v1~x.commerce.orders.order_placed.v1.0~7a1d2f34-5678-49ab-9012-abcdef123456",
+			expected: "4a31b759-722b-5bb1-a1dc-2cf40963e81b",
+		},
 	}
 
 	for _, tt := range tests {
