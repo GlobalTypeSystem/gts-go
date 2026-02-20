@@ -417,10 +417,13 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 
 // isUUIDSegment returns true if s is a valid RFC 4122 UUID (lowercase hex with hyphens)
 func isUUIDSegment(s string) bool {
-	_, err := uuid.Parse(s)
+	u, err := uuid.Parse(s)
 	if err != nil {
 		return false
 	}
-	// uuid.Parse accepts uppercase; enforce lowercase per GTS spec
-	return s == strings.ToLower(s)
+	if u.Variant() != uuid.RFC4122 {
+		return false
+	}
+	// uuid.Parse accepts URN, braced, and uppercase forms; enforce canonical lowercase hyphenated form
+	return s == strings.ToLower(u.String())
 }

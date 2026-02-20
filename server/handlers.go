@@ -464,6 +464,74 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, result)
 }
 
+// OP#12 - Validate Schema (schema-vs-schema chain validation)
+func (s *Server) handleValidateSchema(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SchemaID string `json:"schema_id"`
+	}
+	if err := s.readJSON(r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
+	if req.SchemaID == "" {
+		s.writeError(w, http.StatusBadRequest, "Missing schema_id")
+		return
+	}
+
+	result := s.store.ValidateSchemaChain(req.SchemaID)
+	if result.OK {
+		// Also run OP#13 traits validation
+		traitsResult := s.store.ValidateSchemaTraits(req.SchemaID)
+		if !traitsResult.OK {
+			s.writeJSON(w, http.StatusOK, map[string]any{
+				"ok":    false,
+				"error": traitsResult.Error,
+			})
+			return
+		}
+	}
+
+	if result.OK {
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	} else {
+		s.writeJSON(w, http.StatusOK, map[string]any{
+			"ok":    false,
+			"error": result.Error,
+		})
+	}
+}
+
+// OP#13 - Validate Entity (schema chain + traits validation)
+func (s *Server) handleValidateEntity(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EntityID string `json:"entity_id"`
+		GtsID    string `json:"gts_id"`
+	}
+	if err := s.readJSON(r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
+	// Accept either entity_id or gts_id
+	id := req.EntityID
+	if id == "" {
+		id = req.GtsID
+	}
+	if id == "" {
+		s.writeError(w, http.StatusBadRequest, "Missing entity_id")
+		return
+	}
+
+	result := s.store.ValidateEntity(id)
+	resp := map[string]any{
+		"ok":          result.OK,
+		"entity_type": result.EntityType,
+	}
+	if !result.OK {
+		resp["error"] = result.Error
+	}
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
 // OP#11 - Attribute Access
 func (s *Server) handleAttribute(w http.ResponseWriter, r *http.Request) {
 	gtsWithPath := s.getQueryParam(r, "gts_with_path")
