@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"golang.org/x/text/message"
 )
 
 // gtsURLLoader implements jsonschema.URLLoader for GTS ID reference resolution
@@ -105,13 +106,14 @@ func (s *GtsStore) ValidateInstance(gtsID string) *ValidationResult {
 		}
 	}
 
-	// Validate x-gts-ref constraints
+	// Validate x-gts-ref constraints via XGtsRefValidator (separate pass with full
+	// instance path context for JSON pointer resolution and prefix/self-ref semantics)
 	xGtsRefValidator := NewXGtsRefValidator(s)
 	xGtsRefErrors := xGtsRefValidator.ValidateInstance(obj.Content, schemaEntity.Content, "")
 	if len(xGtsRefErrors) > 0 {
 		var errorMsgs []string
-		for _, err := range xGtsRefErrors {
-			errorMsgs = append(errorMsgs, err.Error())
+		for _, e := range xGtsRefErrors {
+			errorMsgs = append(errorMsgs, e.Error())
 		}
 		return &ValidationResult{
 			ID:    gtsID,
@@ -124,6 +126,60 @@ func (s *GtsStore) ValidateInstance(gtsID string) *ValidationResult {
 		ID:    gtsID,
 		OK:    true,
 		Error: "",
+	}
+}
+
+// xGtsRefExt is the compiled form of an x-gts-ref keyword for a single schema node.
+// Validate enforces the GTS pattern constraint so that oneOf/anyOf/allOf branches
+// correctly pass or fail based on whether the value matches the pattern.
+// The separate XGtsRefValidator pass handles JSON pointer resolution and other
+// schema-level semantics that require full instance path context.
+type xGtsRefExt struct {
+	pattern    string
+	rootSchema map[string]any
+	store      *GtsStore
+}
+
+func (e *xGtsRefExt) Validate(ctx *jsonschema.ValidatorContext, v any) {
+	str, ok := v.(string)
+	if !ok {
+		return
+	}
+	// Relative pointer patterns (starting with "/") require the full root schema
+	// context for resolution — defer those entirely to XGtsRefValidator's separate pass.
+	if strings.HasPrefix(e.pattern, "/") {
+		return
+	}
+	validator := NewXGtsRefValidator(e.store)
+	if err := validator.validateRefValue(str, e.pattern, "", e.rootSchema); err != nil {
+		ctx.AddError(&xGtsRefErrorKind{err.Reason})
+	}
+}
+
+// xGtsRefErrorKind implements jsonschema.ErrorKind for x-gts-ref validation errors.
+type xGtsRefErrorKind struct{ reason string }
+
+func (k *xGtsRefErrorKind) KeywordPath() []string                     { return []string{"x-gts-ref"} }
+func (k *xGtsRefErrorKind) LocalizedString(_ *message.Printer) string { return k.reason }
+
+// newXGtsRefVocabulary registers x-gts-ref as a proper vocabulary with the JSON schema
+// compiler. This is the correct fix for the oneOf/anyOf/allOf problem: branches like
+// {"x-gts-ref": "gts.x.foo~"} are no longer empty match-all schemas — they carry a
+// real constraint that the library evaluates during combinator resolution.
+func newXGtsRefVocabulary(store *GtsStore) *jsonschema.Vocabulary {
+	return &jsonschema.Vocabulary{
+		URL: "https://globaltypesystem.io/vocab/x-gts-ref",
+		Compile: func(_ *jsonschema.CompilerContext, obj map[string]any) (jsonschema.SchemaExt, error) {
+			raw, ok := obj["x-gts-ref"]
+			if !ok {
+				return nil, nil
+			}
+			pattern, ok := raw.(string)
+			if !ok {
+				return nil, fmt.Errorf("x-gts-ref must be a string")
+			}
+			return &xGtsRefExt{pattern: pattern, rootSchema: obj, store: store}, nil
+		},
 	}
 }
 
@@ -144,6 +200,11 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 
 	// Create a custom compiler with GTS reference resolution
 	compiler := jsonschema.NewCompiler()
+
+	// Register x-gts-ref as a proper vocabulary so the library treats it as a real
+	// keyword with validation semantics. This prevents oneOf/anyOf/allOf branches
+	// containing only x-gts-ref from being treated as empty match-all schemas.
+	compiler.RegisterVocabulary(newXGtsRefVocabulary(s))
 
 	// Register lenient format validators to match Python's jsonschema behavior
 	// Python's jsonschema library does NOT validate formats by default
