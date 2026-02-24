@@ -20,8 +20,8 @@ package gts
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
+	"unicode/utf8"
 )
 
 // effectiveSchema holds the flattened view of a schema used for compatibility comparison.
@@ -82,7 +82,9 @@ func extractEffectiveSchemaInto(schema map[string]any, eff *effectiveSchema) {
 
 // validateSchemaCompatibility validates that a derived schema is compatible with its base.
 // Returns a list of human-readable error descriptions (empty = compatible).
-func validateSchemaCompatibility(base, derived *effectiveSchema, baseID, derivedID string) []string {
+// nested must be true when called recursively for a nested object property; it suppresses
+// checks that are only valid at the top level (e.g. omitted base properties).
+func validateSchemaCompatibility(base, derived *effectiveSchema, baseID, derivedID string, nested bool) []string {
 	var errors []string
 
 	baseDisallowsAdditional := false
@@ -121,6 +123,39 @@ func validateSchemaCompatibility(base, derived *effectiveSchema, baseID, derived
 		}
 	}
 
+	// Check base properties for removals and re-enablings
+	for propName, baseProp := range base.properties {
+		derivedProp, exists := derived.properties[propName]
+		if b, ok := baseProp.(bool); ok && !b {
+			// base disabled the property; derived must not re-enable it
+			if !exists {
+				// derived omits the property entirely — treated as re-enabling
+				errors = append(errors, fmt.Sprintf(
+					"property '%s': derived schema '%s' re-enables property disabled in base '%s'",
+					propName, derivedID, baseID,
+				))
+			} else if db, dOk := derivedProp.(bool); !dOk || db {
+				errors = append(errors, fmt.Sprintf(
+					"property '%s': derived schema '%s' re-enables property disabled in base '%s'",
+					propName, derivedID, baseID,
+				))
+			}
+		} else if _, baseIsObj := baseProp.(map[string]any); baseIsObj && !nested {
+			// base defines an object schema; at top level derived must not omit or replace it
+			if !exists {
+				errors = append(errors, fmt.Sprintf(
+					"property '%s': derived schema '%s' omits property defined in base '%s'",
+					propName, derivedID, baseID,
+				))
+			} else if _, derivedIsObj := derivedProp.(map[string]any); !derivedIsObj {
+				errors = append(errors, fmt.Sprintf(
+					"property '%s': derived schema '%s' replaces object schema with a non-object value, loosening base '%s' constraints",
+					propName, derivedID, baseID,
+				))
+			}
+		}
+	}
+
 	// Check if derived loosens additionalProperties constraint.
 	// When base has additionalProperties: false, derived must also explicitly
 	// set additionalProperties: false. Omitting it is also loosening.
@@ -137,8 +172,9 @@ func validateSchemaCompatibility(base, derived *effectiveSchema, baseID, derived
 		}
 	}
 
-	// Check that derived doesn't remove fields from base's required set
-	errors = append(errors, checkRequiredRemoval(base, derived, baseID, derivedID)...)
+	// Check that derived doesn't remove fields from base's required set.
+	// In nested context, omitting required is allowed (partial overlay).
+	errors = append(errors, checkRequiredRemoval(base, derived, baseID, derivedID, nested)...)
 
 	return errors
 }
@@ -183,7 +219,7 @@ func comparePropertyConstraints(baseProp, derivedProp map[string]any, propName s
 		if _, hasProps := baseProp["properties"]; hasProps {
 			baseNested := extractEffectiveSchema(baseProp)
 			derivedNested := extractEffectiveSchema(derivedProp)
-			nestedErrors := validateSchemaCompatibility(baseNested, derivedNested, "base", "derived")
+			nestedErrors := validateSchemaCompatibility(baseNested, derivedNested, "base", "derived", true)
 			for _, e := range nestedErrors {
 				errors = append(errors, fmt.Sprintf("in nested object '%s': %s", propName, e))
 			}
@@ -205,13 +241,35 @@ func checkTypeCompatibility(baseProp, derivedProp map[string]any, propName strin
 			propName, baseType,
 		)}
 	}
-	if !reflect.DeepEqual(baseType, derivedType) {
-		return []string{fmt.Sprintf(
-			"property '%s': derived changes type from %v to %v",
-			propName, baseType, derivedType,
-		)}
+	baseSet := typeToSet(baseType)
+	derivedSet := typeToSet(derivedType)
+	for dt := range derivedSet {
+		if !baseSet[dt] {
+			return []string{fmt.Sprintf(
+				"property '%s': derived changes type from %v to %v",
+				propName, baseType, derivedType,
+			)}
+		}
 	}
 	return nil
+}
+
+// typeToSet normalises a JSON Schema "type" value (string or []any) into a set of type strings.
+func typeToSet(t any) map[string]bool {
+	switch v := t.(type) {
+	case string:
+		return map[string]bool{v: true}
+	case []any:
+		s := make(map[string]bool, len(v))
+		for _, item := range v {
+			if str, ok := item.(string); ok {
+				s[str] = true
+			}
+		}
+		return s
+	default:
+		return map[string]bool{}
+	}
 }
 
 func checkConstCompatibility(baseProp, derivedProp map[string]any, propName string) []string {
@@ -310,12 +368,19 @@ func checkItemsCompatibility(baseProp, derivedProp map[string]any, propName stri
 	if baseOk && derivedOk {
 		return comparePropertyConstraints(baseItemsMap, derivedItemsMap, itemsName)
 	}
+	if baseOk && !derivedOk {
+		return []string{fmt.Sprintf(
+			"property '%s': derived replaced object schema with a non-object items value, loosening base constraints",
+			itemsName,
+		)}
+	}
 	return nil
 }
 
-func checkRequiredRemoval(base, derived *effectiveSchema, baseID, derivedID string) []string {
-	// Only skip if derived omits required entirely; an explicit empty list must be validated
-	if !derived.requiredSet {
+func checkRequiredRemoval(base, derived *effectiveSchema, baseID, derivedID string, nested bool) []string {
+	// In nested object context a partial overlay legitimately omits required;
+	// only enforce when derived explicitly declares required or we are at top level.
+	if nested && !derived.requiredSet {
 		return nil
 	}
 	var errors []string
@@ -409,7 +474,7 @@ func numericValueFor(val any, keyword string) (float64, bool) {
 	switch keyword {
 	case "minLength", "maxLength":
 		if s, ok := val.(string); ok {
-			return float64(len(s)), true
+			return float64(utf8.RuneCountInString(s)), true
 		}
 	case "minItems", "maxItems":
 		if arr, ok := val.([]any); ok {
@@ -527,7 +592,7 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 		baseEff := extractEffectiveSchema(baseContent)
 		derivedEff := extractEffectiveSchema(derivedContent)
 
-		errs := validateSchemaCompatibility(baseEff, derivedEff, baseID, derivedID)
+		errs := validateSchemaCompatibility(baseEff, derivedEff, baseID, derivedID, false)
 		if len(errs) > 0 {
 			return &ValidateSchemaChainResult{
 				SchemaID: schemaID,
@@ -617,9 +682,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			if entity != nil && entity.IsSchema {
 				visited[canonical] = true
 				resolved := s.resolveRefsInner(entity.Content, visited, cycleFound, strict)
-				if !strict {
-					delete(visited, canonical)
-				}
+				delete(visited, canonical)
 
 				// Remove $id and $schema from resolved content
 				if resolvedMap, ok := resolved.(map[string]any); ok {
@@ -664,6 +727,22 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			var resolvedAllOf []any
 			mergedProps := make(map[string]any)
 			var mergedRequired []string
+
+			// Pre-scan: flag duplicate $ref targets within this allOf as a cycle.
+			// Sibling duplicates are degenerate schemas and must not be resolved
+			// twice (which would misfire the ancestor visited-map check).
+			allOfRefs := make(map[string]bool)
+			for _, item := range allOf {
+				if itemMap, ok := item.(map[string]any); ok {
+					if refVal, ok := itemMap["$ref"].(string); ok {
+						canonical := strings.TrimPrefix(refVal, GtsURIPrefix)
+						if allOfRefs[canonical] {
+							*cycleFound = true
+						}
+						allOfRefs[canonical] = true
+					}
+				}
+			}
 
 			for _, item := range allOf {
 				resolved := s.resolveRefsInner(item, visited, cycleFound, strict)

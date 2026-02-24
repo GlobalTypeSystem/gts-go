@@ -31,6 +31,7 @@ func init() {
 func runValidateSchema(cmd *Command, args []string) {
 	if validateSchemaID == "" {
 		cmd.Usage()
+		return
 	}
 
 	store := newStore()

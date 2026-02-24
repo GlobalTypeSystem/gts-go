@@ -517,7 +517,7 @@ func (s *Server) handleValidateEntity(w http.ResponseWriter, r *http.Request) {
 		id = req.GtsID
 	}
 	if id == "" {
-		s.writeError(w, http.StatusBadRequest, "Missing entity_id")
+		s.writeError(w, http.StatusBadRequest, "Missing entity_id or gts_id")
 		return
 	}
 

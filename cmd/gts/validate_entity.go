@@ -34,6 +34,7 @@ func init() {
 func runValidateEntity(cmd *Command, args []string) {
 	if validateEntityID == "" {
 		cmd.Usage()
+		return
 	}
 
 	store := newStore()
