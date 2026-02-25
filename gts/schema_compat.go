@@ -129,11 +129,18 @@ func validateSchemaCompatibility(base, derived *effectiveSchema, baseID, derived
 		if b, ok := baseProp.(bool); ok && !b {
 			// base disabled the property; derived must not re-enable it
 			if !exists {
-				// derived omits the property entirely — treated as re-enabling
-				errors = append(errors, fmt.Sprintf(
-					"property '%s': derived schema '%s' re-enables property disabled in base '%s'",
-					propName, derivedID, baseID,
-				))
+				// derived omits the property entirely — only counts as re-enabling
+				// when the derived schema allows additional properties.
+				derivedAllowsAdditional := true
+				if ap, ok := derived.additionalProperties.(bool); ok && !ap {
+					derivedAllowsAdditional = false
+				}
+				if derivedAllowsAdditional {
+					errors = append(errors, fmt.Sprintf(
+						"property '%s': derived schema '%s' re-enables property disabled in base '%s'",
+						propName, derivedID, baseID,
+					))
+				}
 			} else if db, dOk := derivedProp.(bool); !dOk || db {
 				errors = append(errors, fmt.Sprintf(
 					"property '%s': derived schema '%s' re-enables property disabled in base '%s'",
@@ -634,9 +641,13 @@ func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, er
 func (s *GtsStore) resolveRefs(schema map[string]any) (map[string]any, error) {
 	visited := make(map[string]bool)
 	cycleFound := false
-	resolved := s.resolveRefsInner(schema, visited, &cycleFound, true)
+	dupFound := false
+	resolved := s.resolveRefsInner(schema, visited, &cycleFound, &dupFound, true)
 	if cycleFound {
 		return nil, fmt.Errorf("circular $ref detected")
+	}
+	if dupFound {
+		return nil, fmt.Errorf("duplicate sibling $ref in allOf")
 	}
 	if m, ok := resolved.(map[string]any); ok {
 		return m, nil
@@ -645,7 +656,7 @@ func (s *GtsStore) resolveRefs(schema map[string]any) (map[string]any, error) {
 }
 
 // resolveRefsInner recursively resolves $ref references in a schema value.
-func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFound *bool, strict bool) any {
+func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFound *bool, dupFound *bool, strict bool) any {
 	switch v := schema.(type) {
 	case map[string]any:
 		// Handle $ref
@@ -654,7 +665,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			if strings.HasPrefix(refVal, "#") {
 				result := make(map[string]any)
 				for k, val := range v {
-					result[k] = s.resolveRefsInner(val, visited, cycleFound, strict)
+					result[k] = s.resolveRefsInner(val, visited, cycleFound, dupFound, strict)
 				}
 				return result
 			}
@@ -668,7 +679,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				result := make(map[string]any)
 				for k, val := range v {
 					if k != "$ref" {
-						result[k] = s.resolveRefsInner(val, visited, cycleFound, strict)
+						result[k] = s.resolveRefsInner(val, visited, cycleFound, dupFound, strict)
 					}
 				}
 				if len(result) == 0 {
@@ -681,7 +692,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			entity := s.Get(canonical)
 			if entity != nil && entity.IsSchema {
 				visited[canonical] = true
-				resolved := s.resolveRefsInner(entity.Content, visited, cycleFound, strict)
+				resolved := s.resolveRefsInner(entity.Content, visited, cycleFound, dupFound, strict)
 				delete(visited, canonical)
 
 				// Remove $id and $schema from resolved content
@@ -701,7 +712,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 					}
 					for k, val := range v {
 						if k != "$ref" {
-							merged[k] = s.resolveRefsInner(val, visited, cycleFound, strict)
+							merged[k] = s.resolveRefsInner(val, visited, cycleFound, dupFound, strict)
 						}
 					}
 					return merged
@@ -712,7 +723,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			result := make(map[string]any)
 			for k, val := range v {
 				if k != "$ref" {
-					result[k] = s.resolveRefsInner(val, visited, cycleFound, strict)
+					result[k] = s.resolveRefsInner(val, visited, cycleFound, dupFound, strict)
 				}
 			}
 			if len(result) > 0 {
@@ -728,29 +739,26 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			mergedProps := make(map[string]any)
 			var mergedRequired []string
 
-			// Pre-scan: flag duplicate $ref targets within this allOf as a cycle.
-			// Sibling duplicates are degenerate schemas and must not be resolved
-			// twice (which would misfire the ancestor visited-map check).
-			allOfRefs := make(map[string]bool)
+			seenRefs := make(map[string]bool)
+			mergedOther := make(map[string]any)
 			for _, item := range allOf {
+				// Skip duplicate sibling $ref targets (flag them so resolveRefs can report the error)
 				if itemMap, ok := item.(map[string]any); ok {
 					if refVal, ok := itemMap["$ref"].(string); ok {
 						canonical := strings.TrimPrefix(refVal, GtsURIPrefix)
-						if allOfRefs[canonical] {
-							*cycleFound = true
+						if seenRefs[canonical] {
+							*dupFound = true
+							continue
 						}
-						allOfRefs[canonical] = true
+						seenRefs[canonical] = true
 					}
 				}
-			}
-
-			for _, item := range allOf {
-				resolved := s.resolveRefsInner(item, visited, cycleFound, strict)
+				resolved := s.resolveRefsInner(item, visited, cycleFound, dupFound, strict)
 				if resolvedMap, ok := resolved.(map[string]any); ok {
 					if _, stillHasRef := resolvedMap["$ref"]; stillHasRef {
 						resolvedAllOf = append(resolvedAllOf, resolved)
 					} else {
-						// Merge only properties and required
+						// Merge properties and required
 						if props, ok := resolvedMap["properties"].(map[string]any); ok {
 							for k, pv := range props {
 								mergedProps[k] = pv
@@ -765,13 +773,22 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 								}
 							}
 						}
+						// Merge all other constraint keys (but NOT additionalProperties —
+						// matches Rust resolve_schema_refs_inner behavior; lifting it
+						// would silently inject constraints into the parent schema)
+						for k, val := range resolvedMap {
+							if k == "properties" || k == "required" || k == "$id" || k == "$schema" || k == "additionalProperties" {
+								continue
+							}
+							mergedOther[k] = val
+						}
 					}
 				} else {
 					resolvedAllOf = append(resolvedAllOf, resolved)
 				}
 			}
 
-			if len(mergedProps) > 0 {
+			if len(mergedProps) > 0 || len(mergedOther) > 0 {
 				// Build merged schema without allOf
 				merged := make(map[string]any)
 				for k, val := range v {
@@ -779,7 +796,15 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 						merged[k] = val
 					}
 				}
-				merged["properties"] = mergedProps
+				// Apply other constraints (do not override keys already on parent)
+				for k, val := range mergedOther {
+					if _, exists := merged[k]; !exists {
+						merged[k] = val
+					}
+				}
+				if len(mergedProps) > 0 {
+					merged["properties"] = mergedProps
+				}
 				if len(mergedRequired) > 0 {
 					reqAny := make([]any, len(mergedRequired))
 					for i, r := range mergedRequired {
@@ -797,14 +822,14 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 		// Recursively process all properties
 		result := make(map[string]any)
 		for k, val := range v {
-			result[k] = s.resolveRefsInner(val, visited, cycleFound, strict)
+			result[k] = s.resolveRefsInner(val, visited, cycleFound, dupFound, strict)
 		}
 		return result
 
 	case []any:
 		result := make([]any, len(v))
 		for i, item := range v {
-			result[i] = s.resolveRefsInner(item, visited, cycleFound, strict)
+			result[i] = s.resolveRefsInner(item, visited, cycleFound, dupFound, strict)
 		}
 		return result
 
