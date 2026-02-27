@@ -22,7 +22,8 @@ Featureset:
 - [x] **OP#9 - Version Casting**: Transform instances between compatible MINOR versions
 - [x] **OP#10 - Query Execution**: Filter identifier collections using the GTS query language
 - [x] **OP#11 - Attribute Access**: Retrieve property values and metadata using the attribute selector (`@`)
-- [ ] **OP#12 - Schema Validation**: Validate schema against its precedent schema
+- [x] **OP#12 - Schema Validation**: Validate schema against its precedent schema
+- [x] **OP#13 - Schema Traits Validation**: Validate `x-gts-traits-schema` / `x-gts-traits` across the inheritance chain
 
 TODO - need a file with Go code snippets for all Ops above
 
@@ -221,6 +222,13 @@ gts -path ./examples query -expr "gts.vendor.pkg.*" -limit 10
 
 # OP#10 - Get attribute value
 gts -path ./examples attr -path gts.vendor.pkg.ns.type.v1.0@name
+
+# OP#12 - Validate a derived schema against its chain
+gts -path ./examples validate-schema -id gts.vendor.pkg.ns.base.v1~derived.v1~
+
+# OP#13 - Validate any entity (schema or instance)
+gts -path ./examples validate-entity -id gts.vendor.pkg.ns.base.v1~derived.v1~
+gts -path ./examples validate-entity -id gts.vendor.pkg.ns.type.v1.0
 
 # List all entities
 gts -path ./examples list -limit 100

@@ -251,3 +251,56 @@ func TestGtsID_TildeNotAtEnd(t *testing.T) {
 		t.Errorf("Expected error for tilde not at end: %q", invalidID)
 	}
 }
+
+// TestGtsID_CombinedAnonymousInstance tests combined anonymous instance IDs (UUID tail)
+func TestGtsID_CombinedAnonymousInstance(t *testing.T) {
+	validIDs := []string{
+		"gts.x.core.events.type.v1~x.commerce.orders.order_placed.v1.0~7a1d2f34-5678-49ab-9012-abcdef123456",
+		"gts.x.core.events.type.v1~x.commerce.orders.order_placed.v1.0~7a1d2f34-5678-49ab-9012-000000000000",
+	}
+
+	for _, id := range validIDs {
+		t.Run(id, func(t *testing.T) {
+			gtsID, err := NewGtsID(id)
+			if err != nil {
+				t.Fatalf("Expected valid combined anonymous instance ID %q, got error: %v", id, err)
+			}
+			lastSeg := gtsID.Segments[len(gtsID.Segments)-1]
+			if !lastSeg.IsUUID {
+				t.Errorf("Expected last segment IsUUID=true for %q", id)
+			}
+			if lastSeg.IsType {
+				t.Errorf("Expected last segment IsType=false for %q", id)
+			}
+			if gtsID.IsType() {
+				t.Errorf("Expected IsType()=false for combined anonymous instance %q", id)
+			}
+		})
+	}
+}
+
+// TestGtsID_CombinedAnonymousInstance_Invalid tests that invalid UUID tails are rejected
+func TestGtsID_CombinedAnonymousInstance_Invalid(t *testing.T) {
+	invalidIDs := []struct {
+		id   string
+		desc string
+	}{
+		{
+			"gts.x.core.events.type.v1~x.commerce.orders.order_placed.v1.0~not-a-uuid",
+			"non-UUID tail with hyphens",
+		},
+		{
+			"gts.x.core.events.type.v1~x.commerce.orders.order_placed.v1.0~7A1D2F34-5678-49AB-9012-ABCDEF123456",
+			"uppercase UUID tail",
+		},
+	}
+
+	for _, tt := range invalidIDs {
+		t.Run(tt.desc, func(t *testing.T) {
+			_, err := NewGtsID(tt.id)
+			if err == nil {
+				t.Errorf("Expected error for %s: %q", tt.desc, tt.id)
+			}
+		})
+	}
+}

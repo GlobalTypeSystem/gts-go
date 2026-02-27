@@ -78,6 +78,12 @@ func (s *Server) registerRoutes() {
 
 	// OP#11 - Attribute Access
 	s.mux.HandleFunc("GET /attr", s.handleAttribute)
+
+	// OP#12 - Validate Schema (schema-vs-schema chain validation)
+	s.mux.HandleFunc("POST /validate-schema", s.handleValidateSchema)
+
+	// OP#13 - Validate Entity (schema chain + traits validation)
+	s.mux.HandleFunc("POST /validate-entity", s.handleValidateEntity)
 }
 
 // Start starts the HTTP server
@@ -233,6 +239,18 @@ func (s *Server) GetOpenAPISpec() map[string]any {
 				"get": map[string]any{
 					"summary":     "Get attribute value from a GTS entity",
 					"operationId": "attr",
+				},
+			},
+			"/validate-schema": map[string]any{
+				"post": map[string]any{
+					"summary":     "Validate a derived schema against its chain",
+					"operationId": "validateSchema",
+				},
+			},
+			"/validate-entity": map[string]any{
+				"post": map[string]any{
+					"summary":     "Validate any entity (schema or instance) including traits",
+					"operationId": "validateEntity",
 				},
 			},
 		},

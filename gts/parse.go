@@ -16,6 +16,7 @@ type ParseIDSegment struct {
 	VerMajor  int    `json:"ver_major"`
 	VerMinor  *int   `json:"ver_minor"`
 	IsType    bool   `json:"is_type"`
+	IsUUID    bool   `json:"is_uuid"`
 }
 
 // ParseIDResult represents the result of parsing a GTS identifier
@@ -58,6 +59,7 @@ func ParseID(gtsID string) ParseIDResult {
 				VerMajor:  seg.VerMajor,
 				VerMinor:  seg.VerMinor,
 				IsType:    seg.IsType,
+				IsUUID:    seg.IsUUID,
 			}
 		}
 
@@ -97,6 +99,7 @@ func ParseID(gtsID string) ParseIDResult {
 			VerMajor:  seg.VerMajor,
 			VerMinor:  seg.VerMinor,
 			IsType:    seg.IsType,
+			IsUUID:    seg.IsUUID,
 		}
 	}
 

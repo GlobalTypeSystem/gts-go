@@ -78,6 +78,7 @@ type GtsIDSegment struct {
 	VerMinor   *int
 	IsType     bool
 	IsWildcard bool
+	IsUUID     bool
 }
 
 // GtsID represents a validated GTS identifier
@@ -95,11 +96,6 @@ func NewGtsID(id string) (*GtsID, error) {
 		return nil, &InvalidGtsIDError{GtsID: id, Cause: "Must be lower case"}
 	}
 
-	// Validate no hyphens
-	if strings.Contains(raw, "-") {
-		return nil, &InvalidGtsIDError{GtsID: id, Cause: "Must not contain '-'"}
-	}
-
 	// Validate prefix
 	if !strings.HasPrefix(raw, GtsPrefix) {
 		return nil, &InvalidGtsIDError{GtsID: id, Cause: fmt.Sprintf("Does not start with '%s'", GtsPrefix)}
@@ -110,19 +106,46 @@ func NewGtsID(id string) (*GtsID, error) {
 		return nil, &InvalidGtsIDError{GtsID: id, Cause: "Too long"}
 	}
 
+	// Split by ~ to get segments, preserving empties to detect trailing ~
+	remainder := raw[len(GtsPrefix):]
+	parts := splitPreservingTilde(remainder)
+
+	// Detect combined anonymous instance: last part is a UUID (no trailing ~)
+	hasUUIDTail := len(parts) >= 2 && isUUIDSegment(parts[len(parts)-1])
+
+	// Validate no hyphens in non-UUID portions (reuse already-split parts)
+	gtsPartsToCheck := parts
+	if hasUUIDTail {
+		gtsPartsToCheck = parts[:len(parts)-1]
+	}
+	for _, p := range gtsPartsToCheck {
+		if strings.Contains(p, "-") {
+			return nil, &InvalidGtsIDError{GtsID: id, Cause: "Must not contain '-'"}
+		}
+	}
+
 	gtsID := &GtsID{
 		ID:       raw,
 		Segments: make([]*GtsIDSegment, 0),
 	}
 
-	// Split by ~ to get segments, preserving empties to detect trailing ~
-	remainder := raw[len(GtsPrefix):]
-	parts := splitPreservingTilde(remainder)
-
 	offset := len(GtsPrefix)
 	for i, part := range parts {
 		if part == "" {
 			return nil, &InvalidGtsIDError{GtsID: id, Cause: fmt.Sprintf("GTS segment #%d @ offset %d is empty", i+1, offset)}
+		}
+
+		// Last part is a UUID tail — store as a special segment
+		if hasUUIDTail && i == len(parts)-1 {
+			gtsID.Segments = append(gtsID.Segments, &GtsIDSegment{
+				Num:     i + 1,
+				Offset:  offset,
+				Segment: part,
+				IsType:  false,
+				IsUUID:  true,
+			})
+			offset += len(part)
+			continue
 		}
 
 		segment, err := parseSegment(i+1, offset, part)
@@ -390,4 +413,17 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 	}
 
 	return seg, nil
+}
+
+// isUUIDSegment returns true if s is a valid RFC 4122 UUID (lowercase hex with hyphens)
+func isUUIDSegment(s string) bool {
+	u, err := uuid.Parse(s)
+	if err != nil {
+		return false
+	}
+	if u.Variant() != uuid.RFC4122 {
+		return false
+	}
+	// uuid.Parse accepts URN, braced, and uppercase forms; enforce canonical lowercase hyphenated form
+	return s == strings.ToLower(u.String())
 }
