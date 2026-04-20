@@ -3,3 +3,6 @@
 .vscode/
 vendor/
 coverage.out
+bin/
+logs/
+e2e.log

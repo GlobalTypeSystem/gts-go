@@ -53,6 +53,20 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 		baseID := buildIDFromSegments(segments[:i+1])
 		derivedID := buildIDFromSegments(segments[:i+2])
 
+		// Check x-gts-final: if the base type is final, derivation is not allowed.
+		baseEntity := s.Get(baseID)
+		if baseEntity != nil {
+			if isFinal, ok := baseEntity.Content[KeyXGtsFinal]; ok {
+				if final, isBool := isFinal.(bool); isBool && final {
+					return &ValidateSchemaChainResult{
+						SchemaID: schemaID,
+						OK:       false,
+						Error:    fmt.Sprintf("base type '%s' is final and cannot be extended", baseID),
+					}
+				}
+			}
+		}
+
 		baseContent, err := s.resolveSchemaRefsChecked(baseID)
 		if err != nil {
 			return &ValidateSchemaChainResult{

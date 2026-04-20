@@ -46,35 +46,51 @@ type ValidationResult struct {
 	Error string `json:"error"`
 }
 
-// ValidateInstance validates an object instance against its schema
-// Returns ValidationResult with ok=true if validation succeeds
-func (s *GtsStore) ValidateInstance(gtsID string) *ValidationResult {
-	// Parse and validate GTS ID
-	gid, err := NewGtsID(gtsID)
-	if err != nil {
-		return &ValidationResult{
-			ID:    gtsID,
-			OK:    false,
-			Error: fmt.Sprintf("Invalid GTS ID: %v", err),
+// ValidateInstance validates an object instance against its schema.
+// Accepts either a well-known GTS instance ID or an anonymous instance id
+// (e.g. a UUID paired with a separate "type" field on the stored entity,
+// spec §3.7). Returns ValidationResult with ok=true if validation succeeds.
+func (s *GtsStore) ValidateInstance(instanceID string) *ValidationResult {
+	// Well-known GTS id first; fall back to a raw store lookup by the
+	// passed string so anonymous instances (keyed by UUID) resolve too.
+	lookupID := instanceID
+	if IsValidGtsID(instanceID) {
+		gid, err := NewGtsID(instanceID)
+		if err != nil {
+			return &ValidationResult{
+				ID:    instanceID,
+				OK:    false,
+				Error: fmt.Sprintf("Invalid GTS ID: %v", err),
+			}
 		}
+		lookupID = gid.ID
 	}
 
 	// Get the instance from store
-	obj := s.Get(gid.ID)
+	obj := s.Get(lookupID)
 	if obj == nil {
 		return &ValidationResult{
-			ID:    gtsID,
+			ID:    instanceID,
 			OK:    false,
-			Error: (&StoreGtsObjectNotFoundError{EntityID: gtsID}).Error(),
+			Error: (&StoreGtsObjectNotFoundError{EntityID: instanceID}).Error(),
+		}
+	}
+
+	// Schema-only keywords must not appear in instance content.
+	if err := ValidateInstanceModifiers(obj.Content); err != nil {
+		return &ValidationResult{
+			ID:    instanceID,
+			OK:    false,
+			Error: err.Error(),
 		}
 	}
 
 	// Check if instance has a schema ID
 	if obj.SchemaID == "" {
 		return &ValidationResult{
-			ID:    gtsID,
+			ID:    instanceID,
 			OK:    false,
-			Error: (&StoreGtsSchemaForInstanceNotFoundError{EntityID: gid.ID}).Error(),
+			Error: (&StoreGtsSchemaForInstanceNotFoundError{EntityID: lookupID}).Error(),
 		}
 	}
 
@@ -82,7 +98,7 @@ func (s *GtsStore) ValidateInstance(gtsID string) *ValidationResult {
 	schemaEntity := s.Get(obj.SchemaID)
 	if schemaEntity == nil {
 		return &ValidationResult{
-			ID:    gtsID,
+			ID:    instanceID,
 			OK:    false,
 			Error: (&StoreGtsSchemaNotFoundError{EntityID: obj.SchemaID}).Error(),
 		}
@@ -90,17 +106,27 @@ func (s *GtsStore) ValidateInstance(gtsID string) *ValidationResult {
 
 	if !schemaEntity.IsSchema {
 		return &ValidationResult{
-			ID:    gtsID,
+			ID:    instanceID,
 			OK:    false,
 			Error: fmt.Sprintf("entity '%s' is not a schema", obj.SchemaID),
 		}
 	}
 
+	// Check x-gts-abstract: abstract types cannot have direct instances.
+	if isAbstract, ok := schemaEntity.Content[KeyXGtsAbstract]; ok {
+		if abstract, isBool := isAbstract.(bool); isBool && abstract {
+			return &ValidationResult{
+				ID:    instanceID,
+				OK:    false,
+				Error: fmt.Sprintf("type '%s' is abstract and cannot have direct instances", obj.SchemaID),
+			}
+		}
+	}
+
 	// Validate the instance against the schema
-	err = s.validateWithSchema(obj.Content, schemaEntity.Content)
-	if err != nil {
+	if err := s.validateWithSchema(obj.Content, schemaEntity.Content); err != nil {
 		return &ValidationResult{
-			ID:    gtsID,
+			ID:    instanceID,
 			OK:    false,
 			Error: err.Error(),
 		}
@@ -116,14 +142,14 @@ func (s *GtsStore) ValidateInstance(gtsID string) *ValidationResult {
 			errorMsgs = append(errorMsgs, e.Error())
 		}
 		return &ValidationResult{
-			ID:    gtsID,
+			ID:    instanceID,
 			OK:    false,
 			Error: fmt.Sprintf("x-gts-ref validation failed: %s", strings.Join(errorMsgs, "; ")),
 		}
 	}
 
 	return &ValidationResult{
-		ID:    gtsID,
+		ID:    instanceID,
 		OK:    true,
 		Error: "",
 	}

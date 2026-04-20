@@ -493,6 +493,23 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	// Apply defaults
 	effectiveTraits := applyDefaults(effectiveTraitSchema, mergedTraits, 0)
 
+	// Check if the leaf schema (rightmost segment) is abstract.
+	// Abstract schemas are not leaf schemas, so trait validation is skipped entirely —
+	// they are not required to provide trait values or satisfy required constraints.
+	leafEntity := s.Get(schemaID)
+	isAbstractLeaf := false
+	if leafEntity != nil {
+		if val, ok := leafEntity.Content[KeyXGtsAbstract]; ok {
+			if ab, isBool := val.(bool); isBool && ab {
+				isAbstractLeaf = true
+			}
+		}
+	}
+
+	if isAbstractLeaf {
+		return &ValidateSchemaTraitsResult{SchemaID: schemaID, OK: true}
+	}
+
 	// Validate
 	errs := validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)
 	if len(errs) > 0 {
@@ -632,6 +649,16 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 	}
 
 	if entity.IsSchema {
+		// Validate schema modifiers (x-gts-final, x-gts-abstract): type, mutual exclusion, placement.
+		if err := ValidateSchemaModifiers(entity.Content); err != nil {
+			return &ValidateEntityResult{
+				EntityID:   entityID,
+				EntityType: "schema",
+				OK:         false,
+				Error:      err.Error(),
+			}
+		}
+
 		// For schemas: run OP#12 chain validation + OP#13 traits validation
 		chainResult := s.ValidateSchemaChain(entityID)
 		if !chainResult.OK {
@@ -665,6 +692,16 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 		}
 
 		return &ValidateEntityResult{EntityID: entityID, EntityType: "schema", OK: true}
+	}
+
+	// Check that schema-only keywords do not appear in instance content.
+	if err := ValidateInstanceModifiers(entity.Content); err != nil {
+		return &ValidateEntityResult{
+			EntityID:   entityID,
+			EntityType: "instance",
+			OK:         false,
+			Error:      err.Error(),
+		}
 	}
 
 	// For instances: validate against schema

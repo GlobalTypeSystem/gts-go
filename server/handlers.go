@@ -6,6 +6,7 @@ Released under Apache License 2.0
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -130,7 +131,12 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entity := gts.NewJsonEntity(content, gts.DefaultGtsConfig())
-	if entity.GtsID == nil {
+
+	// Determine the effective id used both to key the entity in the store
+	// and to echo back to the client. Well-known instances and schemas use
+	// their GTS id; anonymous instances (spec §3.7) use their raw id field.
+	responseID := entity.EffectiveID()
+	if responseID == "" {
 		status := http.StatusOK
 		if validationParam == "true" {
 			status = http.StatusUnprocessableEntity
@@ -203,32 +209,48 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check if instance validation is requested via query parameter
-	validation := r.URL.Query().Get("validation")
-	if validation == "true" && !entity.IsSchema {
-		// For non-schema entities with validation=true, register first then validate
-		err := s.store.Register(entity)
-		if err != nil {
-			s.writeJSON(w, http.StatusOK, map[string]any{
+	// Validate schema modifiers (x-gts-final, x-gts-abstract) for schemas.
+	if entity.IsSchema {
+		if err := gts.ValidateSchemaModifiers(entity.Content); err != nil {
+			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"ok":    false,
 				"error": err.Error(),
 			})
 			return
 		}
+	}
 
-		// Validate the instance
-		result := s.store.ValidateInstance(entity.GtsID.ID)
-		if !result.OK {
-			s.writeJSON(w, http.StatusOK, map[string]any{
+	// Check if validation is requested via query parameter
+	validation := r.URL.Query().Get("validate")
+	if validation == "" {
+		validation = r.URL.Query().Get("validation")
+	}
+	if validation == "true" {
+		err := s.store.RegisterWithValidation(entity, func(id string) error {
+			if entity.IsSchema {
+				if r := s.store.ValidateSchemaChain(id); !r.OK {
+					return errors.New(r.Error)
+				}
+				if r := s.store.ValidateSchemaTraits(id); !r.OK {
+					return errors.New(r.Error)
+				}
+				return nil
+			}
+			if r := s.store.ValidateInstance(id); !r.OK {
+				return errors.New(r.Error)
+			}
+			return nil
+		})
+		if err != nil {
+			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"ok":    false,
-				"error": result.Error,
+				"error": err.Error(),
 			})
 			return
 		}
-
 		s.writeJSON(w, http.StatusOK, map[string]any{
 			"ok":     true,
-			"gts_id": entity.GtsID.ID,
+			"gts_id": responseID,
 		})
 		return
 	}
@@ -244,7 +266,7 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"ok":     true,
-		"gts_id": entity.GtsID.ID,
+		"gts_id": responseID,
 	})
 }
 
@@ -260,7 +282,8 @@ func (s *Server) handleAddEntities(w http.ResponseWriter, r *http.Request) {
 
 	for i, content := range contents {
 		entity := gts.NewJsonEntity(content, gts.DefaultGtsConfig())
-		if entity.GtsID == nil {
+		responseID := entity.EffectiveID()
+		if responseID == "" {
 			result[i] = map[string]any{
 				"ok":    false,
 				"error": "Unable to extract GTS ID from entity",
@@ -279,7 +302,7 @@ func (s *Server) handleAddEntities(w http.ResponseWriter, r *http.Request) {
 
 		result[i] = map[string]any{
 			"ok":     true,
-			"gts_id": entity.GtsID.ID,
+			"gts_id": responseID,
 		}
 		successCount++
 	}

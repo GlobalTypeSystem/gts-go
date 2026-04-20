@@ -322,6 +322,23 @@ export GTS_BASE_URL=http://127.0.0.1:8001
 pytest
 ```
 
+#### Raising the open-files limit (macOS)
+
+The gts-spec suite uses `httprunner`, which leaks a keep-alive socket per
+test class (the underlying `requests.Session` is never closed). File
+descriptors grow linearly and hit macOS's default 256 soft cap around
+test ~240 with `EMFILE: Too many open files`. Before running the full
+suite, raise the limit in your shell:
+
+```bash
+ulimit -n 4096
+pytest
+```
+
+Linux defaults (typically 1024+) are usually high enough, but bumping
+the limit there is harmless. `make e2e` runs in a subshell, so set
+`ulimit` in the shell that invokes it.
+
 ## License
 
 Apache License 2.0

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 )
 
 // StoreGtsObjectNotFoundError is returned when a GTS entity is not found in the store
@@ -60,8 +61,15 @@ func DefaultRegistryConfig() *RegistryConfig {
 	}
 }
 
-// GtsStore manages a collection of JSON entities and schemas with optional GTS reference validation
+// GtsStore manages a collection of JSON entities and schemas with optional GTS reference validation.
+//
+// mu serializes writers (Register, RegisterSchema, Unregister, RegisterWithValidation)
+// so that snapshot/register/validate/rollback flows cannot interleave with other
+// writers for the same id. Readers (Get, Items, List, Count, validators) intentionally
+// do not acquire mu — validators are invoked via RegisterWithValidation while mu is
+// already held by the same goroutine, so taking it again would deadlock.
 type GtsStore struct {
+	mu     sync.Mutex
 	byID   map[string]*JsonEntity
 	reader GtsReader
 	config *RegistryConfig
@@ -104,27 +112,62 @@ func (s *GtsStore) populateFromReader() {
 		if entity == nil {
 			break
 		}
-		if entity.GtsID != nil && entity.GtsID.ID != "" {
-			s.byID[entity.GtsID.ID] = entity
+		if key := entity.EffectiveID(); key != "" {
+			s.byID[key] = entity
 		}
 	}
 }
 
-// Register adds a JsonEntity to the store with optional GTS reference validation
+// Register adds a JsonEntity to the store with optional GTS reference validation.
 func (s *GtsStore) Register(entity *JsonEntity) error {
-	if entity.GtsID == nil || entity.GtsID.ID == "" {
-		return fmt.Errorf("entity must have a valid gts_id")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.registerLocked(entity)
+}
+
+// registerLocked is the lock-free body of Register. Callers must hold s.mu.
+func (s *GtsStore) registerLocked(entity *JsonEntity) error {
+	key := entity.EffectiveID()
+	if key == "" {
+		return fmt.Errorf("entity must have a gts_id or a non-empty id field")
 	}
 
-	// Perform validation if enabled
 	if s.config.ValidateGtsReferences {
 		if err := s.validateEntityGtsReferences(entity); err != nil {
-			return fmt.Errorf("GTS reference validation failed for entity %s: %w", entity.GtsID.ID, err)
+			return fmt.Errorf("GTS reference validation failed for entity %s: %w", key, err)
 		}
 	}
 
-	s.byID[entity.GtsID.ID] = entity
-	log.Printf("Registered entity: %s (schema: %v, refs: %d)", entity.GtsID.ID, entity.IsSchema, len(entity.GtsRefs))
+	s.byID[key] = entity
+	log.Printf("Registered entity: %s (schema: %v, refs: %d)", key, entity.IsSchema, len(entity.GtsRefs))
+	return nil
+}
+
+// RegisterWithValidation atomically registers entity, runs validate, and rolls back on
+// failure. The entire snapshot/register/validate/rollback critical section runs under
+// s.mu, so concurrent writers for the same id cannot interleave between the snapshot
+// and the rollback. validate is invoked while s.mu is held; it must not call back into
+// the store's writer methods (Register, Unregister, RegisterSchema, RegisterWithValidation)
+// or it will deadlock. Validators that only read the store are safe.
+func (s *GtsStore) RegisterWithValidation(entity *JsonEntity, validate func(id string) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := entity.EffectiveID()
+	previous, hadPrevious := s.byID[key]
+
+	if err := s.registerLocked(entity); err != nil {
+		return err
+	}
+
+	if err := validate(key); err != nil {
+		if hadPrevious {
+			s.byID[key] = previous
+		} else {
+			delete(s.byID, key)
+		}
+		return err
+	}
 	return nil
 }
 
@@ -147,6 +190,8 @@ func (s *GtsStore) RegisterSchema(typeID string, schema map[string]any) error {
 		IsSchema: true,
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.byID[typeID] = entity
 	return nil
 }
@@ -186,6 +231,14 @@ func (s *GtsStore) GetSchemaContent(typeID string) (map[string]any, error) {
 // Items returns all entity ID and entity pairs
 func (s *GtsStore) Items() map[string]*JsonEntity {
 	return s.byID
+}
+
+// Unregister removes an entity from the store by its effective ID.
+// Used to roll back registrations that fail post-register validation.
+func (s *GtsStore) Unregister(entityID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.byID, entityID)
 }
 
 // Count returns the number of entities in the store
@@ -241,7 +294,7 @@ func (s *GtsStore) validateEntityGtsReferences(entity *JsonEntity) error {
 	var errors []string
 
 	for _, ref := range entity.GtsRefs {
-		if ref.ID == entity.GtsID.ID {
+		if entity.GtsID != nil && ref.ID == entity.GtsID.ID {
 			// Skip self-references
 			continue
 		}
