@@ -97,6 +97,36 @@ func NewJsonEntityWithFile(content map[string]any, cfg *GtsConfig, file *JsonFil
 	return entity
 }
 
+// EffectiveID returns the identifier used to key this entity in a registry
+// and echo back to clients. Resolution order:
+//  1. Parsed GTS ID (schemas and well-known instances).
+//  2. Raw id field value for non-schemas (anonymous instances, spec §3.7) —
+//     used even when the schema reference cannot be resolved; schema presence
+//     is enforced at validation time, not at registration time.
+//  3. File path (+ list sequence for multi-entity files) when the entity
+//     originated from a file. Mirrors gts-rust.
+//
+// Returns "" if none of the above apply.
+func (e *JsonEntity) EffectiveID() string {
+	if e.GtsID != nil && e.GtsID.ID != "" {
+		return e.GtsID.ID
+	}
+	if !e.IsSchema && e.SelectedEntityField != "" {
+		if val, ok := e.Content[e.SelectedEntityField].(string); ok {
+			if id := strings.TrimSpace(val); id != "" {
+				return id
+			}
+		}
+	}
+	if e.File != nil {
+		if e.ListSequence != nil {
+			return fmt.Sprintf("%s#%d", e.File.Path, *e.ListSequence)
+		}
+		return e.File.Path
+	}
+	return ""
+}
+
 // setLabel sets the entity's label based on file, sequence, or GTS ID
 func (e *JsonEntity) setLabel() {
 	if e.File != nil && e.ListSequence != nil {
@@ -256,20 +286,16 @@ func ExtractID(content map[string]any, cfg *GtsConfig) *ExtractIDResult {
 		result.SelectedSchemaIDField = &entity.SelectedSchemaIDField
 	}
 
-	// Return effective_id() based on entity type
-	if entity.IsSchema || (entity.GtsID != nil) {
-		// For schemas and well-known instances: return GTS ID
-		if entity.GtsID != nil {
-			result.ID = entity.GtsID.ID
-		}
-	} else {
-		// For anonymous instances: return instance_id (UUID or non-GTS value from id field)
-		if entity.SelectedEntityField != "" {
-			if val, ok := content[entity.SelectedEntityField]; ok {
-				if strVal, ok := val.(string); ok {
-					result.ID = strVal
-				}
-			}
+	// Diagnostic: for schemas and well-known instances, return the parsed GTS ID.
+	// For non-schema entities without a valid GTS ID (anonymous or malformed),
+	// fall back to the raw value of the selected id field. This differs from
+	// EffectiveID (registrable), which requires a resolvable schema.
+	switch {
+	case entity.GtsID != nil:
+		result.ID = entity.GtsID.ID
+	case !entity.IsSchema && entity.SelectedEntityField != "":
+		if val, ok := content[entity.SelectedEntityField].(string); ok {
+			result.ID = val
 		}
 	}
 
