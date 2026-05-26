@@ -7,10 +7,10 @@ package gts
 
 // SchemaGraphNode represents a node in the schema relationship graph
 type SchemaGraphNode struct {
-	ID       string                      `json:"id"`
-	Refs     map[string]*SchemaGraphNode `json:"refs,omitempty"`
-	SchemaID *SchemaGraphNode            `json:"schema_id,omitempty"`
-	Errors   []string                    `json:"errors,omitempty"`
+	ID     string                      `json:"id"`
+	Refs   map[string]*SchemaGraphNode `json:"refs,omitempty"`
+	TypeID *SchemaGraphNode            `json:"type_id,omitempty"`
+	Errors []string                    `json:"errors,omitempty"`
 }
 
 // BuildSchemaGraph recursively builds a relationship graph for a GTS entity
@@ -57,14 +57,14 @@ func (s *GtsStore) buildNode(gtsID string, seen map[string]bool) *SchemaGraphNod
 		node.Refs = refs
 	}
 
-	// Process schema ID if present
-	if entity.SchemaID != "" {
-		if !isJSONSchemaURL(entity.SchemaID) {
-			node.SchemaID = s.buildNode(entity.SchemaID, seen)
+	// Process type ID if present
+	if entity.TypeID != "" {
+		if !isJSONSchemaURL(entity.TypeID) {
+			node.TypeID = s.buildNode(entity.TypeID, seen)
 		}
-	} else if !entity.IsSchema {
-		// Instance without schema ID is an error
-		node.Errors = append(node.Errors, "Schema not recognized")
+	} else if !entity.IsTypeSchema {
+		// Instance without type ID is an error
+		node.Errors = append(node.Errors, "Type-schema not recognized")
 	}
 
 	return node

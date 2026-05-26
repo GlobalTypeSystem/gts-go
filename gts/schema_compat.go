@@ -28,9 +28,9 @@ import (
 
 // ValidateSchemaChainResult is the result of OP#12 schema chain validation.
 type ValidateSchemaChainResult struct {
-	SchemaID string `json:"schema_id"`
-	OK       bool   `json:"ok"`
-	Error    string `json:"error,omitempty"`
+	TypeID string `json:"type_id"`
+	OK     bool   `json:"ok"`
+	Error  string `json:"error,omitempty"`
 }
 
 // ValidateSchemaChain validates each derived schema against its base across the chain (OP#12).
@@ -38,14 +38,14 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 	gid, err := NewGtsID(schemaID)
 	if err != nil {
 		return &ValidateSchemaChainResult{
-			SchemaID: schemaID,
-			OK:       false,
-			Error:    fmt.Sprintf("Invalid GTS ID: %v", err),
+			TypeID: schemaID,
+			OK:     false,
+			Error:  fmt.Sprintf("Invalid GTS ID: %v", err),
 		}
 	}
 
 	if len(gid.Segments) < 2 {
-		return &ValidateSchemaChainResult{SchemaID: schemaID, OK: true}
+		return &ValidateSchemaChainResult{TypeID: schemaID, OK: true}
 	}
 
 	segments := gid.Segments
@@ -59,9 +59,9 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 			if isFinal, ok := baseEntity.Content[KeyXGtsFinal]; ok {
 				if final, isBool := isFinal.(bool); isBool && final {
 					return &ValidateSchemaChainResult{
-						SchemaID: schemaID,
-						OK:       false,
-						Error:    fmt.Sprintf("base type '%s' is final and cannot be extended", baseID),
+						TypeID: schemaID,
+						OK:     false,
+						Error:  fmt.Sprintf("base type '%s' is final and cannot be extended", baseID),
 					}
 				}
 			}
@@ -70,17 +70,17 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 		baseContent, err := s.resolveSchemaRefsChecked(baseID)
 		if err != nil {
 			return &ValidateSchemaChainResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    fmt.Sprintf("Schema '%s' has %v", baseID, err),
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("Schema '%s' has %v", baseID, err),
 			}
 		}
 		derivedContent, err := s.resolveSchemaRefsChecked(derivedID)
 		if err != nil {
 			return &ValidateSchemaChainResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    fmt.Sprintf("Schema '%s' has %v", derivedID, err),
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("Schema '%s' has %v", derivedID, err),
 			}
 		}
 
@@ -90,8 +90,8 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 		errs := validateSchemaCompatibility(baseEff, derivedEff, baseID, derivedID, false)
 		if len(errs) > 0 {
 			return &ValidateSchemaChainResult{
-				SchemaID: schemaID,
-				OK:       false,
+				TypeID: schemaID,
+				OK:     false,
 				Error: fmt.Sprintf(
 					"Schema '%s' is not compatible with base '%s': %s",
 					derivedID, baseID, strings.Join(errs, "; "),
@@ -100,7 +100,7 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 		}
 	}
 
-	return &ValidateSchemaChainResult{SchemaID: schemaID, OK: true}
+	return &ValidateSchemaChainResult{TypeID: schemaID, OK: true}
 }
 
 // buildIDFromSegments reconstructs a GTS ID string from a slice of segments.
@@ -807,7 +807,7 @@ func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, er
 	if entity == nil {
 		return nil, fmt.Errorf("schema '%s' not found", schemaID)
 	}
-	if !entity.IsSchema {
+	if !entity.IsTypeSchema {
 		return nil, fmt.Errorf("entity '%s' is not a schema", schemaID)
 	}
 	return s.resolveRefs(entity.Content)
@@ -885,7 +885,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			}
 
 			entity := s.Get(canonical)
-			if entity != nil && entity.IsSchema {
+			if entity != nil && entity.IsTypeSchema {
 				visited[canonical] = true
 				resolved := s.resolveRefsInner(entity.Content, visited, cycleFound, dupFound)
 				delete(visited, canonical)

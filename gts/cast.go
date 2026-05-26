@@ -21,7 +21,7 @@ type CastResult struct {
 
 // Cast transforms an instance to conform to a target schema version
 // see gts-python store.py cast method
-func (s *GtsStore) Cast(instanceID, toSchemaID string) (*CastResult, error) {
+func (s *GtsStore) Cast(instanceID, toTypeID string) (*CastResult, error) {
 	// Get instance entity
 	instanceEntity := s.Get(instanceID)
 	if instanceEntity == nil {
@@ -29,26 +29,26 @@ func (s *GtsStore) Cast(instanceID, toSchemaID string) (*CastResult, error) {
 	}
 
 	// Get target schema
-	toSchema := s.Get(toSchemaID)
+	toSchema := s.Get(toTypeID)
 	if toSchema == nil {
-		return nil, &StoreGtsSchemaNotFoundError{EntityID: toSchemaID}
+		return nil, &StoreGtsSchemaNotFoundError{EntityID: toTypeID}
 	}
 
-	// Determine source schema
-	var fromSchemaID string
+	// Determine source type-schema
+	var fromTypeID string
 	var fromSchema *JsonEntity
-	if instanceEntity.IsSchema {
-		// Not allowed to cast directly from a schema
+	if instanceEntity.IsTypeSchema {
+		// Not allowed to cast directly from a type-schema
 		return nil, &StoreGtsCastFromSchemaNotAllowedError{FromID: instanceID}
 	} else {
-		// Casting an instance - need to find its schema
-		fromSchemaID = instanceEntity.SchemaID
-		if fromSchemaID == "" {
+		// Casting an instance - need to find its type-schema
+		fromTypeID = instanceEntity.TypeID
+		if fromTypeID == "" {
 			return nil, &StoreGtsSchemaForInstanceNotFoundError{EntityID: instanceID}
 		}
-		fromSchema = s.Get(fromSchemaID)
+		fromSchema = s.Get(fromTypeID)
 		if fromSchema == nil {
-			return nil, &StoreGtsSchemaNotFoundError{EntityID: fromSchemaID}
+			return nil, &StoreGtsSchemaNotFoundError{EntityID: fromTypeID}
 		}
 	}
 
@@ -58,13 +58,13 @@ func (s *GtsStore) Cast(instanceID, toSchemaID string) (*CastResult, error) {
 	toSchemaContent := toSchema.Content
 
 	// Perform the cast
-	return castInstance(instanceID, toSchemaID, instanceContent, fromSchemaContent, toSchemaContent, s)
+	return castInstance(instanceID, toTypeID, instanceContent, fromSchemaContent, toSchemaContent, s)
 }
 
 // castInstance performs the actual casting logic
 // see gts-python schema_cast.py cast method
 func castInstance(
-	fromInstanceID, toSchemaID string,
+	fromInstanceID, toTypeID string,
 	fromInstanceContent, fromSchemaContent, toSchemaContent map[string]any,
 	store *GtsStore,
 ) (*CastResult, error) {
@@ -72,7 +72,7 @@ func castInstance(
 	targetSchema := flattenSchema(toSchemaContent)
 
 	// Determine direction
-	direction := inferDirection(fromInstanceID, toSchemaID)
+	direction := inferDirection(fromInstanceID, toTypeID)
 
 	// Determine which is old/new based on direction
 	var oldSchema, newSchema map[string]any
@@ -116,9 +116,9 @@ func castInstance(
 	return &CastResult{
 		CompatibilityResult: &CompatibilityResult{
 			FromID:                 fromInstanceID,
-			ToID:                   toSchemaID,
+			ToID:                   toTypeID,
 			OldID:                  fromInstanceID,
-			NewID:                  toSchemaID,
+			NewID:                  toTypeID,
 			Direction:              direction,
 			AddedProperties:        deduplicate(added),
 			RemovedProperties:      deduplicate(removed),
@@ -333,7 +333,7 @@ func validateWithGtsIDTolerance(instance, schema map[string]any, store *GtsStore
 
 	// Pre-load all schemas from the store
 	for id, entity := range store.byID {
-		if entity.IsSchema {
+		if entity.IsTypeSchema {
 			compiler.AddResource(id, entity.Content)
 		}
 	}

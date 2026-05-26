@@ -148,8 +148,8 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Always validate schema constraints for schemas
-	if entity.IsSchema {
+	// Always validate schema constraints for type-schemas
+	if entity.IsTypeSchema {
 		// Validate $id field for GTS schemas - check for specific invalid patterns
 		if idField, exists := entity.Content["$id"]; exists {
 			if idStr, ok := idField.(string); ok {
@@ -209,8 +209,8 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate schema modifiers (x-gts-final, x-gts-abstract) for schemas.
-	if entity.IsSchema {
+	// Validate schema modifiers (x-gts-final, x-gts-abstract) for type-schemas.
+	if entity.IsTypeSchema {
 		if err := gts.ValidateSchemaModifiers(entity.Content); err != nil {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"ok":    false,
@@ -227,7 +227,7 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 	}
 	if validation == "true" {
 		err := s.store.RegisterWithValidation(entity, func(id string) error {
-			if entity.IsSchema {
+			if entity.IsTypeSchema {
 				if r := s.store.ValidateSchemaChain(id); !r.OK {
 					return errors.New(r.Error)
 				}
@@ -433,15 +433,15 @@ func (s *Server) handleResolveRelationships(w http.ResponseWriter, r *http.Reque
 
 // OP#8 - Compatibility
 func (s *Server) handleCompatibility(w http.ResponseWriter, r *http.Request) {
-	oldSchemaID := s.getQueryParam(r, "old_schema_id")
-	newSchemaID := s.getQueryParam(r, "new_schema_id")
+	oldTypeID := s.getQueryParam(r, "old_type_id")
+	newTypeID := s.getQueryParam(r, "new_type_id")
 
-	if oldSchemaID == "" || newSchemaID == "" {
-		s.writeError(w, http.StatusBadRequest, "Missing old_schema_id or new_schema_id parameter")
+	if oldTypeID == "" || newTypeID == "" {
+		s.writeError(w, http.StatusBadRequest, "Missing old_type_id or new_type_id parameter")
 		return
 	}
 
-	result := s.store.CheckCompatibility(oldSchemaID, newSchemaID)
+	result := s.store.CheckCompatibility(oldTypeID, newTypeID)
 	s.writeJSON(w, http.StatusOK, result)
 }
 
@@ -449,14 +449,14 @@ func (s *Server) handleCompatibility(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCast(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		InstanceID string `json:"instance_id"`
-		ToSchemaID string `json:"to_schema_id"`
+		ToTypeID   string `json:"to_type_id"`
 	}
 	if err := s.readJSON(r, &req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid JSON")
 		return
 	}
 
-	result, err := s.store.Cast(req.InstanceID, req.ToSchemaID)
+	result, err := s.store.Cast(req.InstanceID, req.ToTypeID)
 	if err != nil {
 		s.writeJSON(w, http.StatusOK, map[string]any{
 			"error": err.Error(),
@@ -487,24 +487,24 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, result)
 }
 
-// OP#12 - Validate Schema (schema-vs-schema chain validation)
+// OP#12 - Validate Type-Schema (schema-vs-schema chain validation)
 func (s *Server) handleValidateSchema(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SchemaID string `json:"schema_id"`
+		TypeID string `json:"type_id"`
 	}
 	if err := s.readJSON(r, &req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid JSON")
 		return
 	}
-	if req.SchemaID == "" {
-		s.writeError(w, http.StatusBadRequest, "Missing schema_id")
+	if req.TypeID == "" {
+		s.writeError(w, http.StatusBadRequest, "Missing type_id")
 		return
 	}
 
-	result := s.store.ValidateSchemaChain(req.SchemaID)
+	result := s.store.ValidateSchemaChain(req.TypeID)
 	if result.OK {
 		// Also run OP#13 traits validation
-		traitsResult := s.store.ValidateSchemaTraits(req.SchemaID)
+		traitsResult := s.store.ValidateSchemaTraits(req.TypeID)
 		if !traitsResult.OK {
 			s.writeJSON(w, http.StatusOK, map[string]any{
 				"ok":    false,

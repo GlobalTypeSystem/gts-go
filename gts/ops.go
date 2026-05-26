@@ -14,7 +14,7 @@ import (
 type IDValidationResult struct {
 	ID         string `json:"id"`
 	Valid      bool   `json:"valid"`
-	IsSchema   bool   `json:"is_schema"`
+	IsType     bool   `json:"is_type"`
 	IsWildcard bool   `json:"is_wildcard"`
 	Error      string `json:"error,omitempty"`
 }
@@ -33,13 +33,13 @@ func ValidateGtsID(gtsID string) *IDValidationResult {
 		_, err := validateWildcard(gtsID)
 		if err != nil {
 			result.Valid = false
-			result.IsSchema = false
+			result.IsType = false
 			result.Error = formatValidateError(gtsID, err)
 			return result
 		}
 
 		result.Valid = true
-		result.IsSchema = strings.HasSuffix(gtsID, "~*") || strings.HasSuffix(gtsID, ".*")
+		result.IsType = strings.HasSuffix(gtsID, "~*") || strings.HasSuffix(gtsID, ".*")
 		return result
 	}
 
@@ -47,13 +47,13 @@ func ValidateGtsID(gtsID string) *IDValidationResult {
 	id, err := NewGtsID(gtsID)
 	if err != nil {
 		result.Valid = false
-		result.IsSchema = false
+		result.IsType = false
 		result.Error = formatValidateError(gtsID, err)
 		return result
 	}
 
 	result.Valid = true
-	result.IsSchema = id.IsType()
+	result.IsType = id.IsType()
 	return result
 }
 

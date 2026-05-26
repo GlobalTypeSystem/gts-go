@@ -290,9 +290,9 @@ func removeXGtsFields(schema map[string]any) map[string]any {
 
 // ValidateSchemaTraitsResult is the result of OP#13 schema traits validation.
 type ValidateSchemaTraitsResult struct {
-	SchemaID string `json:"schema_id"`
-	OK       bool   `json:"ok"`
-	Error    string `json:"error,omitempty"`
+	TypeID string `json:"type_id"`
+	OK     bool   `json:"ok"`
+	Error  string `json:"error,omitempty"`
 }
 
 // ValidateSchemaTraits validates schema traits across the inheritance chain (OP#13).
@@ -302,9 +302,9 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	gid, err := NewGtsID(schemaID)
 	if err != nil {
 		return &ValidateSchemaTraitsResult{
-			SchemaID: schemaID,
-			OK:       false,
-			Error:    fmt.Sprintf("Invalid GTS ID: %v", err),
+			TypeID: schemaID,
+			OK:     false,
+			Error:  fmt.Sprintf("Invalid GTS ID: %v", err),
 		}
 	}
 
@@ -327,9 +327,9 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		entity := s.Get(segSchemaID)
 		if entity == nil {
 			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    fmt.Sprintf("Schema '%s' not found for trait validation", segSchemaID),
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("Schema '%s' not found for trait validation", segSchemaID),
 			}
 		}
 
@@ -358,9 +358,9 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		resolved, err := s.resolveRefs(normalized)
 		if err != nil {
 			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    fmt.Sprintf("Schema '%s' trait schema has %v", schemaID, err),
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("Schema '%s' trait schema has %v", schemaID, err),
 			}
 		}
 		traitSchemas[i] = resolved
@@ -392,8 +392,8 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 					if oldDefault, exists := knownDefaults[p.name]; exists {
 						if !jsonEqual(oldDefault, newDefault) {
 							return &ValidateSchemaTraitsResult{
-								SchemaID: schemaID,
-								OK:       false,
+								TypeID: schemaID,
+								OK:     false,
 								Error: fmt.Sprintf(
 									"Schema '%s' trait validation failed: trait schema default for '%s' in '%s' overrides default set by ancestor",
 									schemaID, p.name, lv.segSchemaID,
@@ -412,8 +412,8 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 			if existing, exists := mergedTraits[k]; exists {
 				if lockedTraits[k] && !jsonEqual(existing, v) {
 					return &ValidateSchemaTraitsResult{
-						SchemaID: schemaID,
-						OK:       false,
+						TypeID: schemaID,
+						OK:     false,
 						Error: fmt.Sprintf(
 							"Schema '%s' trait validation failed: trait '%s' in '%s' overrides value set by ancestor",
 							schemaID, k, lv.segSchemaID,
@@ -446,8 +446,8 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		}
 		if containsXGtsTraits(ts) {
 			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
+				TypeID: schemaID,
+				OK:     false,
 				Error: fmt.Sprintf(
 					"x-gts-traits-schema[%d] contains 'x-gts-traits' — trait values must not appear inside a trait schema definition",
 					i,
@@ -461,28 +461,28 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	if len(traitSchemas) == 0 {
 		if hasTraitValues {
 			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    "x-gts-traits values provided but no x-gts-traits-schema is defined in the inheritance chain",
+				TypeID: schemaID,
+				OK:     false,
+				Error:  "x-gts-traits values provided but no x-gts-traits-schema is defined in the inheritance chain",
 			}
 		}
-		return &ValidateSchemaTraitsResult{SchemaID: schemaID, OK: true}
+		return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
 	}
 
 	// Check for nil (non-object) trait schemas and enforce type:object
 	for i, ts := range traitSchemas {
 		if ts == nil {
 			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    fmt.Sprintf("x-gts-traits-schema[%d] is not a valid JSON Schema object", i),
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("x-gts-traits-schema[%d] is not a valid JSON Schema object", i),
 			}
 		}
 		if t, _ := ts["type"].(string); t != "object" {
 			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    fmt.Sprintf("x-gts-traits-schema[%d] must have \"type\": \"object\"", i),
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("x-gts-traits-schema[%d] must have \"type\": \"object\"", i),
 			}
 		}
 	}
@@ -507,20 +507,20 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	}
 
 	if isAbstractLeaf {
-		return &ValidateSchemaTraitsResult{SchemaID: schemaID, OK: true}
+		return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
 	}
 
 	// Validate
 	errs := validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)
 	if len(errs) > 0 {
 		return &ValidateSchemaTraitsResult{
-			SchemaID: schemaID,
-			OK:       false,
-			Error:    fmt.Sprintf("Schema '%s' trait validation failed: %s", schemaID, strings.Join(errs, "; ")),
+			TypeID: schemaID,
+			OK:     false,
+			Error:  fmt.Sprintf("Schema '%s' trait validation failed: %s", schemaID, strings.Join(errs, "; ")),
 		}
 	}
 
-	return &ValidateSchemaTraitsResult{SchemaID: schemaID, OK: true}
+	return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
 }
 
 // walkSchema applies a key transform and a recursive map transform to every node in a schema.
@@ -648,7 +648,7 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 		}
 	}
 
-	if entity.IsSchema {
+	if entity.IsTypeSchema {
 		// Validate schema modifiers (x-gts-final, x-gts-abstract): type, mutual exclusion, placement.
 		if err := ValidateSchemaModifiers(entity.Content); err != nil {
 			return &ValidateEntityResult{
@@ -715,9 +715,9 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 		}
 	}
 
-	// Also run OP#12 chain validation and OP#13 traits validation on the schema
-	if entity.SchemaID != "" {
-		chainResult := s.ValidateSchemaChain(entity.SchemaID)
+	// Also run OP#12 chain validation and OP#13 traits validation on the type-schema
+	if entity.TypeID != "" {
+		chainResult := s.ValidateSchemaChain(entity.TypeID)
 		if !chainResult.OK {
 			return &ValidateEntityResult{
 				EntityID:   entityID,
@@ -727,7 +727,7 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 			}
 		}
 
-		traitsResult := s.ValidateSchemaTraits(entity.SchemaID)
+		traitsResult := s.ValidateSchemaTraits(entity.TypeID)
 		if !traitsResult.OK {
 			return &ValidateEntityResult{
 				EntityID:   entityID,

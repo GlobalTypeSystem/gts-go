@@ -70,7 +70,7 @@ func loadConfig(path string) *gts.GtsConfig {
 
 	var data struct {
 		EntityIDFields []string `json:"entity_id_fields"`
-		SchemaIDFields []string `json:"schema_id_fields"`
+		TypeIDFields   []string `json:"type_id_fields"`
 	}
 
 	if err := json.NewDecoder(f).Decode(&data); err != nil {
@@ -80,7 +80,7 @@ func loadConfig(path string) *gts.GtsConfig {
 
 	return &gts.GtsConfig{
 		EntityIDFields: data.EntityIDFields,
-		SchemaIDFields: data.SchemaIDFields,
+		TypeIDFields:   data.TypeIDFields,
 	}
 }
 

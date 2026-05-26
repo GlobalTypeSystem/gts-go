@@ -30,8 +30,8 @@ func (l *gtsURLLoader) Load(url string) (any, error) {
 		if entity == nil {
 			return nil, fmt.Errorf("unresolvable GTS reference: %s", url)
 		}
-		if !entity.IsSchema {
-			return nil, fmt.Errorf("GTS reference is not a schema: %s", url)
+		if !entity.IsTypeSchema {
+			return nil, fmt.Errorf("GTS reference is not a type-schema: %s", url)
 		}
 		return entity.Content, nil
 	}
@@ -85,8 +85,8 @@ func (s *GtsStore) ValidateInstance(instanceID string) *ValidationResult {
 		}
 	}
 
-	// Check if instance has a schema ID
-	if obj.SchemaID == "" {
+	// Check if instance has a type ID
+	if obj.TypeID == "" {
 		return &ValidationResult{
 			ID:    instanceID,
 			OK:    false,
@@ -94,21 +94,21 @@ func (s *GtsStore) ValidateInstance(instanceID string) *ValidationResult {
 		}
 	}
 
-	// Get the schema from store
-	schemaEntity := s.Get(obj.SchemaID)
+	// Get the type-schema from store
+	schemaEntity := s.Get(obj.TypeID)
 	if schemaEntity == nil {
 		return &ValidationResult{
 			ID:    instanceID,
 			OK:    false,
-			Error: (&StoreGtsSchemaNotFoundError{EntityID: obj.SchemaID}).Error(),
+			Error: (&StoreGtsSchemaNotFoundError{EntityID: obj.TypeID}).Error(),
 		}
 	}
 
-	if !schemaEntity.IsSchema {
+	if !schemaEntity.IsTypeSchema {
 		return &ValidationResult{
 			ID:    instanceID,
 			OK:    false,
-			Error: fmt.Sprintf("entity '%s' is not a schema", obj.SchemaID),
+			Error: fmt.Sprintf("entity '%s' is not a type-schema", obj.TypeID),
 		}
 	}
 
@@ -118,7 +118,7 @@ func (s *GtsStore) ValidateInstance(instanceID string) *ValidationResult {
 			return &ValidationResult{
 				ID:    instanceID,
 				OK:    false,
-				Error: fmt.Sprintf("type '%s' is abstract and cannot have direct instances", obj.SchemaID),
+				Error: fmt.Sprintf("type '%s' is abstract and cannot have direct instances", obj.TypeID),
 			}
 		}
 	}
@@ -270,7 +270,7 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 	// Pre-load all schemas from the store (matches Python's store dict pre-population)
 	// Note: Store IDs are already normalized (without gts:// prefix)
 	for id, entity := range s.byID {
-		if entity.IsSchema && id != normalizedSchemaID {
+		if entity.IsTypeSchema && id != normalizedSchemaID {
 			if err := compiler.AddResource(id, entity.Content); err != nil {
 				// Ignore errors - gtsURLLoader will handle dynamic resolution
 				continue

@@ -201,7 +201,7 @@ func TestValidateSchema(t *testing.T) {
 		if err == nil {
 			t.Fatal("Expected error for non-schema ID")
 		}
-		if !strings.Contains(err.Error(), "is not a schema") {
+		if !strings.Contains(err.Error(), "is not a type-schema") {
 			t.Errorf("Expected 'is not a schema' error, got: %v", err)
 		}
 	})
@@ -228,8 +228,8 @@ func TestValidateSchema(t *testing.T) {
 			"name":  "Test Instance",
 		}, DefaultGtsConfig())
 
-		// Force it to be treated as non-schema
-		instance.IsSchema = false
+		// Force it to be treated as non-type-schema
+		instance.IsTypeSchema = false
 		err := store.Register(instance)
 		if err != nil {
 			t.Fatalf("Failed to register instance: %v", err)
@@ -237,9 +237,9 @@ func TestValidateSchema(t *testing.T) {
 
 		err = store.ValidateSchema("gts.test.pkg.ns.instance.v1~")
 		if err == nil {
-			t.Fatal("Expected error for entity that is not a schema")
+			t.Fatal("Expected error for entity that is not a type-schema")
 		}
-		if !strings.Contains(err.Error(), "is not a schema") {
+		if !strings.Contains(err.Error(), "is not a type-schema") {
 			t.Errorf("Expected 'is not a schema' error, got: %v", err)
 		}
 	})

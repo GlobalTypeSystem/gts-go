@@ -19,25 +19,25 @@ type JsonFile struct {
 
 // JsonEntity represents a JSON object with extracted GTS identifiers
 type JsonEntity struct {
-	GtsID                 *GtsID
-	SchemaID              string
-	SelectedEntityField   string
-	SelectedSchemaIDField string
-	IsSchema              bool
-	Content               map[string]any
-	File                  *JsonFile
-	ListSequence          *int
-	Label                 string
-	GtsRefs               []*GtsReference // All GTS ID references found in content
+	GtsID               *GtsID
+	TypeID              string
+	SelectedEntityField string
+	SelectedTypeIDField string
+	IsTypeSchema        bool
+	Content             map[string]any
+	File                *JsonFile
+	ListSequence        *int
+	Label               string
+	GtsRefs             []*GtsReference // All GTS ID references found in content
 }
 
 // ExtractIDResult holds the result of extracting ID information from JSON content
 type ExtractIDResult struct {
-	ID                    string  `json:"id"`
-	SchemaID              *string `json:"schema_id"`
-	SelectedEntityField   *string `json:"selected_entity_field"`
-	SelectedSchemaIDField *string `json:"selected_schema_id_field"`
-	IsSchema              bool    `json:"is_schema"`
+	ID                  string  `json:"id"`
+	TypeID              *string `json:"type_id"`
+	SelectedEntityField *string `json:"selected_entity_field"`
+	SelectedTypeIDField *string `json:"selected_type_id_field"`
+	IsTypeSchema        bool    `json:"is_type_schema"`
 }
 
 // NewJsonEntity creates a JsonEntity from JSON content using the provided config
@@ -53,7 +53,7 @@ func NewJsonEntityWithFile(content map[string]any, cfg *GtsConfig, file *JsonFil
 
 	entity := &JsonEntity{
 		Content:      content,
-		IsSchema:     isJSONSchema(content),
+		IsTypeSchema: isJSONSchema(content),
 		File:         file,
 		ListSequence: listSequence,
 	}
@@ -61,12 +61,12 @@ func NewJsonEntityWithFile(content map[string]any, cfg *GtsConfig, file *JsonFil
 	// Extract entity ID
 	entityIDValue := entity.calcJSONEntityID(cfg)
 
-	// Extract schema ID
-	entity.SchemaID = entity.calcJSONSchemaID(cfg, entityIDValue)
+	// Extract type ID
+	entity.TypeID = entity.calcJSONTypeID(cfg, entityIDValue)
 
 	// ID extraction logic based on entity type
-	if entity.IsSchema {
-		// For schemas: use entity ID (should be from $id field)
+	if entity.IsTypeSchema {
+		// For type-schemas: use entity ID (should be from $id field)
 		if entityIDValue != "" && IsValidGtsID(entityIDValue) {
 			gtsID, _ := NewGtsID(entityIDValue)
 			entity.GtsID = gtsID
@@ -77,14 +77,14 @@ func NewJsonEntityWithFile(content map[string]any, cfg *GtsConfig, file *JsonFil
 			// Well-known instance: GTS ID in id field
 			gtsID, _ := NewGtsID(entityIDValue)
 			entity.GtsID = gtsID
-			// Schema ID should be derived from the chain if not explicitly set
-			if entity.SchemaID == "" && entity.SelectedEntityField != "" {
-				entity.SchemaID = entity.calcJSONSchemaID(cfg, entityIDValue)
+			// Type ID should be derived from the chain if not explicitly set
+			if entity.TypeID == "" && entity.SelectedEntityField != "" {
+				entity.TypeID = entity.calcJSONTypeID(cfg, entityIDValue)
 			}
 		} else {
 			// Anonymous instance: non-GTS ID in id field, GTS type in type field
 			// GtsID remains nil for anonymous instances
-			// entity.SchemaID should be set from type field
+			// entity.TypeID should be set from type field
 		}
 	}
 
@@ -111,7 +111,7 @@ func (e *JsonEntity) EffectiveID() string {
 	if e.GtsID != nil && e.GtsID.ID != "" {
 		return e.GtsID.ID
 	}
-	if !e.IsSchema && e.SelectedEntityField != "" {
+	if !e.IsTypeSchema && e.SelectedEntityField != "" {
 		if val, ok := e.Content[e.SelectedEntityField].(string); ok {
 			if id := strings.TrimSpace(val); id != "" {
 				return id
@@ -216,47 +216,47 @@ func (e *JsonEntity) calcJSONEntityID(cfg *GtsConfig) string {
 	return value
 }
 
-// calcJSONSchemaID extracts the schema ID from JSON content
-func (e *JsonEntity) calcJSONSchemaID(cfg *GtsConfig, entityIDValue string) string {
-	if e.IsSchema {
-		// For derived schemas, derive parent type from chain
+// calcJSONTypeID extracts the type ID from JSON content
+func (e *JsonEntity) calcJSONTypeID(cfg *GtsConfig, entityIDValue string) string {
+	if e.IsTypeSchema {
+		// For derived type-schemas, derive parent type from chain
 		if entityIDValue != "" && IsValidGtsID(entityIDValue) && strings.HasSuffix(entityIDValue, "~") {
 			firstTilde := strings.Index(entityIDValue, "~")
 			if firstTilde > 0 {
 				secondTilde := strings.Index(entityIDValue[firstTilde+1:], "~")
 				if secondTilde > 0 {
-					// This is a derived schema, derive parent from chain
-					e.SelectedSchemaIDField = e.SelectedEntityField
+					// This is a derived type-schema, derive parent from chain
+					e.SelectedTypeIDField = e.SelectedEntityField
 					return entityIDValue[:firstTilde+1]
 				}
 			}
 		}
 
-		// For base schemas: get schema ID from $schema field
+		// For base type-schemas: get type ID from $schema field
 		if schemaValue := e.getFieldValue("$schema"); schemaValue != "" {
-			e.SelectedSchemaIDField = "$schema"
+			e.SelectedTypeIDField = "$schema"
 			return schemaValue
 		}
 		return ""
 	}
 
-	// For instances: try entity ID chain first, then SchemaIDFields
+	// For instances: try entity ID chain first, then TypeIDFields
 	if entityIDValue != "" && IsValidGtsID(entityIDValue) {
 		// For instances, find last ~ and return everything up to and including it
 		// But skip if entity ID ends with ~ (that would be a type, not an instance)
 		if !strings.HasSuffix(entityIDValue, "~") {
 			lastTilde := strings.LastIndex(entityIDValue, "~")
 			if lastTilde > 0 {
-				e.SelectedSchemaIDField = e.SelectedEntityField
+				e.SelectedTypeIDField = e.SelectedEntityField
 				return entityIDValue[:lastTilde+1]
 			}
 		}
 	}
 
-	// If no entity ID found, use SchemaIDFields to find schema reference
-	field, value := e.firstNonEmptyField(cfg.SchemaIDFields)
+	// If no entity ID found, use TypeIDFields to find type reference
+	field, value := e.firstNonEmptyField(cfg.TypeIDFields)
 	if value != "" {
-		e.SelectedSchemaIDField = field
+		e.SelectedTypeIDField = field
 		return value
 	}
 
@@ -268,12 +268,12 @@ func ExtractID(content map[string]any, cfg *GtsConfig) *ExtractIDResult {
 	entity := NewJsonEntity(content, cfg)
 
 	result := &ExtractIDResult{
-		IsSchema: entity.IsSchema,
+		IsTypeSchema: entity.IsTypeSchema,
 	}
 
-	// Set SchemaID as pointer (nil if empty)
-	if entity.SchemaID != "" {
-		result.SchemaID = &entity.SchemaID
+	// Set TypeID as pointer (nil if empty)
+	if entity.TypeID != "" {
+		result.TypeID = &entity.TypeID
 	}
 
 	// Set SelectedEntityField as pointer (nil if empty)
@@ -281,19 +281,19 @@ func ExtractID(content map[string]any, cfg *GtsConfig) *ExtractIDResult {
 		result.SelectedEntityField = &entity.SelectedEntityField
 	}
 
-	// Set SelectedSchemaIDField as pointer (nil if empty)
-	if entity.SelectedSchemaIDField != "" {
-		result.SelectedSchemaIDField = &entity.SelectedSchemaIDField
+	// Set SelectedTypeIDField as pointer (nil if empty)
+	if entity.SelectedTypeIDField != "" {
+		result.SelectedTypeIDField = &entity.SelectedTypeIDField
 	}
 
-	// Diagnostic: for schemas and well-known instances, return the parsed GTS ID.
-	// For non-schema entities without a valid GTS ID (anonymous or malformed),
-	// fall back to the raw value of the selected id field. This differs from
-	// EffectiveID (registrable), which requires a resolvable schema.
+	// Diagnostic: for type-schemas and well-known instances, return the parsed
+	// GTS ID. For non-type-schema entities without a valid GTS ID (anonymous or
+	// malformed), fall back to the raw value of the selected id field. This
+	// differs from EffectiveID (registrable), which requires a resolvable type.
 	switch {
 	case entity.GtsID != nil:
 		result.ID = entity.GtsID.ID
-	case !entity.IsSchema && entity.SelectedEntityField != "":
+	case !entity.IsTypeSchema && entity.SelectedEntityField != "":
 		if val, ok := content[entity.SelectedEntityField].(string); ok {
 			result.ID = val
 		}
