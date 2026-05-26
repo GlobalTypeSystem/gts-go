@@ -232,10 +232,16 @@ func (e *JsonEntity) calcJSONTypeID(cfg *GtsConfig, entityIDValue string) string
 			}
 		}
 
-		// For base type-schemas: get type ID from $schema field
+		// For base type-schemas: get type ID from $schema field.
+		// Per gts-spec v0.11, type_id MUST be a GTS Type Identifier or null —
+		// JSON Schema dialect URLs (and other non-GTS values) are no longer
+		// accepted as type_id. Leave SelectedTypeIDField set either way so
+		// callers can see we did inspect $schema.
 		if schemaValue := e.getFieldValue("$schema"); schemaValue != "" {
 			e.SelectedTypeIDField = "$schema"
-			return schemaValue
+			if strings.HasSuffix(schemaValue, "~") && IsValidGtsID(schemaValue) {
+				return schemaValue
+			}
 		}
 		return ""
 	}

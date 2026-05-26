@@ -260,7 +260,9 @@ func TestExtractID_InvalidIDInField(t *testing.T) {
 	}
 }
 
-// TestExtractID_SchemaIDFallback tests schema ID extraction for schemas with $schema field
+// TestExtractID_SchemaIDFallback tests type ID extraction for type-schemas with $schema field.
+// Per gts-spec v0.11, type_id MUST be a GTS Type Identifier; a JSON Schema dialect URL
+// in $schema is no longer carried through to the type_id (it's rejected).
 func TestExtractID_SchemaIDFallback(t *testing.T) {
 	content := map[string]any{
 		"$id":     "gts.vendor.package.namespace.type.v0~",
@@ -269,17 +271,53 @@ func TestExtractID_SchemaIDFallback(t *testing.T) {
 
 	result := ExtractID(content, nil)
 
-	// For schemas, ID comes from $id field
+	// For type-schemas, ID comes from $id field
 	if result.ID != "gts.vendor.package.namespace.type.v0~" {
 		t.Errorf("Expected ID from $id field, got %q", result.ID)
 	}
-	var gotTypeID string
+	// JSON Schema dialect URL must NOT be carried into type_id.
 	if result.TypeID != nil {
-		gotTypeID = *result.TypeID
+		t.Errorf("Expected TypeID to be nil for non-GTS $schema, got %q", *result.TypeID)
 	}
-	// For base schemas, schema_id comes from $schema field
-	if gotTypeID != "http://json-schema.org/draft-07/schema#" {
-		t.Errorf("Expected TypeID from $schema field, got %q", gotTypeID)
+	// We did inspect $schema, so the selected-field marker should still be set.
+	if result.SelectedTypeIDField == nil || *result.SelectedTypeIDField != "$schema" {
+		var got string
+		if result.SelectedTypeIDField != nil {
+			got = *result.SelectedTypeIDField
+		}
+		t.Errorf("Expected SelectedTypeIDField=\"$schema\", got %q", got)
+	}
+}
+
+// TestExtractID_DollarSchema_GtsTypeID accepts a GTS Type Identifier as type_id.
+func TestExtractID_DollarSchema_GtsTypeID(t *testing.T) {
+	content := map[string]any{
+		"$id":     "gts.vendor.pkg.ns.type.v1~",
+		"$schema": "gts.vendor.pkg.ns.type.v0~",
+	}
+
+	result := ExtractID(content, nil)
+
+	if result.TypeID == nil || *result.TypeID != "gts.vendor.pkg.ns.type.v0~" {
+		var got string
+		if result.TypeID != nil {
+			got = *result.TypeID
+		}
+		t.Errorf("Expected TypeID=gts.vendor.pkg.ns.type.v0~, got %q", got)
+	}
+}
+
+// TestExtractID_DollarSchema_NonGtsValueRejected rejects non-GTS strings.
+func TestExtractID_DollarSchema_NonGtsValueRejected(t *testing.T) {
+	content := map[string]any{
+		"$id":     "gts.vendor.pkg.ns.type.v1~",
+		"$schema": "gts.but.not.a.type.identifier", // valid-looking but missing trailing ~
+	}
+
+	result := ExtractID(content, nil)
+
+	if result.TypeID != nil {
+		t.Errorf("Expected TypeID to be nil for non-Type-Identifier $schema, got %q", *result.TypeID)
 	}
 }
 
