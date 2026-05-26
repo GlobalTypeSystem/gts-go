@@ -26,6 +26,16 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
+// KeyXGtsTraitsSchema is the JSON Schema annotation keyword that defines the
+// shape of trait properties available to a GTS type and its descendants.
+// Schema-only — MUST NOT appear in instances (see gts-spec §9.7.1).
+const KeyXGtsTraitsSchema = "x-gts-traits-schema"
+
+// KeyXGtsTraits is the JSON Schema annotation keyword that supplies concrete
+// values for trait properties declared via KeyXGtsTraitsSchema. Schema-only —
+// MUST NOT appear in instances (see gts-spec §9.7.1).
+const KeyXGtsTraits = "x-gts-traits"
+
 const maxTraitsRecursionDepth = 64
 
 // walkAllOf calls fn on the given schema and recursively on every item inside its allOf array.
@@ -48,7 +58,7 @@ func walkAllOf(value map[string]any, depth int, fn func(map[string]any)) {
 // Handles both top-level and allOf-nested occurrences.
 func collectTraitSchemaFromValue(value map[string]any, out *[]map[string]any, depth int) {
 	walkAllOf(value, depth, func(node map[string]any) {
-		if ts, ok := node["x-gts-traits-schema"]; ok {
+		if ts, ok := node[KeyXGtsTraitsSchema]; ok {
 			if tsMap, ok := ts.(map[string]any); ok {
 				*out = append(*out, tsMap)
 			} else {
@@ -62,7 +72,7 @@ func collectTraitSchemaFromValue(value map[string]any, out *[]map[string]any, de
 // collectTraitsFromValue recursively searches a schema value for x-gts-traits entries and merges them.
 func collectTraitsFromValue(value map[string]any, merged map[string]any, depth int) {
 	walkAllOf(value, depth, func(node map[string]any) {
-		if traits, ok := node["x-gts-traits"].(map[string]any); ok {
+		if traits, ok := node[KeyXGtsTraits].(map[string]any); ok {
 			for k, v := range traits {
 				merged[k] = v
 			}
@@ -274,7 +284,7 @@ func checkUnresolvedProps(schema map[string]any, traits map[string]any, prefix s
 func containsXGtsTraits(schema map[string]any) bool {
 	found := false
 	walkAllOf(schema, 0, func(node map[string]any) {
-		if _, ok := node["x-gts-traits"]; ok {
+		if _, ok := node[KeyXGtsTraits]; ok {
 			found = true
 		}
 	})

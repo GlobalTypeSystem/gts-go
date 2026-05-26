@@ -166,6 +166,48 @@ func TestValidateInstanceModifiers_HasAbstract(t *testing.T) {
 	}
 }
 
+func TestValidateInstanceModifiers_HasTraits(t *testing.T) {
+	err := ValidateInstanceModifiers(map[string]any{
+		"id":           "test",
+		"x-gts-traits": map[string]any{"retention": "P30D"},
+	})
+	if err == nil {
+		t.Fatal("expected error for x-gts-traits in instance")
+	}
+	if !strings.Contains(err.Error(), "x-gts-traits") || !strings.Contains(err.Error(), "schema-only") {
+		t.Errorf("expected schema-only x-gts-traits error, got: %v", err)
+	}
+}
+
+func TestValidateInstanceModifiers_HasTraitsSchema(t *testing.T) {
+	err := ValidateInstanceModifiers(map[string]any{
+		"id": "test",
+		"x-gts-traits-schema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"retention": map[string]any{"type": "string"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for x-gts-traits-schema in instance")
+	}
+	if !strings.Contains(err.Error(), "x-gts-traits-schema") {
+		t.Errorf("expected schema-only x-gts-traits-schema error, got: %v", err)
+	}
+}
+
+func TestValidateInstanceModifiers_NestedTraits(t *testing.T) {
+	err := ValidateInstanceModifiers(map[string]any{
+		"id":       "test",
+		"metadata": map[string]any{"x-gts-traits": map[string]any{"foo": "bar"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for nested x-gts-traits")
+	}
+	if !strings.Contains(err.Error(), "x-gts-traits") {
+		t.Errorf("expected nested x-gts-traits error, got: %v", err)
+	}
+}
+
 // =============================================================================
 // x-gts-final integration tests
 // =============================================================================

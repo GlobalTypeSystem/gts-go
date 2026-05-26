@@ -64,14 +64,60 @@ func validateModifierPlacement(content map[string]any) error {
 	return nil
 }
 
-// ValidateInstanceModifiers checks that schema-only keywords (x-gts-final, x-gts-abstract)
-// do not appear in instance content.
+// schemaOnlyInstanceKeywords lists the x-gts-* keywords that are valid only on
+// type-schema documents and MUST be rejected when found inside instance
+// documents (gts-spec §9.7.1, §9.11.1).
+var schemaOnlyInstanceKeywords = []string{
+	KeyXGtsFinal,
+	KeyXGtsAbstract,
+	KeyXGtsTraitsSchema,
+	KeyXGtsTraits,
+}
+
+// ValidateInstanceModifiers checks that schema-only keywords (x-gts-final,
+// x-gts-abstract, x-gts-traits-schema, x-gts-traits) do not appear anywhere
+// in instance content. Per gts-spec §9.7.1 / §9.11.1 these annotations are
+// only valid on JSON Schema (type-schema) documents and implementations MUST
+// reject instances that contain them.
+//
+// The check is recursive over both objects and arrays so a stray keyword
+// nested under any property is also flagged.
 func ValidateInstanceModifiers(content map[string]any) error {
-	if _, ok := content[KeyXGtsFinal]; ok {
-		return fmt.Errorf("%s is a schema-only keyword and must not appear in instances", KeyXGtsFinal)
-	}
-	if _, ok := content[KeyXGtsAbstract]; ok {
-		return fmt.Errorf("%s is a schema-only keyword and must not appear in instances", KeyXGtsAbstract)
+	for _, key := range schemaOnlyInstanceKeywords {
+		if containsKeyRecursive(content, key) {
+			return fmt.Errorf("%s is a schema-only keyword and must not appear in instances", key)
+		}
 	}
 	return nil
+}
+
+// containsKeyRecursive reports whether the given key appears as a key in the
+// content or anywhere in its nested objects/arrays.
+func containsKeyRecursive(content map[string]any, key string) bool {
+	if content == nil {
+		return false
+	}
+	if _, ok := content[key]; ok {
+		return true
+	}
+	for _, v := range content {
+		if containsKeyInValue(v, key) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsKeyInValue(v any, key string) bool {
+	switch vv := v.(type) {
+	case map[string]any:
+		return containsKeyRecursive(vv, key)
+	case []any:
+		for _, item := range vv {
+			if containsKeyInValue(item, key) {
+				return true
+			}
+		}
+	}
+	return false
 }
