@@ -277,9 +277,9 @@ func TestParseID_VersionComponents(t *testing.T) {
 				t.Errorf("Expected ver_minor=%d, got %d", *tt.verMinor, *seg.VerMinor)
 			}
 
-			// Check overall ID type (IsSchema), not individual segment's IsType
-			if result.IsSchema != tt.isType {
-				t.Errorf("Expected is_schema=%v, got %v", tt.isType, result.IsSchema)
+			// Check overall ID type (IsType), not individual segment's IsType
+			if result.IsType != tt.isType {
+				t.Errorf("Expected is_type=%v, got %v", tt.isType, result.IsType)
 			}
 		})
 	}
@@ -424,11 +424,11 @@ func TestParseID_AllComponents(t *testing.T) {
 		}
 	}
 
-	// Check overall ID type (IsSchema), not individual segment's IsType
+	// Check overall ID type (IsType), not individual segment's IsType
 	// The first segment is a type segment (ends with ~), so seg.IsType is true
-	// But the overall ID is an instance (doesn't end with ~), so result.IsSchema is false
-	if result.IsSchema {
-		t.Error("Expected is_schema=false for instance ID")
+	// But the overall ID is an instance (doesn't end with ~), so result.IsType is false
+	if result.IsType {
+		t.Error("Expected is_type=false for instance ID")
 	}
 }
 

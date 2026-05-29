@@ -24,7 +24,7 @@ type ParseIDResult struct {
 	ID         string           `json:"id"`
 	OK         bool             `json:"ok"`
 	IsWildcard bool             `json:"is_wildcard"`
-	IsSchema   bool             `json:"is_schema"`
+	IsType     bool             `json:"is_type"`
 	Segments   []ParseIDSegment `json:"segments"`
 	Error      string           `json:"error,omitempty"`
 }
@@ -43,7 +43,7 @@ func ParseID(gtsID string) ParseIDResult {
 				ID:         gtsID,
 				OK:         false,
 				IsWildcard: true,
-				IsSchema:   false,
+				IsType:     false,
 				Segments:   nil,
 				Error:      err.Error(),
 			}
@@ -63,14 +63,14 @@ func ParseID(gtsID string) ParseIDResult {
 			}
 		}
 
-		// Wildcard patterns ending with .* are type patterns (schemas)
-		isSchema := strings.HasSuffix(gtsID, ".*") || strings.HasSuffix(gtsID, "~*")
+		// Wildcard patterns ending with .* or ~* are type patterns
+		isType := strings.HasSuffix(gtsID, ".*") || strings.HasSuffix(gtsID, "~*")
 
 		return ParseIDResult{
 			ID:         gtsID,
 			OK:         true,
 			IsWildcard: true,
-			IsSchema:   isSchema,
+			IsType:     isType,
 			Segments:   segments,
 			Error:      "",
 		}
@@ -83,7 +83,7 @@ func ParseID(gtsID string) ParseIDResult {
 			ID:         gtsID,
 			OK:         false,
 			IsWildcard: false,
-			IsSchema:   false,
+			IsType:     false,
 			Segments:   nil,
 			Error:      err.Error(),
 		}
@@ -107,7 +107,7 @@ func ParseID(gtsID string) ParseIDResult {
 		ID:         gtsID,
 		OK:         true,
 		IsWildcard: false,
-		IsSchema:   id.IsType(),
+		IsType:     id.IsType(),
 		Segments:   segments,
 		Error:      "",
 	}

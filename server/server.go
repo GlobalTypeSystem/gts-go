@@ -44,7 +44,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /entities/{id}", s.handleGetEntity)
 	s.mux.HandleFunc("POST /entities", s.handleAddEntity)
 	s.mux.HandleFunc("POST /entities/bulk", s.handleAddEntities)
-	s.mux.HandleFunc("POST /schemas", s.handleAddSchema)
+	s.mux.HandleFunc("POST /type-schemas", s.handleAddSchema)
 
 	// OP#1 - Validate ID
 	s.mux.HandleFunc("GET /validate-id", s.handleValidateID)
@@ -79,8 +79,8 @@ func (s *Server) registerRoutes() {
 	// OP#11 - Attribute Access
 	s.mux.HandleFunc("GET /attr", s.handleAttribute)
 
-	// OP#12 - Validate Schema (schema-vs-schema chain validation)
-	s.mux.HandleFunc("POST /validate-schema", s.handleValidateSchema)
+	// OP#12 - Validate Type-Schema (schema-vs-schema chain validation)
+	s.mux.HandleFunc("POST /validate-type-schema", s.handleValidateSchema)
 
 	// OP#13 - Validate Entity (schema chain + traits validation)
 	s.mux.HandleFunc("POST /validate-entity", s.handleValidateEntity)
@@ -241,10 +241,10 @@ func (s *Server) GetOpenAPISpec() map[string]any {
 					"operationId": "attr",
 				},
 			},
-			"/validate-schema": map[string]any{
+			"/validate-type-schema": map[string]any{
 				"post": map[string]any{
-					"summary":     "Validate a derived schema against its chain",
-					"operationId": "validateSchema",
+					"summary":     "Validate a derived type-schema against its chain",
+					"operationId": "validateTypeSchema",
 				},
 			},
 			"/validate-entity": map[string]any{

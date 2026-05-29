@@ -26,16 +26,16 @@ type CompatibilityResult struct {
 
 // CheckCompatibility checks compatibility between two schemas
 // see gts-python store.py is_minor_compatible method
-func (s *GtsStore) CheckCompatibility(oldSchemaID, newSchemaID string) *CompatibilityResult {
-	oldEntity := s.Get(oldSchemaID)
-	newEntity := s.Get(newSchemaID)
+func (s *GtsStore) CheckCompatibility(oldTypeID, newTypeID string) *CompatibilityResult {
+	oldEntity := s.Get(oldTypeID)
+	newEntity := s.Get(newTypeID)
 
 	if oldEntity == nil || newEntity == nil {
 		return &CompatibilityResult{
-			FromID:                 oldSchemaID,
-			ToID:                   newSchemaID,
-			OldID:                  oldSchemaID,
-			NewID:                  newSchemaID,
+			FromID:                 oldTypeID,
+			ToID:                   newTypeID,
+			OldID:                  oldTypeID,
+			NewID:                  newTypeID,
 			Direction:              "unknown",
 			AddedProperties:        []string{},
 			RemovedProperties:      []string{},
@@ -53,10 +53,10 @@ func (s *GtsStore) CheckCompatibility(oldSchemaID, newSchemaID string) *Compatib
 	newSchema, ok2 := newEntity.Content, newEntity.Content != nil
 	if !ok1 || !ok2 {
 		return &CompatibilityResult{
-			FromID:                 oldSchemaID,
-			ToID:                   newSchemaID,
-			OldID:                  oldSchemaID,
-			NewID:                  newSchemaID,
+			FromID:                 oldTypeID,
+			ToID:                   newTypeID,
+			OldID:                  oldTypeID,
+			NewID:                  newTypeID,
 			Direction:              "unknown",
 			AddedProperties:        []string{},
 			RemovedProperties:      []string{},
@@ -75,13 +75,13 @@ func (s *GtsStore) CheckCompatibility(oldSchemaID, newSchemaID string) *Compatib
 	isForward, forwardErrors := checkForwardCompatibility(oldSchema, newSchema)
 
 	// Determine direction
-	direction := inferDirection(oldSchemaID, newSchemaID)
+	direction := inferDirection(oldTypeID, newTypeID)
 
 	return &CompatibilityResult{
-		FromID:                 oldSchemaID,
-		ToID:                   newSchemaID,
-		OldID:                  oldSchemaID,
-		NewID:                  newSchemaID,
+		FromID:                 oldTypeID,
+		ToID:                   newTypeID,
+		OldID:                  oldTypeID,
+		NewID:                  newTypeID,
 		Direction:              direction,
 		AddedProperties:        []string{},
 		RemovedProperties:      []string{},

@@ -302,42 +302,46 @@ go run ./cmd/gts-server -host 127.0.0.1 -port 8000 -verbose 1
 
 ### Testing
 
-You can test the gts-go library by utilizing the shared test suite from the [gts-spec](https://github.com/GlobalTypeSystem/gts-spec) specification and executing the tests against the web server.
-
-Executing gts-spec Tests on the Server:
-
-```bash
-# getting the tests
-git clone https://github.com/GlobalTypeSystem/gts-spec.git
-cd gts-spec/tests
-
-# run tests against the web server on port 8000 (default)
-pytest
-
-# override server URL using GTS_BASE_URL environment variable
-GTS_BASE_URL=http://127.0.0.1:8001 pytest
-
-# or set it persistently
-export GTS_BASE_URL=http://127.0.0.1:8001
-pytest
-```
-
-#### Raising the open-files limit (macOS)
-
-The gts-spec suite uses `httprunner`, which leaks a keep-alive socket per
-test class (the underlying `requests.Session` is never closed). File
-descriptors grow linearly and hit macOS's default 256 soft cap around
-test ~240 with `EMFILE: Too many open files`. Before running the full
-suite, raise the limit in your shell:
+`make gts-spec-tests` runs the shared
+[gts-spec](https://github.com/GlobalTypeSystem/gts-spec) conformance suite
+against a freshly built server. Tests come from the published runner
+image `ghcr.io/globaltypesystem/gts-spec-tests`; the tag is pinned in
+[`.gts-spec-version`](.gts-spec-version) as an immutable
+`vMAJOR.MINOR.PATCH` — every commit reproduces the same test run, and
+rolling forward is a deliberate bump of that file. Requires a working
+Docker daemon plus the Go toolchain (the target builds the server binary
+before pulling the test-runner image).
 
 ```bash
-ulimit -n 4096
-pytest
+make gts-spec-tests                                    # full suite on :8000
+make gts-spec-tests PORT=8001                          # different port
+make gts-spec-tests TEST=test_op1_id_validation.py     # single file / selector
 ```
 
-Linux defaults (typically 1024+) are usually high enough, but bumping
-the limit there is harmless. `make e2e` runs in a subshell, so set
-`ulimit` in the shell that invokes it.
+Opt into the rolling minor tag, try a different patch, or test a fork:
+
+```bash
+make gts-spec-tests GTS_SPEC_VERSION=v0.11             # rolling vMAJOR.MINOR
+make gts-spec-tests GTS_SPEC_VERSION=v0.11.0           # specific patch
+make gts-spec-tests GTS_SPEC_IMAGE=ghcr.io/your-fork/gts-spec-tests
+```
+
+Iterating on the test suite itself? Mount a local checkout over `/tests`:
+
+```bash
+make gts-spec-tests GTS_SPEC_TESTS_DIR=../gts-spec/tests
+```
+
+For tight test-edit loops, keep a long-running server in one terminal and
+re-run targeted tests in another:
+
+```bash
+# Terminal 1
+make gts-server PORT=8001
+
+# Terminal 2
+make gts-spec-tests-run PORT=8001 TEST=test_op12_type_derivation_validation.py
+```
 
 ## License
 

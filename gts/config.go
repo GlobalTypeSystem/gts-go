@@ -8,7 +8,7 @@ package gts
 // GtsConfig holds configuration for extracting GTS IDs from JSON content
 type GtsConfig struct {
 	EntityIDFields []string
-	SchemaIDFields []string
+	TypeIDFields   []string
 }
 
 // DefaultGtsConfig returns the default configuration for ID extraction
@@ -25,7 +25,7 @@ func DefaultGtsConfig() *GtsConfig {
 			"gts_iid",
 			"id",
 		},
-		SchemaIDFields: []string{
+		TypeIDFields: []string{
 			"gtsTid",
 			"gtsType",
 			"gtsT",

@@ -166,6 +166,48 @@ func TestValidateInstanceModifiers_HasAbstract(t *testing.T) {
 	}
 }
 
+func TestValidateInstanceModifiers_HasTraits(t *testing.T) {
+	err := ValidateInstanceModifiers(map[string]any{
+		"id":           "test",
+		"x-gts-traits": map[string]any{"retention": "P30D"},
+	})
+	if err == nil {
+		t.Fatal("expected error for x-gts-traits in instance")
+	}
+	if !strings.Contains(err.Error(), "x-gts-traits") || !strings.Contains(err.Error(), "schema-only") {
+		t.Errorf("expected schema-only x-gts-traits error, got: %v", err)
+	}
+}
+
+func TestValidateInstanceModifiers_HasTraitsSchema(t *testing.T) {
+	err := ValidateInstanceModifiers(map[string]any{
+		"id": "test",
+		"x-gts-traits-schema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"retention": map[string]any{"type": "string"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for x-gts-traits-schema in instance")
+	}
+	if !strings.Contains(err.Error(), "x-gts-traits-schema") {
+		t.Errorf("expected schema-only x-gts-traits-schema error, got: %v", err)
+	}
+}
+
+func TestValidateInstanceModifiers_NestedTraits(t *testing.T) {
+	err := ValidateInstanceModifiers(map[string]any{
+		"id":       "test",
+		"metadata": map[string]any{"x-gts-traits": map[string]any{"foo": "bar"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for nested x-gts-traits")
+	}
+	if !strings.Contains(err.Error(), "x-gts-traits") {
+		t.Errorf("expected nested x-gts-traits error, got: %v", err)
+	}
+}
+
 // =============================================================================
 // x-gts-final integration tests
 // =============================================================================
@@ -689,5 +731,83 @@ func TestAbstract_NonBooleanRejected(t *testing.T) {
 	result := store.ValidateEntity("gts.x.testmod.absbadval.base.v1~")
 	if result.OK {
 		t.Error("non-boolean x-gts-abstract should fail entity validation")
+	}
+}
+
+// =============================================================================
+// ValidateTraitPlacement (gts-spec §9.7.1/§9.11)
+// =============================================================================
+
+func TestValidateTraitPlacement_TopLevelOk(t *testing.T) {
+	err := ValidateTraitPlacement(map[string]any{
+		"type": "object",
+		"x-gts-traits-schema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"topicRef": map[string]any{"type": "string"}},
+		},
+		"x-gts-traits": map[string]any{"topicRef": "events.orders"},
+		"allOf":        []any{map[string]any{"$ref": "gts.x.foo.base.v1~"}},
+	})
+	if err != nil {
+		t.Errorf("top-level trait keywords must be accepted, got: %v", err)
+	}
+}
+
+func TestValidateTraitPlacement_InsideAllOfRejected(t *testing.T) {
+	err := ValidateTraitPlacement(map[string]any{
+		"type": "object",
+		"allOf": []any{
+			map[string]any{"$ref": "gts.x.foo.base.v1~"},
+			map[string]any{"type": "object", "x-gts-traits": map[string]any{"topicRef": "x"}},
+		},
+	})
+	if err == nil {
+		t.Error("x-gts-traits nested inside allOf must be rejected")
+	}
+}
+
+func TestValidateTraitPlacement_InsidePropertiesRejected(t *testing.T) {
+	err := ValidateTraitPlacement(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"nested": map[string]any{"type": "object", "x-gts-traits-schema": map[string]any{"type": "object"}},
+		},
+	})
+	if err == nil {
+		t.Error("x-gts-traits-schema nested inside properties must be rejected")
+	}
+}
+
+func TestValidateTraitPlacement_KeysInsideTraitSchemaValueTolerated(t *testing.T) {
+	// The contents of the top-level x-gts-traits-schema are an ordinary JSON
+	// Schema subschema and may carry x-gts-* members (e.g. a $ref-reused GTS
+	// type). The placement rule constrains only the keyword's position.
+	err := ValidateTraitPlacement(map[string]any{
+		"type": "object",
+		"x-gts-traits-schema": map[string]any{
+			"type":                "object",
+			"x-gts-traits-schema": map[string]any{"type": "object"},
+			"x-gts-traits":        map[string]any{"foo": "bar"},
+			"properties":          map[string]any{"retention": map[string]any{"type": "string"}},
+		},
+		"x-gts-traits": map[string]any{"retention": "P30D"},
+	})
+	if err != nil {
+		t.Errorf("x-gts-* nested inside the trait-schema value must be tolerated, got: %v", err)
+	}
+}
+
+func TestValidateTraitPlacement_KeysInsideTraitValuesTolerated(t *testing.T) {
+	// The top-level x-gts-traits holds trait *values* matched against the
+	// effective trait-schema, not a subschema. A member keyed `x-gts-traits`
+	// nested inside those values is ordinary data, not a misplaced keyword.
+	err := ValidateTraitPlacement(map[string]any{
+		"type": "object",
+		"x-gts-traits": map[string]any{
+			"nested": map[string]any{"x-gts-traits": map[string]any{}},
+		},
+	})
+	if err != nil {
+		t.Errorf("x-gts-traits nested inside trait values must be tolerated, got: %v", err)
 	}
 }

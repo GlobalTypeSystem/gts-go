@@ -26,6 +26,16 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
+// KeyXGtsTraitsSchema is the JSON Schema annotation keyword that defines the
+// shape of trait properties available to a GTS type and its descendants.
+// Schema-only — MUST NOT appear in instances (see gts-spec §9.7.1).
+const KeyXGtsTraitsSchema = "x-gts-traits-schema"
+
+// KeyXGtsTraits is the JSON Schema annotation keyword that supplies concrete
+// values for trait properties declared via KeyXGtsTraitsSchema. Schema-only —
+// MUST NOT appear in instances (see gts-spec §9.7.1).
+const KeyXGtsTraits = "x-gts-traits"
+
 const maxTraitsRecursionDepth = 64
 
 // walkAllOf calls fn on the given schema and recursively on every item inside its allOf array.
@@ -46,23 +56,27 @@ func walkAllOf(value map[string]any, depth int, fn func(map[string]any)) {
 
 // collectTraitSchemaFromValue recursively searches a schema value for x-gts-traits-schema entries.
 // Handles both top-level and allOf-nested occurrences.
-func collectTraitSchemaFromValue(value map[string]any, out *[]map[string]any, depth int) {
+//
+// Each x-gts-traits-schema is an ordinary JSON Schema subschema (ADR-0002): its
+// value MAY be a JSON object, the boolean `true` (any traits pass), or the
+// boolean `false` (no traits permitted). Objects are collected as map[string]any,
+// booleans as bool; any other JSON type is collected verbatim so it can be
+// rejected later as an invalid subschema form.
+func collectTraitSchemaFromValue(value map[string]any, out *[]any, depth int) {
 	walkAllOf(value, depth, func(node map[string]any) {
-		if ts, ok := node["x-gts-traits-schema"]; ok {
-			if tsMap, ok := ts.(map[string]any); ok {
-				*out = append(*out, tsMap)
-			} else {
-				// Non-object trait schema — still collect it as a sentinel (nil) to signal presence
-				*out = append(*out, nil)
-			}
+		if ts, ok := node[KeyXGtsTraitsSchema]; ok {
+			*out = append(*out, ts)
 		}
 	})
 }
 
 // collectTraitsFromValue recursively searches a schema value for x-gts-traits entries and merges them.
+//
+// `null` values are preserved verbatim — they carry RFC 7396 "delete this key"
+// semantics and must reach the cross-level merge step (mergeRFC7396Into) intact.
 func collectTraitsFromValue(value map[string]any, merged map[string]any, depth int) {
 	walkAllOf(value, depth, func(node map[string]any) {
-		if traits, ok := node["x-gts-traits"].(map[string]any); ok {
+		if traits, ok := node[KeyXGtsTraits].(map[string]any); ok {
 			for k, v := range traits {
 				merged[k] = v
 			}
@@ -70,28 +84,112 @@ func collectTraitsFromValue(value map[string]any, merged map[string]any, depth i
 	})
 }
 
-// buildEffectiveTraitSchema composes all collected trait schemas using allOf.
-func buildEffectiveTraitSchema(schemas []map[string]any) map[string]any {
-	switch len(schemas) {
+// mergeRFC7396Into merges patch into target per RFC 7396 (JSON Merge Patch),
+// used to compose x-gts-traits along the $id chain (root → leaf).
+//
+// Semantics:
+//   - a `null` patch value deletes the corresponding key from target;
+//   - an object patch value merges recursively (keys not restated by patch are
+//     preserved), replacing wholesale when target holds a non-object;
+//   - any other value (scalar or array) replaces the existing value wholesale.
+//
+// Object patch values are deep-copied on insert so stored entity content is
+// never mutated through shared map references.
+//
+// Recursion over nested objects is bounded by maxTraitsRecursionDepth to
+// prevent stack overflow on deeply-nested (or maliciously crafted) trait
+// values supplied via x-gts-traits.
+func mergeRFC7396Into(target map[string]any, patch map[string]any) {
+	mergeRFC7396Recursive(target, patch, 0)
+}
+
+func mergeRFC7396Recursive(target map[string]any, patch map[string]any, depth int) {
+	if depth >= maxTraitsRecursionDepth {
+		return
+	}
+	for k, v := range patch {
+		switch pv := v.(type) {
+		case nil:
+			delete(target, k)
+		case map[string]any:
+			if existing, ok := target[k].(map[string]any); ok {
+				mergeRFC7396Recursive(existing, pv, depth+1)
+			} else {
+				fresh := make(map[string]any)
+				mergeRFC7396Recursive(fresh, pv, depth+1)
+				target[k] = fresh
+			}
+		default:
+			target[k] = pv
+		}
+	}
+}
+
+// buildEffectiveTraitSchema composes all collected trait schemas via allOf
+// (ADR-0002 chain aggregation). Each element is a JSON Schema subschema — an
+// object, the boolean `true`, or the boolean `false`.
+//
+// Returns:
+//   - the boolean `false` if any subschema along the chain is `false`
+//     (allOf(false, …) ≡ false — the effective schema is unsatisfiable);
+//   - otherwise an object schema: `true` subschemas are identity elements and
+//     dropped, object subschemas are composed via allOf (a single object is
+//     returned directly, none yields the empty/accept-all schema {}).
+func buildEffectiveTraitSchema(schemas []any) any {
+	objs := make([]map[string]any, 0, len(schemas))
+	for _, s := range schemas {
+		// A `false` anywhere in the chain (a bare boolean, or nested inside an
+		// allOf) makes the composed schema unsatisfiable — allOf(false, …) ≡ false.
+		if schemaIsFalse(s, 0) {
+			return false
+		}
+		switch v := s.(type) {
+		case bool:
+			// `true` is the identity element under allOf — contributes nothing.
+		case map[string]any:
+			objs = append(objs, v)
+		}
+	}
+
+	switch len(objs) {
 	case 0:
 		return map[string]any{}
 	case 1:
-		if schemas[0] == nil {
-			return map[string]any{}
-		}
-		return schemas[0]
+		return objs[0]
 	default:
-		allOf := make([]any, 0, len(schemas))
-		for _, s := range schemas {
-			if s != nil {
-				allOf = append(allOf, s)
-			}
+		allOf := make([]any, len(objs))
+		for i, o := range objs {
+			allOf[i] = o
 		}
 		return map[string]any{
 			"type":  "object",
 			"allOf": allOf,
 		}
 	}
+}
+
+// schemaIsFalse reports whether a JSON Schema subschema is the unsatisfiable
+// schema: the boolean `false`, or an object whose `allOf` contains (recursively)
+// a `false`. Under allOf composition such a subschema rejects every value, which
+// GTS treats as the "traits prohibited" signal (ADR-0002). Recursion is bounded
+// by maxTraitsRecursionDepth.
+func schemaIsFalse(v any, depth int) bool {
+	if depth >= maxTraitsRecursionDepth {
+		return false
+	}
+	switch s := v.(type) {
+	case bool:
+		return !s
+	case map[string]any:
+		if allOf, ok := s["allOf"].([]any); ok {
+			for _, item := range allOf {
+				if schemaIsFalse(item, depth+1) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 type namedProp struct {
@@ -140,6 +238,36 @@ func collectAllProperties(schema map[string]any, depth int) []namedProp {
 		result = append(result, namedProp{name, byName[name]})
 	}
 	return result
+}
+
+// collectAllRequired returns the union of `required` property names declared at
+// the top level or within any allOf branch of the (effective) trait schema.
+// Mirrors collectAllProperties so completeness enforcement matches JSON Schema's
+// own `required` aggregation across the composed chain.
+func collectAllRequired(schema map[string]any, depth int) map[string]bool {
+	req := make(map[string]bool)
+	var collect func(s map[string]any, d int)
+	collect = func(s map[string]any, d int) {
+		if d >= maxTraitsRecursionDepth {
+			return
+		}
+		if required, ok := s["required"].([]any); ok {
+			for _, item := range required {
+				if name, ok := item.(string); ok {
+					req[name] = true
+				}
+			}
+		}
+		if allOf, ok := s["allOf"].([]any); ok {
+			for _, item := range allOf {
+				if sub, ok := item.(map[string]any); ok {
+					collect(sub, d+1)
+				}
+			}
+		}
+	}
+	collect(schema, depth)
+	return req
 }
 
 // applyDefaults applies JSON Schema default values from the effective trait schema
@@ -224,26 +352,26 @@ func validateTraitsAgainstSchema(traitSchema map[string]any, effectiveTraits map
 		return errors
 	}
 
-	// Check for unresolved (missing) trait properties that have no default,
-	// recursing into nested object sub-properties.
-	errors = append(errors, checkUnresolvedProps(traitSchema, effectiveTraits, "")...)
+	// Check that every *required* trait property is resolved.
+	errors = append(errors, checkUnresolvedProps(traitSchema, effectiveTraits)...)
 
 	return errors
 }
 
-// checkUnresolvedProps recursively checks that all trait properties have either a value
-// in traits or a default in the schema. Per spec §9.7.5: "if a trait is required by the
-// effective trait schema (i.e., not covered by a default) but is not provided by any
-// x-gts-traits in the chain, schema validation MUST fail". A property without a default
-// is implicitly required regardless of the JSON Schema 'required' array.
-func checkUnresolvedProps(schema map[string]any, traits map[string]any, prefix string) []string {
+// checkUnresolvedProps checks that every *required* trait property has either a
+// value in traits or a `default` in the schema. Per ADR-0003 / README §9.7.5,
+// completeness is keyed on the effective trait schema's `required` set: optional
+// declared properties MAY be left unresolved. Standard JSON Schema validation
+// (run by the caller) already reports missing required members against the
+// materialized object; this loop adds a type-annotated, trait-specific message.
+func checkUnresolvedProps(schema map[string]any, traits map[string]any) []string {
 	var errors []string
+	required := collectAllRequired(schema, 0)
 	for _, p := range collectAllProperties(schema, 0) {
-		fullName := p.name
-		if prefix != "" {
-			fullName = prefix + "." + p.name
+		if !required[p.name] {
+			continue
 		}
-		val, hasValue := traits[p.name]
+		_, hasValue := traits[p.name]
 		_, hasDefault := p.schema["default"]
 		if !hasValue && !hasDefault {
 			propType, _ := p.schema["type"].(string)
@@ -252,33 +380,11 @@ func checkUnresolvedProps(schema map[string]any, traits map[string]any, prefix s
 			}
 			errors = append(errors, fmt.Sprintf(
 				"trait property '%s' (type: %s) is not resolved: no value provided and no default defined in the trait schema",
-				fullName, propType,
+				p.name, propType,
 			))
-		} else if p.schema["type"] == "object" {
-			if _, hasProps := p.schema["properties"]; hasProps {
-				var subTraits map[string]any
-				if valMap, ok := val.(map[string]any); ok {
-					subTraits = valMap
-				} else {
-					subTraits = map[string]any{}
-				}
-				errors = append(errors, checkUnresolvedProps(p.schema, subTraits, fullName)...)
-			}
 		}
 	}
 	return errors
-}
-
-// containsXGtsTraits reports whether a schema map contains an 'x-gts-traits' key
-// at its top level or nested inside any allOf items (recursively).
-func containsXGtsTraits(schema map[string]any) bool {
-	found := false
-	walkAllOf(schema, 0, func(node map[string]any) {
-		if _, ok := node["x-gts-traits"]; ok {
-			found = true
-		}
-	})
-	return found
 }
 
 // removeXGtsFields removes x-gts-* extension fields from a schema recursively.
@@ -290,9 +396,9 @@ func removeXGtsFields(schema map[string]any) map[string]any {
 
 // ValidateSchemaTraitsResult is the result of OP#13 schema traits validation.
 type ValidateSchemaTraitsResult struct {
-	SchemaID string `json:"schema_id"`
-	OK       bool   `json:"ok"`
-	Error    string `json:"error,omitempty"`
+	TypeID string `json:"type_id"`
+	OK     bool   `json:"ok"`
+	Error  string `json:"error,omitempty"`
 }
 
 // ValidateSchemaTraits validates schema traits across the inheritance chain (OP#13).
@@ -302,24 +408,21 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	gid, err := NewGtsID(schemaID)
 	if err != nil {
 		return &ValidateSchemaTraitsResult{
-			SchemaID: schemaID,
-			OK:       false,
-			Error:    fmt.Sprintf("Invalid GTS ID: %v", err),
+			TypeID: schemaID,
+			OK:     false,
+			Error:  fmt.Sprintf("Invalid GTS ID: %v", err),
 		}
 	}
 
 	segments := gid.Segments
 
-	// levelInfo holds per-level data collected during the chain walk.
-	type levelInfo struct {
-		segSchemaID string
-		rawSchemas  []map[string]any // raw (unresolved) trait schemas from this level
-		traits      map[string]any   // x-gts-traits collected from this level
-	}
-
-	// Pass 1: walk the chain and collect raw trait schemas and trait values per level.
-	var allLevels []levelInfo
-	var traitSchemas []map[string]any
+	// Pass 1: walk the chain root → leaf, collecting x-gts-traits-schema
+	// subschemas (composed via allOf per ADR-0002) and merging x-gts-traits
+	// values per RFC 7396 JSON Merge Patch (ADR-0004). Publishers lock values
+	// via standard JSON Schema `const`; the registry carries no GTS-specific
+	// immutability rule.
+	var traitSchemas []any
+	mergedTraits := make(map[string]any)
 
 	for i := range segments {
 		segSchemaID := buildIDFromSegments(segments[:i+1])
@@ -327,200 +430,118 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		entity := s.Get(segSchemaID)
 		if entity == nil {
 			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    fmt.Sprintf("Schema '%s' not found for trait validation", segSchemaID),
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("Schema '%s' not found for trait validation", segSchemaID),
 			}
 		}
 
 		content := entity.Content
 
-		var rawSchemas []map[string]any
-		collectTraitSchemaFromValue(content, &rawSchemas, 0)
-		traitSchemas = append(traitSchemas, rawSchemas...)
+		collectTraitSchemaFromValue(content, &traitSchemas, 0)
 
 		levelTraits := make(map[string]any)
 		collectTraitsFromValue(content, levelTraits, 0)
-
-		allLevels = append(allLevels, levelInfo{
-			segSchemaID: segSchemaID,
-			rawSchemas:  rawSchemas,
-			traits:      levelTraits,
-		})
+		mergeRFC7396Into(mergedTraits, levelTraits)
 	}
 
-	// Pass 2: normalize $$ref and resolve $ref in all collected trait schemas.
+	// Pass 2: normalize $$ref and resolve $ref in object-form trait schemas so
+	// external/standalone trait shapes are inlined. Boolean subschemas pass
+	// through untouched.
 	for i, ts := range traitSchemas {
-		if ts == nil {
+		tsMap, ok := ts.(map[string]any)
+		if !ok {
 			continue
 		}
-		normalized := normalizeDollarRefs(ts)
+		normalized := normalizeDollarRefs(tsMap)
 		resolved, err := s.resolveRefs(normalized)
 		if err != nil {
 			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    fmt.Sprintf("Schema '%s' trait schema has %v", schemaID, err),
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("Schema '%s' trait schema has %v", schemaID, err),
 			}
 		}
 		traitSchemas[i] = resolved
 	}
 
-	// Build a per-level slice of resolved schemas (parallel to allLevels).
-	resolvedSchemasByLevel := make([][]map[string]any, len(allLevels))
-	idx := 0
-	for li, lv := range allLevels {
-		resolvedSchemasByLevel[li] = traitSchemas[idx : idx+len(lv.rawSchemas)]
-		idx += len(lv.rawSchemas)
-	}
-
-	// Pass 3: run cross-level checks against resolved schemas, then merge traits.
-	mergedTraits := make(map[string]any)
-	lockedTraits := make(map[string]bool)
-	knownDefaults := make(map[string]any)
-
-	for li, lv := range allLevels {
-		// Track which properties this level's resolved trait schemas introduce.
-		levelSchemaProps := make(map[string]bool)
-		for _, ts := range resolvedSchemasByLevel[li] {
-			if ts == nil {
-				continue
-			}
-			for _, p := range collectAllProperties(ts, 0) {
-				levelSchemaProps[p.name] = true
-				if newDefault, ok := p.schema["default"]; ok {
-					if oldDefault, exists := knownDefaults[p.name]; exists {
-						if !jsonEqual(oldDefault, newDefault) {
-							return &ValidateSchemaTraitsResult{
-								SchemaID: schemaID,
-								OK:       false,
-								Error: fmt.Sprintf(
-									"Schema '%s' trait validation failed: trait schema default for '%s' in '%s' overrides default set by ancestor",
-									schemaID, p.name, lv.segSchemaID,
-								),
-							}
-						}
-					} else {
-						knownDefaults[p.name] = newDefault
-					}
-				}
-			}
-		}
-
-		// Check for locked trait overrides BEFORE merging this level's values.
-		for k, v := range lv.traits {
-			if existing, exists := mergedTraits[k]; exists {
-				if lockedTraits[k] && !jsonEqual(existing, v) {
-					return &ValidateSchemaTraitsResult{
-						SchemaID: schemaID,
-						OK:       false,
-						Error: fmt.Sprintf(
-							"Schema '%s' trait validation failed: trait '%s' in '%s' overrides value set by ancestor",
-							schemaID, k, lv.segSchemaID,
-						),
-					}
-				}
-			}
-		}
-
-		// Merge level traits (rightmost wins).
-		for k, v := range lv.traits {
-			mergedTraits[k] = v
-		}
-
-		// Lock trait values set at this level only when this level does NOT introduce
-		// a schema property for the key (via the resolved schema).
-		for k := range lv.traits {
-			if !levelSchemaProps[k] {
-				lockedTraits[k] = true
-			}
+	// Abstract types are "incomplete waiting for descendants" (ADR-0003): the
+	// trait completeness check is skipped for them. As in gts-rust, abstract
+	// leaves skip trait validation entirely — concrete descendants still run the
+	// full check on their own effective state. Keyed on the validated type's own
+	// x-gts-abstract, never on a registry-state-dependent "leaf" notion.
+	if leafEntity := s.Get(schemaID); leafEntity != nil {
+		if ab, isBool := leafEntity.Content[KeyXGtsAbstract].(bool); isBool && ab {
+			return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
 		}
 	}
 
-	// Check for x-gts-traits-schema integrity: must not contain x-gts-traits anywhere
-	// (including nested inside allOf items).
-	for i, ts := range traitSchemas {
-		if ts == nil {
-			// Non-object trait schema — will fail validation below
-			continue
-		}
-		if containsXGtsTraits(ts) {
-			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error: fmt.Sprintf(
-					"x-gts-traits-schema[%d] contains 'x-gts-traits' — trait values must not appear inside a trait schema definition",
-					i,
-				),
-			}
-		}
-	}
-
-	// Check: if no trait schemas, but trait values exist → error
 	hasTraitValues := len(mergedTraits) > 0
+
+	// No x-gts-traits-schema anywhere in the chain: trait values are meaningless.
 	if len(traitSchemas) == 0 {
 		if hasTraitValues {
 			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    "x-gts-traits values provided but no x-gts-traits-schema is defined in the inheritance chain",
+				TypeID: schemaID,
+				OK:     false,
+				Error:  "x-gts-traits values provided but no x-gts-traits-schema is defined in the inheritance chain",
 			}
 		}
-		return &ValidateSchemaTraitsResult{SchemaID: schemaID, OK: true}
+		return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
 	}
 
-	// Check for nil (non-object) trait schemas and enforce type:object
+	// Each x-gts-traits-schema is a JSON Schema subschema (ADR-0002): an object,
+	// `true`, or `false`. Reject any other JSON type. x-gts-* members nested
+	// inside an object subschema (e.g. a $ref-reused GTS type) are tolerated —
+	// they are unknown JSON Schema keywords and inert at validation time.
 	for i, ts := range traitSchemas {
-		if ts == nil {
+		switch ts.(type) {
+		case bool, map[string]any:
+		default:
 			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    fmt.Sprintf("x-gts-traits-schema[%d] is not a valid JSON Schema object", i),
-			}
-		}
-		if t, _ := ts["type"].(string); t != "object" {
-			return &ValidateSchemaTraitsResult{
-				SchemaID: schemaID,
-				OK:       false,
-				Error:    fmt.Sprintf("x-gts-traits-schema[%d] must have \"type\": \"object\"", i),
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("x-gts-traits-schema[%d] must be an object subschema or a boolean", i),
 			}
 		}
 	}
 
-	// Build effective trait schema
-	effectiveTraitSchema := buildEffectiveTraitSchema(traitSchemas)
+	// Build the effective trait schema by composing the chain via allOf.
+	effAny := buildEffectiveTraitSchema(traitSchemas)
 
-	// Apply defaults
+	// A `false` somewhere in the chain makes the effective schema unsatisfiable:
+	// traits are prohibited on this host and its whole subtree. A type carrying
+	// no traits is still valid; any trait value fails.
+	if b, ok := effAny.(bool); ok && !b {
+		if hasTraitValues {
+			return &ValidateSchemaTraitsResult{
+				TypeID: schemaID,
+				OK:     false,
+				Error:  "x-gts-traits-schema resolves to `false` in the chain — x-gts-traits values are prohibited",
+			}
+		}
+		return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
+	}
+
+	effectiveTraitSchema, _ := effAny.(map[string]any)
+
+	// Materialize: apply defaults from the effective trait schema for any
+	// properties not present after the chain merge.
 	effectiveTraits := applyDefaults(effectiveTraitSchema, mergedTraits, 0)
 
-	// Check if the leaf schema (rightmost segment) is abstract.
-	// Abstract schemas are not leaf schemas, so trait validation is skipped entirely —
-	// they are not required to provide trait values or satisfy required constraints.
-	leafEntity := s.Get(schemaID)
-	isAbstractLeaf := false
-	if leafEntity != nil {
-		if val, ok := leafEntity.Content[KeyXGtsAbstract]; ok {
-			if ab, isBool := val.(bool); isBool && ab {
-				isAbstractLeaf = true
-			}
-		}
-	}
-
-	if isAbstractLeaf {
-		return &ValidateSchemaTraitsResult{SchemaID: schemaID, OK: true}
-	}
-
-	// Validate
+	// Validate the materialized effective traits against the effective trait
+	// schema, including the required-trait completeness check (this type is
+	// non-abstract — abstract types returned OK above).
 	errs := validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)
 	if len(errs) > 0 {
 		return &ValidateSchemaTraitsResult{
-			SchemaID: schemaID,
-			OK:       false,
-			Error:    fmt.Sprintf("Schema '%s' trait validation failed: %s", schemaID, strings.Join(errs, "; ")),
+			TypeID: schemaID,
+			OK:     false,
+			Error:  fmt.Sprintf("Schema '%s' trait validation failed: %s", schemaID, strings.Join(errs, "; ")),
 		}
 	}
 
-	return &ValidateSchemaTraitsResult{SchemaID: schemaID, OK: true}
+	return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
 }
 
 // walkSchema applies a key transform and a recursive map transform to every node in a schema.
@@ -565,9 +586,19 @@ func normalizeDollarRefs(m map[string]any) map[string]any {
 	}, nil)
 }
 
-// validateEntityLevelTraits checks entity-level trait constraints:
-// - If a trait schema is defined, trait values must be provided.
-// - Each trait schema must be closed (additionalProperties: false).
+// validateEntityLevelTraits is the OP#13 entity-level check applied on the
+// /validate-entity path (NOT on /validate-type-schema). For a schema to be a
+// valid standalone *entity*:
+//   - if any x-gts-traits-schema is declared along the chain, x-gts-traits
+//     values must be provided somewhere in the chain (an open trait surface
+//     with no values is an incomplete entity); and
+//   - every object-form x-gts-traits-schema must be closed
+//     (additionalProperties: false) — an open trait schema signals a type
+//     designed to be extended, not a deployable entity.
+//
+// Boolean trait subschemas (true/false) carry no additionalProperties and are
+// not subject to the closedness check. This mirrors the type-schema-validation
+// relaxations (ADR-0002/0003) while preserving the stricter entity contract.
 func (s *GtsStore) validateEntityLevelTraits(schemaID string) error {
 	gid, err := NewGtsID(schemaID)
 	if err != nil {
@@ -575,7 +606,7 @@ func (s *GtsStore) validateEntityLevelTraits(schemaID string) error {
 	}
 
 	segments := gid.Segments
-	var rawTraitSchemas []map[string]any
+	var traitSchemas []any
 	hasTraitValues := false
 
 	for i := range segments {
@@ -585,7 +616,7 @@ func (s *GtsStore) validateEntityLevelTraits(schemaID string) error {
 			return fmt.Errorf("schema '%s' not found", segSchemaID)
 		}
 		content := entity.Content
-		collectTraitSchemaFromValue(content, &rawTraitSchemas, 0)
+		collectTraitSchemaFromValue(content, &traitSchemas, 0)
 		levelTraits := make(map[string]any)
 		collectTraitsFromValue(content, levelTraits, 0)
 		if len(levelTraits) > 0 {
@@ -593,35 +624,24 @@ func (s *GtsStore) validateEntityLevelTraits(schemaID string) error {
 		}
 	}
 
-	if len(rawTraitSchemas) == 0 {
+	if len(traitSchemas) == 0 {
 		return nil
 	}
 
 	if !hasTraitValues {
-		return fmt.Errorf("entity defines x-gts-traits-schema but no x-gts-traits values are provided")
-	}
-
-	// Resolve $refs before checking additionalProperties
-	traitSchemas := make([]map[string]any, 0, len(rawTraitSchemas))
-	for _, ts := range rawTraitSchemas {
-		if ts == nil {
-			continue
-		}
-		normalized := normalizeDollarRefs(ts)
-		resolved, err := s.resolveRefs(normalized)
-		if err != nil {
-			return fmt.Errorf("entity trait schema has %v", err)
-		}
-		traitSchemas = append(traitSchemas, resolved)
+		return fmt.Errorf("Entity defines x-gts-traits-schema but no x-gts-traits values are provided")
 	}
 
 	for _, ts := range traitSchemas {
-		ap, hasAP := ts["additionalProperties"]
-		if !hasAP {
-			return fmt.Errorf("entity trait schema must set additionalProperties: false to be a valid standalone entity")
+		obj, ok := ts.(map[string]any)
+		if !ok {
+			// Boolean subschema — no additionalProperties to check.
+			continue
 		}
-		if b, ok := ap.(bool); !ok || b {
-			return fmt.Errorf("entity trait schema must set additionalProperties: false to be a valid standalone entity")
+		if ap, hasAP := obj["additionalProperties"]; !hasAP {
+			return fmt.Errorf("Entity trait schema must set additionalProperties: false to be a valid standalone entity")
+		} else if b, isBool := ap.(bool); !isBool || b {
+			return fmt.Errorf("Entity trait schema must set additionalProperties: false to be a valid standalone entity")
 		}
 	}
 
@@ -648,9 +668,21 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 		}
 	}
 
-	if entity.IsSchema {
+	if entity.IsTypeSchema {
 		// Validate schema modifiers (x-gts-final, x-gts-abstract): type, mutual exclusion, placement.
 		if err := ValidateSchemaModifiers(entity.Content); err != nil {
+			return &ValidateEntityResult{
+				EntityID:   entityID,
+				EntityType: "schema",
+				OK:         false,
+				Error:      err.Error(),
+			}
+		}
+
+		// Validate trait keyword placement (x-gts-traits, x-gts-traits-schema):
+		// these are type-level keywords and MUST appear only at the schema top
+		// level (gts-spec §9.7.1/§9.11).
+		if err := ValidateTraitPlacement(entity.Content); err != nil {
 			return &ValidateEntityResult{
 				EntityID:   entityID,
 				EntityType: "schema",
@@ -680,8 +712,9 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 			}
 		}
 
-		// Entity-level trait check: schema must have trait values if it defines a trait schema,
-		// and all trait schemas must be closed (additionalProperties: false).
+		// Entity-level trait check (stricter than type-schema validation): a
+		// deployable standalone entity must provide trait values when a trait
+		// schema is declared, and its trait schemas must be closed.
 		if err := s.validateEntityLevelTraits(entityID); err != nil {
 			return &ValidateEntityResult{
 				EntityID:   entityID,
@@ -715,9 +748,9 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 		}
 	}
 
-	// Also run OP#12 chain validation and OP#13 traits validation on the schema
-	if entity.SchemaID != "" {
-		chainResult := s.ValidateSchemaChain(entity.SchemaID)
+	// Also run OP#12 chain validation and OP#13 traits validation on the type-schema
+	if entity.TypeID != "" {
+		chainResult := s.ValidateSchemaChain(entity.TypeID)
 		if !chainResult.OK {
 			return &ValidateEntityResult{
 				EntityID:   entityID,
@@ -727,7 +760,7 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 			}
 		}
 
-		traitsResult := s.ValidateSchemaTraits(entity.SchemaID)
+		traitsResult := s.ValidateSchemaTraits(entity.TypeID)
 		if !traitsResult.OK {
 			return &ValidateEntityResult{
 				EntityID:   entityID,

@@ -6,13 +6,13 @@ Released under Apache License 2.0
 package main
 
 var cmdCompatibility = &Command{
-	UsageLine: "compatibility -old <old-schema-id> -new <new-schema-id>",
-	Short:     "check compatibility between two schemas",
+	UsageLine: "compatibility -old <old-type-id> -new <new-type-id>",
+	Short:     "check compatibility between two type-schemas",
 	Long: `
-Compatibility checks whether two schema versions are compatible.
+Compatibility checks whether two type-schema versions are compatible.
 
-The -old flag specifies the old schema GTS ID.
-The -new flag specifies the new schema GTS ID.
+The -old flag specifies the old type-schema GTS ID.
+The -new flag specifies the new type-schema GTS ID.
 Requires -path to be set to load entities.
 
 Example:
@@ -28,8 +28,8 @@ var (
 
 func init() {
 	cmdCompatibility.Run = runCompatibility
-	cmdCompatibility.Flag.StringVar(&compatOld, "old", "", "old schema GTS ID")
-	cmdCompatibility.Flag.StringVar(&compatNew, "new", "", "new schema GTS ID")
+	cmdCompatibility.Flag.StringVar(&compatOld, "old", "", "old type-schema GTS ID")
+	cmdCompatibility.Flag.StringVar(&compatNew, "new", "", "new type-schema GTS ID")
 }
 
 func runCompatibility(cmd *Command, args []string) {

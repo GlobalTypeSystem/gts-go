@@ -139,7 +139,7 @@ func (s *GtsStore) registerLocked(entity *JsonEntity) error {
 	}
 
 	s.byID[key] = entity
-	log.Printf("Registered entity: %s (schema: %v, refs: %d)", key, entity.IsSchema, len(entity.GtsRefs))
+	log.Printf("Registered entity: %s (type-schema: %v, refs: %d)", key, entity.IsTypeSchema, len(entity.GtsRefs))
 	return nil
 }
 
@@ -185,9 +185,9 @@ func (s *GtsStore) RegisterSchema(typeID string, schema map[string]any) error {
 	}
 
 	entity := &JsonEntity{
-		GtsID:    gtsID,
-		Content:  schema,
-		IsSchema: true,
+		GtsID:        gtsID,
+		Content:      schema,
+		IsTypeSchema: true,
 	}
 
 	s.mu.Lock()
@@ -222,8 +222,8 @@ func (s *GtsStore) GetSchemaContent(typeID string) (map[string]any, error) {
 	if entity == nil {
 		return nil, fmt.Errorf("schema not found: %s", typeID)
 	}
-	if !entity.IsSchema {
-		return nil, fmt.Errorf("entity is not a schema: %s", typeID)
+	if !entity.IsTypeSchema {
+		return nil, fmt.Errorf("entity is not a type-schema: %s", typeID)
 	}
 	return entity.Content, nil
 }
@@ -248,9 +248,9 @@ func (s *GtsStore) Count() int {
 
 // EntityInfo represents basic information about an entity
 type EntityInfo struct {
-	ID       string `json:"id"`
-	SchemaID string `json:"schema_id"`
-	IsSchema bool   `json:"is_schema"`
+	ID           string `json:"id"`
+	TypeID       string `json:"type_id"`
+	IsTypeSchema bool   `json:"is_type_schema"`
 }
 
 // ListResult represents the result of listing entities
@@ -271,9 +271,9 @@ func (s *GtsStore) List(limit int) *ListResult {
 			break
 		}
 		entities = append(entities, EntityInfo{
-			ID:       id,
-			SchemaID: entity.SchemaID,
-			IsSchema: entity.IsSchema,
+			ID:           id,
+			TypeID:       entity.TypeID,
+			IsTypeSchema: entity.IsTypeSchema,
 		})
 		count++
 	}
@@ -312,12 +312,12 @@ func (s *GtsStore) validateEntityGtsReferences(entity *JsonEntity) error {
 			continue
 		}
 
-		// Additional validation for schema references
-		if entity.IsSchema {
+		// Additional validation for type-schema references
+		if entity.IsTypeSchema {
 			if strings.Contains(ref.SourcePath, "$ref") {
-				// This is a schema reference - the referenced entity should be a schema
-				if !referencedEntity.IsSchema {
-					errors = append(errors, fmt.Sprintf("schema reference points to non-schema entity: %s (at %s)", ref.ID, ref.SourcePath))
+				// This is a type-schema reference - the referenced entity should be a type-schema
+				if !referencedEntity.IsTypeSchema {
+					errors = append(errors, fmt.Sprintf("type-schema reference points to non-type-schema entity: %s (at %s)", ref.ID, ref.SourcePath))
 				}
 			}
 		}
@@ -333,7 +333,7 @@ func (s *GtsStore) validateEntityGtsReferences(entity *JsonEntity) error {
 // ValidateSchema validates a schema including JSON Schema meta-schema and GTS reference validation
 func (s *GtsStore) ValidateSchema(gtsID string) error {
 	if !strings.HasSuffix(gtsID, "~") {
-		return fmt.Errorf("ID '%s' is not a schema (must end with '~')", gtsID)
+		return fmt.Errorf("ID '%s' is not a type-schema ID (must end with '~')", gtsID)
 	}
 
 	entity := s.Get(gtsID)
@@ -341,8 +341,8 @@ func (s *GtsStore) ValidateSchema(gtsID string) error {
 		return &StoreGtsSchemaNotFoundError{EntityID: gtsID}
 	}
 
-	if !entity.IsSchema {
-		return fmt.Errorf("entity '%s' is not a schema", gtsID)
+	if !entity.IsTypeSchema {
+		return fmt.Errorf("entity '%s' is not a type-schema", gtsID)
 	}
 
 	log.Printf("Validating schema %s", gtsID)
@@ -390,25 +390,25 @@ func (s *GtsStore) ValidateInstanceWithXGtsRef(instanceID string) error {
 		return &StoreGtsObjectNotFoundError{EntityID: instanceID}
 	}
 
-	if instance.IsSchema {
-		return fmt.Errorf("entity '%s' is a schema, not an instance", instanceID)
+	if instance.IsTypeSchema {
+		return fmt.Errorf("entity '%s' is a type-schema, not an instance", instanceID)
 	}
 
-	// Get the schema for this instance
-	if instance.SchemaID == "" {
+	// Get the type-schema for this instance
+	if instance.TypeID == "" {
 		return &StoreGtsSchemaForInstanceNotFoundError{EntityID: instanceID}
 	}
 
-	schema := s.Get(instance.SchemaID)
+	schema := s.Get(instance.TypeID)
 	if schema == nil {
-		return &StoreGtsSchemaNotFoundError{EntityID: instance.SchemaID}
+		return &StoreGtsSchemaNotFoundError{EntityID: instance.TypeID}
 	}
 
-	if !schema.IsSchema {
-		return fmt.Errorf("schema entity '%s' is not marked as schema", instance.SchemaID)
+	if !schema.IsTypeSchema {
+		return fmt.Errorf("type-schema entity '%s' is not marked as type-schema", instance.TypeID)
 	}
 
-	log.Printf("Validating instance %s against schema %s", instanceID, instance.SchemaID)
+	log.Printf("Validating instance %s against type-schema %s", instanceID, instance.TypeID)
 
 	// Validate x-gts-ref constraints
 	xGtsRefValidator := NewXGtsRefValidator(s)

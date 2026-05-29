@@ -77,7 +77,7 @@ func TestExtractID_SchemaID(t *testing.T) {
 	tests := []struct {
 		name                string
 		content             map[string]any
-		expectedSchemaID    string
+		expectedTypeID      string
 		expectedSchemaField string
 	}{
 		{
@@ -86,7 +86,7 @@ func TestExtractID_SchemaID(t *testing.T) {
 				"gtsId":   "gts.vendor.package.namespace.type.v0.1",
 				"$schema": "gts.vendor.package.namespace.type.v0~",
 			},
-			expectedSchemaID:    "gts.vendor.package.namespace.type.v0~",
+			expectedTypeID:      "gts.vendor.package.namespace.type.v0~",
 			expectedSchemaField: "$schema",
 		},
 		{
@@ -95,7 +95,7 @@ func TestExtractID_SchemaID(t *testing.T) {
 				"gtsId":  "gts.vendor.package.namespace.type.v0.1",
 				"gtsTid": "gts.vendor.package.namespace.type.v0~",
 			},
-			expectedSchemaID:    "gts.vendor.package.namespace.type.v0~",
+			expectedTypeID:      "gts.vendor.package.namespace.type.v0~",
 			expectedSchemaField: "gtsTid",
 		},
 		{
@@ -103,7 +103,7 @@ func TestExtractID_SchemaID(t *testing.T) {
 			content: map[string]any{
 				"gtsId": "gts.vendor.package.namespace.type.v0~a.b.c.d.v1.0",
 			},
-			expectedSchemaID:    "gts.vendor.package.namespace.type.v0~",
+			expectedTypeID:      "gts.vendor.package.namespace.type.v0~",
 			expectedSchemaField: "gtsId", // Derived from the chained ID
 		},
 	}
@@ -111,18 +111,18 @@ func TestExtractID_SchemaID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := ExtractID(tt.content, nil)
-			var gotSchemaID string
-			if result.SchemaID != nil {
-				gotSchemaID = *result.SchemaID
+			var gotTypeID string
+			if result.TypeID != nil {
+				gotTypeID = *result.TypeID
 			}
-			if gotSchemaID != tt.expectedSchemaID {
-				t.Errorf("Expected SchemaID %q, got %q", tt.expectedSchemaID, gotSchemaID)
+			if gotTypeID != tt.expectedTypeID {
+				t.Errorf("Expected TypeID %q, got %q", tt.expectedTypeID, gotTypeID)
 			}
 
 			// Handle both empty string expectation and actual value
 			var got string
-			if result.SelectedSchemaIDField != nil {
-				got = *result.SelectedSchemaIDField
+			if result.SelectedTypeIDField != nil {
+				got = *result.SelectedTypeIDField
 			}
 			if got != tt.expectedSchemaField {
 				t.Errorf("Expected schema field %q, got %q", tt.expectedSchemaField, got)
@@ -181,8 +181,8 @@ func TestExtractID_IsSchema(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := ExtractID(tt.content, nil)
-			if result.IsSchema != tt.expectedSchema {
-				t.Errorf("Expected IsSchema %v, got %v", tt.expectedSchema, result.IsSchema)
+			if result.IsTypeSchema != tt.expectedSchema {
+				t.Errorf("Expected IsTypeSchema %v, got %v", tt.expectedSchema, result.IsTypeSchema)
 			}
 		})
 	}
@@ -192,7 +192,7 @@ func TestExtractID_IsSchema(t *testing.T) {
 func TestExtractID_CustomConfig(t *testing.T) {
 	customCfg := &GtsConfig{
 		EntityIDFields: []string{"customId", "id"},
-		SchemaIDFields: []string{"customType", "type"},
+		TypeIDFields:   []string{"customType", "type"},
 	}
 
 	content := map[string]any{
@@ -212,17 +212,17 @@ func TestExtractID_CustomConfig(t *testing.T) {
 		}
 		t.Errorf("Expected customId field, got %q", got)
 	}
-	var gotSchemaID string
-	if result.SchemaID != nil {
-		gotSchemaID = *result.SchemaID
+	var gotTypeID string
+	if result.TypeID != nil {
+		gotTypeID = *result.TypeID
 	}
-	if gotSchemaID != "gts.vendor.package.namespace.type.v0~" {
-		t.Errorf("Expected SchemaID from customType field, got %q", gotSchemaID)
+	if gotTypeID != "gts.vendor.package.namespace.type.v0~" {
+		t.Errorf("Expected TypeID from customType field, got %q", gotTypeID)
 	}
-	if result.SelectedSchemaIDField == nil || *result.SelectedSchemaIDField != "customType" {
+	if result.SelectedTypeIDField == nil || *result.SelectedTypeIDField != "customType" {
 		var got string
-		if result.SelectedSchemaIDField != nil {
-			got = *result.SelectedSchemaIDField
+		if result.SelectedTypeIDField != nil {
+			got = *result.SelectedTypeIDField
 		}
 		t.Errorf("Expected customType field, got %q", got)
 	}
@@ -260,7 +260,9 @@ func TestExtractID_InvalidIDInField(t *testing.T) {
 	}
 }
 
-// TestExtractID_SchemaIDFallback tests schema ID extraction for schemas with $schema field
+// TestExtractID_SchemaIDFallback tests type ID extraction for type-schemas with $schema field.
+// Per gts-spec v0.11, type_id MUST be a GTS Type Identifier; a JSON Schema dialect URL
+// in $schema is no longer carried through to the type_id (it's rejected).
 func TestExtractID_SchemaIDFallback(t *testing.T) {
 	content := map[string]any{
 		"$id":     "gts.vendor.package.namespace.type.v0~",
@@ -269,17 +271,53 @@ func TestExtractID_SchemaIDFallback(t *testing.T) {
 
 	result := ExtractID(content, nil)
 
-	// For schemas, ID comes from $id field
+	// For type-schemas, ID comes from $id field
 	if result.ID != "gts.vendor.package.namespace.type.v0~" {
 		t.Errorf("Expected ID from $id field, got %q", result.ID)
 	}
-	var gotSchemaID string
-	if result.SchemaID != nil {
-		gotSchemaID = *result.SchemaID
+	// JSON Schema dialect URL must NOT be carried into type_id.
+	if result.TypeID != nil {
+		t.Errorf("Expected TypeID to be nil for non-GTS $schema, got %q", *result.TypeID)
 	}
-	// For base schemas, schema_id comes from $schema field
-	if gotSchemaID != "http://json-schema.org/draft-07/schema#" {
-		t.Errorf("Expected SchemaID from $schema field, got %q", gotSchemaID)
+	// We did inspect $schema, so the selected-field marker should still be set.
+	if result.SelectedTypeIDField == nil || *result.SelectedTypeIDField != "$schema" {
+		var got string
+		if result.SelectedTypeIDField != nil {
+			got = *result.SelectedTypeIDField
+		}
+		t.Errorf("Expected SelectedTypeIDField=\"$schema\", got %q", got)
+	}
+}
+
+// TestExtractID_DollarSchema_GtsTypeID accepts a GTS Type Identifier as type_id.
+func TestExtractID_DollarSchema_GtsTypeID(t *testing.T) {
+	content := map[string]any{
+		"$id":     "gts.vendor.pkg.ns.type.v1~",
+		"$schema": "gts.vendor.pkg.ns.type.v0~",
+	}
+
+	result := ExtractID(content, nil)
+
+	if result.TypeID == nil || *result.TypeID != "gts.vendor.pkg.ns.type.v0~" {
+		var got string
+		if result.TypeID != nil {
+			got = *result.TypeID
+		}
+		t.Errorf("Expected TypeID=gts.vendor.pkg.ns.type.v0~, got %q", got)
+	}
+}
+
+// TestExtractID_DollarSchema_NonGtsValueRejected rejects non-GTS strings.
+func TestExtractID_DollarSchema_NonGtsValueRejected(t *testing.T) {
+	content := map[string]any{
+		"$id":     "gts.vendor.pkg.ns.type.v1~",
+		"$schema": "gts.but.not.a.type.identifier", // valid-looking but missing trailing ~
+	}
+
+	result := ExtractID(content, nil)
+
+	if result.TypeID != nil {
+		t.Errorf("Expected TypeID to be nil for non-Type-Identifier $schema, got %q", *result.TypeID)
 	}
 }
 
@@ -303,8 +341,8 @@ func TestExtractID_GtsURIPrefix_InDollarIdField(t *testing.T) {
 	if result.ID != "gts.vendor.package.namespace.type.v1.0~" {
 		t.Errorf("Expected ID without gts:// prefix %q, got %q", "gts.vendor.package.namespace.type.v1.0~", result.ID)
 	}
-	if !result.IsSchema {
-		t.Errorf("Expected IsSchema to be true")
+	if !result.IsTypeSchema {
+		t.Errorf("Expected IsTypeSchema to be true")
 	}
 }
 
