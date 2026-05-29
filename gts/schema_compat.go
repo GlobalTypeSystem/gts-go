@@ -256,12 +256,22 @@ func validateSchemaCompatibility(base, derived *effectiveSchema, baseID, derived
 		}
 	}
 
+	// Derived "loosens" additionalProperties only when it *explicitly* declares a
+	// permissive value at its own root. Omitting the keyword is NOT loosening
+	// when derived is composed as allOf:[{$ref: closed_base}, overlay]: per JSON
+	// Schema draft-07, additionalProperties only inspects sibling properties at
+	// the same level, but the base's additionalProperties:false still applies to
+	// the same instance via $ref/allOf composition, so closedness is inherited.
+	// The per-property loop above already catches the only structurally dangerous
+	// case (derived adds a new top-level property the closed base forbids).
 	if baseDisallowsAdditional {
-		derivedAlsoClosed := false
-		if b, ok := derived.additionalProperties.(bool); ok && !b {
-			derivedAlsoClosed = true
+		derivedExplicitlyAllows := false
+		if derived.additionalProperties != nil {
+			if b, ok := derived.additionalProperties.(bool); !ok || b {
+				derivedExplicitlyAllows = true
+			}
 		}
-		if !derivedAlsoClosed {
+		if derivedExplicitlyAllows {
 			errors = append(errors, fmt.Sprintf(
 				"derived schema '%s' loosens additionalProperties from false in base '%s'",
 				derivedID, baseID,
@@ -813,17 +823,20 @@ func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, er
 	return s.resolveRefs(entity.Content)
 }
 
-// resolveRefs resolves all $ref references in a schema map, detecting cycles and duplicates.
+// resolveRefs resolves all $ref references in a schema map, detecting cycles.
+//
+// Uses DFS-path cycle detection: a $ref target is held in the visited set only
+// while its resolution is in progress on the current DFS stack and removed once
+// that subtree finishes. Re-entry into an in-progress target is a true cycle.
+// Multiple independent occurrences of the same $ref (e.g. a duplicate ref in an
+// allOf composition) are NOT flagged — redundant manual aggregation across an
+// $id chain is allowed (ADR-0002).
 func (s *GtsStore) resolveRefs(schema map[string]any) (map[string]any, error) {
 	visited := make(map[string]bool)
 	cycleFound := false
-	dupFound := false
-	resolved := s.resolveRefsInner(schema, visited, &cycleFound, &dupFound)
+	resolved := s.resolveRefsInner(schema, visited, &cycleFound)
 	if cycleFound {
 		return nil, fmt.Errorf("circular $ref detected")
-	}
-	if dupFound {
-		return nil, fmt.Errorf("duplicate sibling $ref in allOf")
 	}
 	if m, ok := resolved.(map[string]any); ok {
 		if ref := findUnresolvedRef(m); ref != "" {
@@ -856,7 +869,7 @@ func findUnresolvedRef(schema any) string {
 	return ""
 }
 
-func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFound *bool, dupFound *bool) any {
+func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFound *bool) any {
 	switch v := schema.(type) {
 	case map[string]any:
 		// Handle $ref
@@ -864,7 +877,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			if strings.HasPrefix(refVal, "#") { // local refs kept as-is
 				result := make(map[string]any)
 				for k, val := range v {
-					result[k] = s.resolveRefsInner(val, visited, cycleFound, dupFound)
+					result[k] = s.resolveRefsInner(val, visited, cycleFound)
 				}
 				return result
 			}
@@ -875,7 +888,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				result := make(map[string]any)
 				for k, val := range v {
 					if k != "$ref" {
-						result[k] = s.resolveRefsInner(val, visited, cycleFound, dupFound)
+						result[k] = s.resolveRefsInner(val, visited, cycleFound)
 					}
 				}
 				if len(result) == 0 {
@@ -887,7 +900,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			entity := s.Get(canonical)
 			if entity != nil && entity.IsTypeSchema {
 				visited[canonical] = true
-				resolved := s.resolveRefsInner(entity.Content, visited, cycleFound, dupFound)
+				resolved := s.resolveRefsInner(entity.Content, visited, cycleFound)
 				delete(visited, canonical)
 
 				if resolvedMap, ok := resolved.(map[string]any); ok {
@@ -909,7 +922,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 					}
 					for k, val := range v {
 						if k != "$ref" {
-							merged[k] = s.resolveRefsInner(val, visited, cycleFound, dupFound)
+							merged[k] = s.resolveRefsInner(val, visited, cycleFound)
 						}
 					}
 					return merged
@@ -922,7 +935,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				if k == "$ref" {
 					result[k] = val
 				} else {
-					result[k] = s.resolveRefsInner(val, visited, cycleFound, dupFound)
+					result[k] = s.resolveRefsInner(val, visited, cycleFound)
 				}
 			}
 			return result
@@ -938,27 +951,12 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			mergedOther := make(map[string]any)
 			anyMerged := false
 
-			seenRefs := make(map[string]bool)
 			for _, item := range allOf {
-				if itemMap, ok := item.(map[string]any); ok {
-					if refVal, ok := itemMap["$ref"].(string); ok {
-						canonical := strings.TrimPrefix(refVal, GtsURIPrefix)
-						if seenRefs[canonical] {
-							*dupFound = true
-							continue
-						}
-						seenRefs[canonical] = true
-					}
-				}
-
-				itemWasRef := false
-				if itemMap, ok := item.(map[string]any); ok {
-					if _, hasRef := itemMap["$ref"].(string); hasRef {
-						itemWasRef = true
-					}
-				}
-
-				resolved := s.resolveRefsInner(item, visited, cycleFound, dupFound)
+				// Duplicate $refs in an allOf (redundant manual aggregation
+				// along the chain) are allowed — re-merging the same base is
+				// idempotent. True cycles are caught by DFS-path detection in
+				// the $ref branch below.
+				resolved := s.resolveRefsInner(item, visited, cycleFound)
 				if resolvedMap, ok := resolved.(map[string]any); ok {
 					if _, stillHasRef := resolvedMap["$ref"]; stillHasRef {
 						resolvedAllOf = append(resolvedAllOf, resolved)
@@ -980,12 +978,20 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 						}
 						for k, val := range resolvedMap {
 							switch k {
-							case "properties", "required", "$id", "$schema":
+							case "properties", "required", "$id", "$schema", "additionalProperties":
+								// additionalProperties is never hoisted out of an
+								// allOf branch: allOf is a conjunction, so a branch's
+								// additionalProperties applies only over that branch's
+								// own properties (draft-07 §6.5.6). Hoisting an
+								// overlay's `additionalProperties: true` to the merged
+								// root would wrongly read as the derived schema opening
+								// up, when the closed base branch still denies extras.
+								// Closedness is carried by the base's own
+								// additionalProperties:false via the $ref/allOf
+								// composition. Only the derived schema's *root-level*
+								// additionalProperties (a sibling of allOf, copied
+								// below) is honored for OP#12.
 								continue
-							case "additionalProperties":
-								if itemWasRef {
-									continue
-								}
 							}
 							mergedOther[k] = val
 						}
@@ -999,7 +1005,14 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				merged := make(map[string]any)
 				for k, val := range v {
 					if k != "allOf" {
-						merged[k] = val
+						// Resolve nested $refs in sibling keys too. A derived
+						// schema may carry its own x-gts-traits-schema next to
+						// allOf, and that subschema may itself $ref a standalone
+						// trait-schema type. Copying it verbatim would leave that
+						// $ref unresolved and trip findUnresolvedRef, even though
+						// OP#12 ignores x-gts-* keys. (OP#13 still resolves trait
+						// schemas separately from the raw content.)
+						merged[k] = s.resolveRefsInner(val, visited, cycleFound)
 					}
 				}
 				for k, val := range mergedOther { // parent keys take precedence
@@ -1040,14 +1053,14 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 
 		result := make(map[string]any)
 		for k, val := range v {
-			result[k] = s.resolveRefsInner(val, visited, cycleFound, dupFound)
+			result[k] = s.resolveRefsInner(val, visited, cycleFound)
 		}
 		return result
 
 	case []any:
 		result := make([]any, len(v))
 		for i, item := range v {
-			result[i] = s.resolveRefsInner(item, visited, cycleFound, dupFound)
+			result[i] = s.resolveRefsInner(item, visited, cycleFound)
 		}
 		return result
 

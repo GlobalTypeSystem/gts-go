@@ -580,7 +580,11 @@ func TestValidateSchemaCompatibility(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name: "derived loosens additionalProperties from false",
+			// Omitting additionalProperties on derived is NOT loosening: the
+			// base's additionalProperties:false is inherited via $ref/allOf
+			// composition (ADR-0001 / draft-07 §6.5.6). Only an explicit
+			// permissive declaration at derived's root loosens.
+			name: "derived omits additionalProperties (inherits closedness)",
 			base: &effectiveSchema{
 				properties:           map[string]any{},
 				required:             map[string]bool{},
@@ -592,6 +596,22 @@ func TestValidateSchemaCompatibility(t *testing.T) {
 				required:             map[string]bool{},
 				requiredSet:          false,
 				additionalProperties: nil,
+			},
+			wantError: false,
+		},
+		{
+			name: "derived explicitly sets additionalProperties:true (loosens)",
+			base: &effectiveSchema{
+				properties:           map[string]any{},
+				required:             map[string]bool{},
+				requiredSet:          false,
+				additionalProperties: false,
+			},
+			derived: &effectiveSchema{
+				properties:           map[string]any{},
+				required:             map[string]bool{},
+				requiredSet:          false,
+				additionalProperties: true,
 			},
 			wantError: true,
 		},
@@ -746,7 +766,7 @@ func TestValidateSchemaChain_TwoLevel_TypeChange(t *testing.T) {
 	}
 }
 
-func TestValidateSchemaChain_TwoLevel_LoosensAdditionalProperties(t *testing.T) {
+func TestValidateSchemaChain_TwoLevel_ExplicitlyLoosensAdditionalProperties(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{
 		"$id":                  "gts.x.chain.ns.closed.v1~",
@@ -756,17 +776,45 @@ func TestValidateSchemaChain_TwoLevel_LoosensAdditionalProperties(t *testing.T) 
 			"id": map[string]any{"type": "string"},
 		},
 	})
-	// Derived omits additionalProperties:false — loosening
+	// Derived *explicitly* sets additionalProperties:true at its own root — this
+	// is the only case that loosens (ADR-0001). Merely omitting the keyword is
+	// not loosening, because closedness is inherited via $ref/allOf composition.
 	mustRegister(t, store, map[string]any{
-		"$id":  "gts.x.chain.ns.closed.v1~x.chain.ns.open.v1~",
-		"type": "object",
-		"properties": map[string]any{
-			"id": map[string]any{"type": "string"},
+		"$id":                  "gts.x.chain.ns.closed.v1~x.chain.ns.open.v1~",
+		"type":                 "object",
+		"additionalProperties": true,
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.chain.ns.closed.v1~"},
 		},
 	})
 	result := store.ValidateSchemaChain("gts.x.chain.ns.closed.v1~x.chain.ns.open.v1~")
 	if result.OK {
-		t.Error("expected failure when derived loosens additionalProperties")
+		t.Error("expected failure when derived explicitly loosens additionalProperties to true")
+	}
+}
+
+func TestValidateSchemaChain_TwoLevel_OmitsAdditionalProperties_InheritsClosedness(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":                  "gts.x.chain.ns.closed2.v1~",
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string"},
+		},
+	})
+	// Derived as allOf:[{$ref: base}] omitting additionalProperties — closedness
+	// flows through the $ref; this is NOT loosening (ADR-0001 / 9a086c0).
+	mustRegister(t, store, map[string]any{
+		"$id":  "gts.x.chain.ns.closed2.v1~x.chain.ns.omit.v1~",
+		"type": "object",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.chain.ns.closed2.v1~"},
+		},
+	})
+	result := store.ValidateSchemaChain("gts.x.chain.ns.closed2.v1~x.chain.ns.omit.v1~")
+	if !result.OK {
+		t.Errorf("omitting additionalProperties (closedness inherited via $ref) must pass, got: %s", result.Error)
 	}
 }
 

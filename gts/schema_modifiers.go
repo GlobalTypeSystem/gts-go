@@ -41,24 +41,49 @@ func readBoolModifier(content map[string]any, key string) (bool, error) {
 	return b, nil
 }
 
+// validateModifierPlacement enforces that x-gts-final / x-gts-abstract appear
+// only at the schema document top level (gts-spec §9.11). They are type-level
+// keywords describing the GTS Type as a whole; nesting either inside ANY
+// subschema (allOf, properties, $defs/definitions, items, combinators, …) is a
+// misplacement and is rejected rather than silently ignored.
 func validateModifierPlacement(content map[string]any) error {
-	allOf, ok := content["allOf"].([]any)
-	if !ok {
-		return nil
-	}
-	for _, item := range allOf {
-		entry, ok := item.(map[string]any)
-		if !ok {
+	for k, v := range content {
+		if k == KeyXGtsFinal || k == KeyXGtsAbstract {
 			continue
 		}
-		if _, has := entry[KeyXGtsFinal]; has {
-			return fmt.Errorf("%s must be at the schema top level, not inside allOf", KeyXGtsFinal)
+		if containsKeyInValue(v, KeyXGtsFinal) {
+			return fmt.Errorf("%s must be at the schema top level", KeyXGtsFinal)
 		}
-		if _, has := entry[KeyXGtsAbstract]; has {
-			return fmt.Errorf("%s must be at the schema top level, not inside allOf", KeyXGtsAbstract)
+		if containsKeyInValue(v, KeyXGtsAbstract) {
+			return fmt.Errorf("%s must be at the schema top level", KeyXGtsAbstract)
 		}
-		if err := validateModifierPlacement(entry); err != nil {
-			return err
+	}
+	return nil
+}
+
+// ValidateTraitPlacement enforces that x-gts-traits and x-gts-traits-schema
+// appear only at the schema document top level (gts-spec §9.7.1/§9.11). Like
+// the modifiers, these are type-level keywords; nesting either inside a
+// subschema (allOf, properties, $defs/definitions, combinators, items, …) is a
+// misplacement and is rejected (fail fast).
+//
+// The rule constrains only the *position* of the keyword, not the *contents*
+// of its value: the top-level x-gts-traits-schema is an ordinary JSON Schema
+// subschema whose body may legitimately carry x-gts-* members (e.g. when an
+// existing GTS type is reused as a trait-schema source via $ref). The top-level
+// keyword values are therefore not re-scanned.
+func ValidateTraitPlacement(content map[string]any) error {
+	for k, v := range content {
+		// The four document-level keyword slots are allowed at the top level;
+		// their own values are not re-scanned (see doc comment).
+		if k == KeyXGtsFinal || k == KeyXGtsAbstract || k == KeyXGtsTraits || k == KeyXGtsTraitsSchema {
+			continue
+		}
+		if containsKeyInValue(v, KeyXGtsTraitsSchema) {
+			return fmt.Errorf("%s must be at the schema top level", KeyXGtsTraitsSchema)
+		}
+		if containsKeyInValue(v, KeyXGtsTraits) {
+			return fmt.Errorf("%s must be at the schema top level", KeyXGtsTraits)
 		}
 	}
 	return nil

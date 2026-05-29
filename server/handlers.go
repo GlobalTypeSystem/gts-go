@@ -209,9 +209,19 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate schema modifiers (x-gts-final, x-gts-abstract) for type-schemas.
+	// Validate schema modifiers (x-gts-final, x-gts-abstract) and trait keyword
+	// placement (x-gts-traits, x-gts-traits-schema) for type-schemas. These are
+	// type-level keywords and MUST appear only at the schema top level
+	// (gts-spec §9.7.1/§9.11).
 	if entity.IsTypeSchema {
 		if err := gts.ValidateSchemaModifiers(entity.Content); err != nil {
+			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"ok":    false,
+				"error": err.Error(),
+			})
+			return
+		}
+		if err := gts.ValidateTraitPlacement(entity.Content); err != nil {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"ok":    false,
 				"error": err.Error(),
