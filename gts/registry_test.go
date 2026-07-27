@@ -6,6 +6,8 @@ Released under Apache License 2.0
 package gts
 
 import (
+	"bytes"
+	"log"
 	"strings"
 	"testing"
 )
@@ -18,6 +20,49 @@ func TestRegistryConfig(t *testing.T) {
 		}
 		if config.ValidateGtsReferences {
 			t.Error("Default config should have ValidateGtsReferences=false")
+		}
+		if config.Verbose {
+			t.Error("Default config should have Verbose=false")
+		}
+	})
+}
+
+func TestVerboseLogging(t *testing.T) {
+	captureLog := func(fn func()) string {
+		var buf bytes.Buffer
+		prev := log.Writer()
+		log.SetOutput(&buf)
+		defer log.SetOutput(prev)
+		fn()
+		return buf.String()
+	}
+
+	entityContent := map[string]any{
+		"id":   "gts.test.pkg.ns.user.v1.0~alice",
+		"name": "Alice",
+	}
+
+	t.Run("SilentByDefault", func(t *testing.T) {
+		output := captureLog(func() {
+			store := NewGtsStoreWithConfig(nil, nil)
+			if err := store.Register(NewJsonEntity(entityContent, DefaultGtsConfig())); err != nil {
+				t.Fatalf("Failed to register entity: %v", err)
+			}
+		})
+		if output != "" {
+			t.Errorf("Expected no log output with default config, got: %q", output)
+		}
+	})
+
+	t.Run("LogsWhenVerbose", func(t *testing.T) {
+		output := captureLog(func() {
+			store := NewGtsStoreWithConfig(nil, &RegistryConfig{Verbose: true})
+			if err := store.Register(NewJsonEntity(entityContent, DefaultGtsConfig())); err != nil {
+				t.Fatalf("Failed to register entity: %v", err)
+			}
+		})
+		if !strings.Contains(output, "Created GtsStore") || !strings.Contains(output, "Registered entity") {
+			t.Errorf("Expected creation and registration log lines with Verbose=true, got: %q", output)
 		}
 	})
 }
