@@ -5,114 +5,589 @@ Released under Apache License 2.0
 
 package gts
 
-// CompatibilityResult represents the result of schema compatibility checking
+// OP#8 – Type Schema Evolution Compatibility Checking (spec §4, v0.13).
+//
+// Compatibility is defined by accepted-instance-set inclusion:
+//
+//   - backward: Valid(old) ⊆ Valid(new)   — new consumers can read old data
+//   - forward:  Valid(new) ⊆ Valid(old)   — old consumers can read new data
+//   - full:     backward AND forward
+//
+// Each relation yields a tri-state verdict: "compatible", "incompatible", or
+// "unknown" (when the checker cannot establish either).
+
+import (
+	"math"
+	"strings"
+	"unicode/utf8"
+)
+
+// Verdict constants
+const (
+	VerdictCompatible   = "compatible"
+	VerdictIncompatible = "incompatible"
+	VerdictUnknown      = "unknown"
+)
+
+// CompatibilityResult is the JSON-serialisable response for the /compatibility endpoint.
 type CompatibilityResult struct {
-	FromID                 string              `json:"from"`
-	ToID                   string              `json:"to"`
-	OldID                  string              `json:"old"`
-	NewID                  string              `json:"new"`
-	Direction              string              `json:"direction"`
-	AddedProperties        []string            `json:"added_properties"`
-	RemovedProperties      []string            `json:"removed_properties"`
-	ChangedProperties      []map[string]string `json:"changed_properties"`
-	IsFullyCompatible      bool                `json:"is_fully_compatible"`
-	IsBackwardCompatible   bool                `json:"is_backward_compatible"`
-	IsForwardCompatible    bool                `json:"is_forward_compatible"`
-	IncompatibilityReasons []string            `json:"incompatibility_reasons"`
-	BackwardErrors         []string            `json:"backward_errors"`
-	ForwardErrors          []string            `json:"forward_errors"`
-	Error                  string              `json:"error,omitempty"`
+	OldID                 string `json:"old"`
+	NewID                 string `json:"new"`
+	BackwardCompatibility string `json:"backward_compatibility"`
+	ForwardCompatibility  string `json:"forward_compatibility"`
+	FullCompatibility     string `json:"full_compatibility"`
 }
 
-// CheckCompatibility checks compatibility between two schemas
-// see gts-python store.py is_minor_compatible method
+// ── Entry point ──────────────────────────────────────────────────────────────
+
+// CheckCompatibility compares two type schemas and reports evolution compatibility (OP#8).
 func (s *GtsStore) CheckCompatibility(oldTypeID, newTypeID string) *CompatibilityResult {
+	unknownResult := &CompatibilityResult{
+		OldID:                 oldTypeID,
+		NewID:                 newTypeID,
+		BackwardCompatibility: VerdictUnknown,
+		ForwardCompatibility:  VerdictUnknown,
+		FullCompatibility:     VerdictUnknown,
+	}
+
 	oldEntity := s.Get(oldTypeID)
 	newEntity := s.Get(newTypeID)
-
-	if oldEntity == nil || newEntity == nil {
-		return &CompatibilityResult{
-			FromID:                 oldTypeID,
-			ToID:                   newTypeID,
-			OldID:                  oldTypeID,
-			NewID:                  newTypeID,
-			Direction:              "unknown",
-			AddedProperties:        []string{},
-			RemovedProperties:      []string{},
-			ChangedProperties:      []map[string]string{},
-			IsFullyCompatible:      false,
-			IsBackwardCompatible:   false,
-			IsForwardCompatible:    false,
-			IncompatibilityReasons: []string{},
-			BackwardErrors:         []string{"Schema not found"},
-			ForwardErrors:          []string{"Schema not found"},
-		}
+	if oldEntity == nil || newEntity == nil || oldEntity.Content == nil || newEntity.Content == nil {
+		return unknownResult
 	}
 
-	oldSchema, ok1 := oldEntity.Content, oldEntity.Content != nil
-	newSchema, ok2 := newEntity.Content, newEntity.Content != nil
-	if !ok1 || !ok2 {
-		return &CompatibilityResult{
-			FromID:                 oldTypeID,
-			ToID:                   newTypeID,
-			OldID:                  oldTypeID,
-			NewID:                  newTypeID,
-			Direction:              "unknown",
-			AddedProperties:        []string{},
-			RemovedProperties:      []string{},
-			ChangedProperties:      []map[string]string{},
-			IsFullyCompatible:      false,
-			IsBackwardCompatible:   false,
-			IsForwardCompatible:    false,
-			IncompatibilityReasons: []string{},
-			BackwardErrors:         []string{"Invalid schema content"},
-			ForwardErrors:          []string{"Invalid schema content"},
-		}
+	// Normalize $$ref → $ref and resolve all $ref references so the
+	// comparison operates on fully-resolved effective schemas.
+	oldResolved, err1 := s.resolveRefs(normalizeDollarRefs(deepCopyMap(oldEntity.Content)))
+	newResolved, err2 := s.resolveRefs(normalizeDollarRefs(deepCopyMap(newEntity.Content)))
+	if err1 != nil || err2 != nil {
+		return unknownResult
 	}
 
-	// Check compatibility
-	isBackward, backwardErrors := checkBackwardCompatibility(oldSchema, newSchema)
-	isForward, forwardErrors := checkForwardCompatibility(oldSchema, newSchema)
-
-	// Determine direction
-	direction := inferDirection(oldTypeID, newTypeID)
+	// backward: Valid(old) ⊆ Valid(new)
+	backward := verdict(isSubschema(oldResolved, newResolved))
+	// forward:  Valid(new) ⊆ Valid(old)
+	forward := verdict(isSubschema(newResolved, oldResolved))
 
 	return &CompatibilityResult{
-		FromID:                 oldTypeID,
-		ToID:                   newTypeID,
-		OldID:                  oldTypeID,
-		NewID:                  newTypeID,
-		Direction:              direction,
-		AddedProperties:        []string{},
-		RemovedProperties:      []string{},
-		ChangedProperties:      []map[string]string{},
-		IsFullyCompatible:      isBackward && isForward,
-		IsBackwardCompatible:   isBackward,
-		IsForwardCompatible:    isForward,
-		IncompatibilityReasons: []string{},
-		BackwardErrors:         backwardErrors,
-		ForwardErrors:          forwardErrors,
+		OldID:                 oldTypeID,
+		NewID:                 newTypeID,
+		BackwardCompatibility: backward,
+		ForwardCompatibility:  forward,
+		FullCompatibility:     fullVerdict(backward, forward),
 	}
 }
 
-// inferDirection determines if going up/down based on minor version
-// see gts-python schema_cast.py _infer_direction method
+// ── Verdict helpers ──────────────────────────────────────────────────────────
+
+func verdict(result *bool) string {
+	if result == nil {
+		return VerdictUnknown
+	}
+	if *result {
+		return VerdictCompatible
+	}
+	return VerdictIncompatible
+}
+
+func fullVerdict(backward, forward string) string {
+	if backward == VerdictIncompatible || forward == VerdictIncompatible {
+		return VerdictIncompatible
+	}
+	if backward == VerdictCompatible && forward == VerdictCompatible {
+		return VerdictCompatible
+	}
+	return VerdictUnknown
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// ── Schema sanitisation ─────────────────────────────────────────────────────
+
+// Meta and annotation keywords that do not change the accepted instance set.
+var nonAssertionKeywords = map[string]bool{
+	"$id": true, "$schema": true, "$comment": true,
+	"$anchor": true, "$dynamicAnchor": true, "$defs": true, "definitions": true,
+	"description": true, "title": true, "examples": true, "default": true,
+	"deprecated": true, "readOnly": true, "writeOnly": true,
+}
+
+// sanitizeSchema strips non-assertion and x-gts-* keywords so only validation
+// semantics remain. It also drops the "type" keyword when it is fully redundant
+// with a sibling const/enum (matches the Python sanitize()).
+func sanitizeSchema(schema any) any {
+	switch v := schema.(type) {
+	case map[string]any:
+		dropType := typeRedundantWithValues(v)
+		result := make(map[string]any, len(v))
+		for key, val := range v {
+			if nonAssertionKeywords[key] {
+				continue
+			}
+			if strings.HasPrefix(key, "x-gts-") {
+				continue
+			}
+			if key == "type" && dropType {
+				continue
+			}
+			result[key] = sanitizeSchema(val)
+		}
+		return result
+	case []any:
+		result := make([]any, len(v))
+		for i, item := range v {
+			result[i] = sanitizeSchema(item)
+		}
+		return result
+	default:
+		return schema
+	}
+}
+
+// typeRedundantWithValues returns true when every const/enum value already
+// satisfies the sibling "type" keyword, making "type" redundant for validation.
+func typeRedundantWithValues(schema map[string]any) bool {
+	typeVal, hasType := schema["type"]
+	if !hasType {
+		return false
+	}
+	typeStr, ok := typeVal.(string)
+	if !ok {
+		return false
+	}
+	if constVal, hasConst := schema["const"]; hasConst {
+		return valueHasType(constVal, typeStr)
+	}
+	if enumVal, hasEnum := schema["enum"]; hasEnum {
+		if arr, ok := enumVal.([]any); ok && len(arr) > 0 {
+			for _, val := range arr {
+				if !valueHasType(val, typeStr) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// ── Accepted-instance-set inclusion ─────────────────────────────────────────
+
+// isSubschema checks whether Valid(subset) ⊆ Valid(superset).
+// Returns *true, *false, or nil (unknown/undecidable).
+func isSubschema(subset, superset map[string]any) *bool {
+	subSan, ok1 := sanitizeSchema(subset).(map[string]any)
+	supSan, ok2 := sanitizeSchema(superset).(map[string]any)
+	if !ok1 || !ok2 {
+		return nil
+	}
+	return checkInclusion(subSan, supSan)
+}
+
+// checkInclusion is the recursive core of the inclusion checker.
+func checkInclusion(subset, superset map[string]any) *bool {
+	// Fast path: when subset constrains to a finite set of values (const/enum),
+	// validate each value against the superset schema directly.
+	if result := finiteSubsetCheck(subset, superset); result != nil {
+		return result
+	}
+
+	subType := getString(subset, "type")
+	supType := getString(superset, "type")
+
+	// ── type compatibility ──────────────────────────────────────────────
+	if subType != "" && supType != "" {
+		if !isTypeSubsetOf(subType, supType) {
+			return boolPtr(false)
+		}
+	} else if subType == "" && supType != "" {
+		// subset accepts any type; superset restricts → not a subschema.
+		return boolPtr(false)
+	}
+
+	// ── dispatch by schema shape ────────────────────────────────────────
+	if subType == "object" && supType == "object" {
+		return checkObjectInclusion(subset, superset)
+	}
+	if subType == "array" && supType == "array" {
+		return checkArrayInclusion(subset, superset)
+	}
+
+	// Primitive or mixed schemas.
+	return checkPrimitiveInclusion(subset, superset, subType)
+}
+
+// isTypeSubsetOf returns true when every value of subType is also of supType.
+func isTypeSubsetOf(subType, supType string) bool {
+	if subType == supType {
+		return true
+	}
+	// JSON Schema: integer is a subtype of number.
+	return subType == "integer" && supType == "number"
+}
+
+// ── Finite-value fast path ──────────────────────────────────────────────────
+
+// finiteSubsetCheck returns non-nil when subset uses const/enum and every
+// enumerated value is accepted by superset.
+func finiteSubsetCheck(subset, superset map[string]any) *bool {
+	values := getFiniteValues(subset)
+	if values == nil {
+		return nil
+	}
+	for _, val := range values {
+		if !schemaAcceptsValue(superset, val) {
+			return boolPtr(false)
+		}
+	}
+	return boolPtr(true)
+}
+
+func getFiniteValues(schema map[string]any) []any {
+	if c, ok := schema["const"]; ok {
+		return []any{c}
+	}
+	if e, ok := schema["enum"].([]any); ok {
+		return e
+	}
+	return nil
+}
+
+// schemaAcceptsValue performs a lightweight validation of a concrete value
+// against a schema (type, const, enum, and numeric/string bounds).
+func schemaAcceptsValue(schema map[string]any, value any) bool {
+	if typeVal, ok := schema["type"].(string); ok {
+		if !valueHasType(value, typeVal) {
+			return false
+		}
+	}
+	if constVal, ok := schema["const"]; ok {
+		if !jsonEqual(value, constVal) {
+			return false
+		}
+	}
+	if enumVal, ok := schema["enum"].([]any); ok {
+		if !anySliceContains(enumVal, value) {
+			return false
+		}
+	}
+	if f, ok := toFloat64(value); ok {
+		if min, has := getFloat(schema, "minimum"); has && f < min {
+			return false
+		}
+		if max, has := getFloat(schema, "maximum"); has && f > max {
+			return false
+		}
+		if emin, has := getFloat(schema, "exclusiveMinimum"); has && f <= emin {
+			return false
+		}
+		if emax, has := getFloat(schema, "exclusiveMaximum"); has && f >= emax {
+			return false
+		}
+	}
+	if str, ok := value.(string); ok {
+		runeLen := float64(utf8.RuneCountInString(str))
+		if min, has := getFloat(schema, "minLength"); has && runeLen < min {
+			return false
+		}
+		if max, has := getFloat(schema, "maxLength"); has && runeLen > max {
+			return false
+		}
+	}
+	return true
+}
+
+// valueHasType checks whether a concrete Go value matches a JSON Schema type name.
+func valueHasType(value any, typeName string) bool {
+	switch typeName {
+	case "string":
+		_, ok := value.(string)
+		return ok
+	case "number":
+		_, ok := toFloat64(value)
+		return ok
+	case "integer":
+		f, ok := toFloat64(value)
+		return ok && f == math.Floor(f)
+	case "boolean":
+		_, ok := value.(bool)
+		return ok
+	case "null":
+		return value == nil
+	case "array":
+		_, ok := value.([]any)
+		return ok
+	case "object":
+		_, ok := value.(map[string]any)
+		return ok
+	}
+	return false
+}
+
+// ── Object schema inclusion ─────────────────────────────────────────────────
+
+func checkObjectInclusion(subset, superset map[string]any) *bool {
+	subProps := getPropertiesMap(subset)
+	supProps := getPropertiesMap(superset)
+	subRequired := getRequiredSet(subset)
+	supRequired := getRequiredSet(superset)
+	subOpen := isOpenModel(subset)
+	supOpen := isOpenModel(superset)
+
+	// 1. Every property that superset requires must also be required by subset.
+	//    Otherwise subset has valid instances missing a superset-required field.
+	for prop := range supRequired {
+		if !subRequired[prop] {
+			return boolPtr(false)
+		}
+	}
+
+	// 2. If subset is open and superset is closed, subset-valid instances may
+	//    carry undeclared properties that superset rejects.
+	if subOpen && !supOpen {
+		return boolPtr(false)
+	}
+
+	// 3. Properties declared in subset but not in superset.
+	for prop := range subProps {
+		if _, inSup := supProps[prop]; inSup {
+			continue // handled in step 4
+		}
+		if !supOpen {
+			// Superset is closed and has no schema for this property →
+			// subset-valid instances carrying this property are rejected.
+			return boolPtr(false)
+		}
+		// Superset is open → accepts any value for undeclared properties → OK.
+	}
+
+	// 4. Properties declared in both schemas: recursive inclusion check.
+	for prop, subPropVal := range subProps {
+		supPropVal, inSup := supProps[prop]
+		if !inSup {
+			continue
+		}
+		subPropMap, subOk := subPropVal.(map[string]any)
+		supPropMap, supOk := supPropVal.(map[string]any)
+		if !subOk || !supOk {
+			// Can't compare non-object property schemas.
+			return nil
+		}
+		result := checkInclusion(subPropMap, supPropMap)
+		if result == nil {
+			return nil
+		}
+		if !*result {
+			return boolPtr(false)
+		}
+	}
+
+	// 5. Properties declared in superset but not in subset.
+	for prop, supPropVal := range supProps {
+		if _, inSub := subProps[prop]; inSub {
+			continue
+		}
+		if subOpen {
+			// Subset is open: subset-valid instances can carry this property
+			// with any value. If superset constrains the property, a subset-
+			// valid instance may violate the constraint → not a subschema,
+			// UNLESS the superset property schema accepts everything.
+			if !isAcceptAllSchema(supPropVal) {
+				return boolPtr(false)
+			}
+		}
+		// Subset is closed: subset-valid instances never carry this property.
+		// We already ensured superset-required ⊆ subset-required in step 1.
+	}
+
+	return boolPtr(true)
+}
+
+// isOpenModel returns true when the schema does NOT reject undeclared properties.
+func isOpenModel(schema map[string]any) bool {
+	ap, ok := schema["additionalProperties"]
+	if !ok {
+		return true // default is open
+	}
+	if b, ok := ap.(bool); ok {
+		return b
+	}
+	return true // schema-valued → partially open
+}
+
+// isAcceptAllSchema returns true when a property schema accepts every possible value.
+func isAcceptAllSchema(schema any) bool {
+	if b, ok := schema.(bool); ok {
+		return b
+	}
+	if m, ok := schema.(map[string]any); ok {
+		for k := range m {
+			if !nonAssertionKeywords[k] && !strings.HasPrefix(k, "x-gts-") {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// ── Array schema inclusion ──────────────────────────────────────────────────
+
+func checkArrayInclusion(subset, superset map[string]any) *bool {
+	subItems := getMap(subset, "items")
+	supItems := getMap(superset, "items")
+
+	if subItems != nil && supItems != nil {
+		result := checkInclusion(subItems, supItems)
+		if result != nil && !*result {
+			return boolPtr(false)
+		}
+		if result == nil {
+			return nil
+		}
+	} else if subItems == nil && supItems != nil {
+		// subset accepts any items; superset constrains → not subschema.
+		if !isAcceptAllSchema(supItems) {
+			return boolPtr(false)
+		}
+	}
+
+	// Check minItems / maxItems bounds.
+	if r := checkBoundsInclusion(subset, superset, "minItems", false); r != nil && !*r {
+		return boolPtr(false)
+	}
+	if r := checkBoundsInclusion(subset, superset, "maxItems", true); r != nil && !*r {
+		return boolPtr(false)
+	}
+
+	return boolPtr(true)
+}
+
+// ── Primitive schema inclusion ──────────────────────────────────────────────
+
+func checkPrimitiveInclusion(subset, superset map[string]any, typeName string) *bool {
+	// superset const/enum constrains to a finite set that subset may exceed.
+	if supConst, ok := superset["const"]; ok {
+		if subConst, subHasConst := subset["const"]; subHasConst {
+			return boolPtr(jsonEqual(subConst, supConst))
+		}
+		return boolPtr(false) // subset is more permissive
+	}
+	if supEnum, ok := superset["enum"].([]any); ok {
+		if subEnum, ok := subset["enum"].([]any); ok {
+			for _, val := range subEnum {
+				if !anySliceContains(supEnum, val) {
+					return boolPtr(false)
+				}
+			}
+			return boolPtr(true)
+		}
+		return boolPtr(false) // subset has no enum → may exceed superset's enum
+	}
+
+	switch typeName {
+	case "number", "integer":
+		return checkNumericInclusion(subset, superset)
+	case "string":
+		return checkStringInclusion(subset, superset)
+	}
+	return boolPtr(true)
+}
+
+// checkNumericInclusion: subset range must be within superset range.
+func checkNumericInclusion(subset, superset map[string]any) *bool {
+	for _, kw := range []string{"minimum", "exclusiveMinimum"} {
+		if r := checkBoundsInclusion(subset, superset, kw, false); r != nil && !*r {
+			return boolPtr(false)
+		}
+	}
+	for _, kw := range []string{"maximum", "exclusiveMaximum"} {
+		if r := checkBoundsInclusion(subset, superset, kw, true); r != nil && !*r {
+			return boolPtr(false)
+		}
+	}
+	return boolPtr(true)
+}
+
+// checkStringInclusion: subset length range must be within superset range.
+func checkStringInclusion(subset, superset map[string]any) *bool {
+	if r := checkBoundsInclusion(subset, superset, "minLength", false); r != nil && !*r {
+		return boolPtr(false)
+	}
+	if r := checkBoundsInclusion(subset, superset, "maxLength", true); r != nil && !*r {
+		return boolPtr(false)
+	}
+	return boolPtr(true)
+}
+
+// checkBoundsInclusion checks that subset's range is within superset's range
+// for a single keyword. upper=true for maximum-like keywords, false for minimum-like.
+//
+// For subset to be within superset:
+//
+//	minimum-like: subset.min >= superset.min (subset's floor is no lower)
+//	maximum-like: subset.max <= superset.max (subset's ceiling is no higher)
+func checkBoundsInclusion(subset, superset map[string]any, keyword string, upper bool) *bool {
+	supVal := getNumber(superset, keyword)
+	if supVal == nil {
+		return nil // superset imposes no bound → OK
+	}
+	subVal := getNumber(subset, keyword)
+	if subVal == nil {
+		// superset has a bound but subset does not → subset is wider → not subschema
+		return boolPtr(false)
+	}
+	if upper {
+		if *subVal > *supVal {
+			return boolPtr(false) // subset ceiling exceeds superset
+		}
+	} else {
+		if *subVal < *supVal {
+			return boolPtr(false) // subset floor is below superset
+		}
+	}
+	return nil // bound is satisfied, but not the only criterion
+}
+
+// ── Deep-copy helper ────────────────────────────────────────────────────────
+
+func deepCopyMap(m map[string]any) map[string]any {
+	result := make(map[string]any, len(m))
+	for k, v := range m {
+		result[k] = deepCopyValue(v)
+	}
+	return result
+}
+
+func deepCopyValue(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return deepCopyMap(val)
+	case []any:
+		result := make([]any, len(val))
+		for i, item := range val {
+			result[i] = deepCopyValue(item)
+		}
+		return result
+	default:
+		return v
+	}
+}
+
+// ── Direction inference (kept for any callers; not in the v0.13 response) ────
+
+// inferDirection determines if going up/down based on minor version.
 func inferDirection(fromID, toID string) string {
 	fromGtsID, err1 := NewGtsID(fromID)
 	toGtsID, err2 := NewGtsID(toID)
-
 	if err1 != nil || err2 != nil {
 		return "unknown"
 	}
-
-	// Get last segment (the one with version info)
 	if len(fromGtsID.Segments) == 0 || len(toGtsID.Segments) == 0 {
 		return "unknown"
 	}
-
 	fromSeg := fromGtsID.Segments[len(fromGtsID.Segments)-1]
 	toSeg := toGtsID.Segments[len(toGtsID.Segments)-1]
-
 	if fromSeg.VerMinor != nil && toSeg.VerMinor != nil {
 		if *toSeg.VerMinor > *fromSeg.VerMinor {
 			return "up"
@@ -122,250 +597,5 @@ func inferDirection(fromID, toID string) string {
 		}
 		return "none"
 	}
-
 	return "unknown"
-}
-
-// flattenSchema merges allOf schemas into a single schema
-// see gts-python schema_cast.py _flatten_schema method
-func flattenSchema(schema map[string]any) map[string]any {
-	result := map[string]any{
-		"properties": make(map[string]any),
-		"required":   []any{},
-	}
-
-	// Merge allOf schemas
-	if allOfVal, ok := schema["allOf"]; ok {
-		if allOfList, ok := allOfVal.([]any); ok {
-			for _, subSchemaAny := range allOfList {
-				if subSchema, ok := subSchemaAny.(map[string]any); ok {
-					flattened := flattenSchema(subSchema)
-
-					// Merge properties
-					if props, ok := flattened["properties"].(map[string]any); ok {
-						if resultProps, ok := result["properties"].(map[string]any); ok {
-							for k, v := range props {
-								resultProps[k] = v
-							}
-						}
-					}
-
-					// Merge required
-					if req, ok := flattened["required"].([]any); ok {
-						if resultReq, ok := result["required"].([]any); ok {
-							result["required"] = append(resultReq, req...)
-						}
-					}
-
-					// Preserve additionalProperties (last one wins)
-					if addProps, ok := flattened["additionalProperties"]; ok {
-						result["additionalProperties"] = addProps
-					}
-				}
-			}
-		}
-	}
-
-	// Add direct properties
-	if props, ok := schema["properties"].(map[string]any); ok {
-		if resultProps, ok := result["properties"].(map[string]any); ok {
-			for k, v := range props {
-				resultProps[k] = v
-			}
-		}
-	}
-
-	// Add direct required
-	if req, ok := schema["required"].([]any); ok {
-		if resultReq, ok := result["required"].([]any); ok {
-			result["required"] = append(resultReq, req...)
-		}
-	}
-
-	// Top level additionalProperties overrides
-	if addProps, ok := schema["additionalProperties"]; ok {
-		result["additionalProperties"] = addProps
-	}
-
-	return result
-}
-
-// checkBackwardCompatibility checks if new schema is backward compatible with old
-// Backward compatibility: new consumers can read old data
-// see gts-python schema_cast.py _check_backward_compatibility method
-func checkBackwardCompatibility(oldSchema, newSchema map[string]any) (bool, []string) {
-	return checkSchemaCompatibility(oldSchema, newSchema, true)
-}
-
-// checkForwardCompatibility checks if new schema is forward compatible with old
-// Forward compatibility: old consumers can read new data
-// see gts-python schema_cast.py _check_forward_compatibility method
-func checkForwardCompatibility(oldSchema, newSchema map[string]any) (bool, []string) {
-	return checkSchemaCompatibility(oldSchema, newSchema, false)
-}
-
-// checkSchemaCompatibility unified checker for backward and forward compatibility
-// see gts-python schema_cast.py _check_schema_compatibility method
-func checkSchemaCompatibility(oldSchema, newSchema map[string]any, checkBackward bool) (bool, []string) {
-	errors := []string{}
-
-	// Flatten schemas to handle allOf
-	oldFlat := flattenSchema(oldSchema)
-	newFlat := flattenSchema(newSchema)
-
-	oldProps := getPropertiesMap(oldFlat)
-	newProps := getPropertiesMap(newFlat)
-	oldRequired := getRequiredSet(oldFlat)
-	newRequired := getRequiredSet(newFlat)
-
-	// Check required properties changes
-	if checkBackward {
-		// Backward: cannot add required properties
-		newlyRequired := setDifference(newRequired, oldRequired)
-		if len(newlyRequired) > 0 {
-			errors = append(errors, "Added required properties: "+joinStrings(newlyRequired))
-		}
-	} else {
-		// Forward: cannot remove required properties
-		removedRequired := setDifference(oldRequired, newRequired)
-		if len(removedRequired) > 0 {
-			errors = append(errors, "Removed required properties: "+joinStrings(removedRequired))
-		}
-	}
-
-	// Check properties that exist in both schemas
-	commonProps := setIntersection(getKeys(oldProps), getKeys(newProps))
-	for _, prop := range commonProps {
-		oldPropSchema := oldProps[prop].(map[string]any)
-		newPropSchema := newProps[prop].(map[string]any)
-
-		// Check if type changed
-		oldType := getString(oldPropSchema, "type")
-		newType := getString(newPropSchema, "type")
-		if oldType != "" && newType != "" && oldType != newType {
-			errors = append(errors, "Property '"+prop+"' type changed from "+oldType+" to "+newType)
-		}
-
-		// Check enum constraints
-		oldEnum := getStringSlice(oldPropSchema, "enum")
-		newEnum := getStringSlice(newPropSchema, "enum")
-		if len(oldEnum) > 0 && len(newEnum) > 0 {
-			oldEnumSet := stringSliceToSet(oldEnum)
-			newEnumSet := stringSliceToSet(newEnum)
-			if checkBackward {
-				// Backward: cannot add enum values
-				addedEnumValues := setDifference(newEnumSet, oldEnumSet)
-				if len(addedEnumValues) > 0 {
-					errors = append(errors, "Property '"+prop+"' added enum values: "+joinStrings(addedEnumValues))
-				}
-			} else {
-				// Forward: cannot remove enum values
-				removedEnumValues := setDifference(oldEnumSet, newEnumSet)
-				if len(removedEnumValues) > 0 {
-					errors = append(errors, "Property '"+prop+"' removed enum values: "+joinStrings(removedEnumValues))
-				}
-			}
-		}
-
-		// Check constraint compatibility
-		constraintErrors := checkConstraintCompatibility(prop, oldPropSchema, newPropSchema, checkBackward)
-		errors = append(errors, constraintErrors...)
-
-		// Recursively check nested object properties
-		if oldType == "object" && newType == "object" {
-			nestedCompat, nestedErrors := checkSchemaCompatibility(oldPropSchema, newPropSchema, checkBackward)
-			if !nestedCompat {
-				for _, err := range nestedErrors {
-					errors = append(errors, "Property '"+prop+"': "+err)
-				}
-			}
-		}
-
-		// Recursively check array item schemas
-		if oldType == "array" && newType == "array" {
-			oldItems := getMap(oldPropSchema, "items")
-			newItems := getMap(newPropSchema, "items")
-			if oldItems != nil && newItems != nil {
-				itemsCompat, itemsErrors := checkSchemaCompatibility(oldItems, newItems, checkBackward)
-				if !itemsCompat {
-					for _, err := range itemsErrors {
-						errors = append(errors, "Property '"+prop+"' array items: "+err)
-					}
-				}
-			}
-		}
-	}
-
-	return len(errors) == 0, errors
-}
-
-// checkConstraintCompatibility checks if constraints are compatible
-// see gts-python schema_cast.py _check_constraint_compatibility method
-func checkConstraintCompatibility(prop string, oldPropSchema, newPropSchema map[string]any, checkTightening bool) []string {
-	errors := []string{}
-	propType := getString(oldPropSchema, "type")
-
-	// Numeric constraints (for number/integer types)
-	if propType == "number" || propType == "integer" {
-		errors = append(errors, checkMinMaxConstraint(prop, oldPropSchema, newPropSchema, "minimum", "maximum", checkTightening)...)
-	}
-
-	// String constraints
-	if propType == "string" {
-		errors = append(errors, checkMinMaxConstraint(prop, oldPropSchema, newPropSchema, "minLength", "maxLength", checkTightening)...)
-	}
-
-	// Array constraints
-	if propType == "array" {
-		errors = append(errors, checkMinMaxConstraint(prop, oldPropSchema, newPropSchema, "minItems", "maxItems", checkTightening)...)
-	}
-
-	return errors
-}
-
-// checkMinMaxConstraint checks min/max constraint compatibility
-// see gts-python schema_cast.py _check_min_max_constraint method
-func checkMinMaxConstraint(prop string, oldSchema, newSchema map[string]any, minKey, maxKey string, checkTightening bool) []string {
-	errors := []string{}
-
-	oldMin := getNumber(oldSchema, minKey)
-	newMin := getNumber(newSchema, minKey)
-	oldMax := getNumber(oldSchema, maxKey)
-	newMax := getNumber(newSchema, maxKey)
-
-	// Check minimum constraint
-	if checkTightening {
-		// Backward: cannot increase minimum (tighten)
-		if oldMin != nil && newMin != nil && *newMin > *oldMin {
-			errors = append(errors, "Property '"+prop+"' "+minKey+" increased from "+floatToString(*oldMin)+" to "+floatToString(*newMin))
-		} else if oldMin == nil && newMin != nil {
-			errors = append(errors, "Property '"+prop+"' added "+minKey+" constraint: "+floatToString(*newMin))
-		}
-	} else {
-		// Forward: cannot decrease minimum (relax)
-		if oldMin != nil && newMin != nil && *newMin < *oldMin {
-			errors = append(errors, "Property '"+prop+"' "+minKey+" decreased from "+floatToString(*oldMin)+" to "+floatToString(*newMin))
-		} else if oldMin != nil && newMin == nil {
-			errors = append(errors, "Property '"+prop+"' removed "+minKey+" constraint")
-		}
-	}
-
-	// Check maximum constraint
-	if checkTightening {
-		// Backward: cannot decrease maximum (tighten)
-		if oldMax != nil && newMax != nil && *newMax < *oldMax {
-			errors = append(errors, "Property '"+prop+"' "+maxKey+" decreased from "+floatToString(*oldMax)+" to "+floatToString(*newMax))
-		} else if oldMax == nil && newMax != nil {
-			errors = append(errors, "Property '"+prop+"' added "+maxKey+" constraint: "+floatToString(*newMax))
-		}
-	} else {
-		// Forward: cannot increase maximum (relax)
-		if oldMax != nil && newMax != nil && *newMax > *oldMax {
-			errors = append(errors, "Property '"+prop+"' "+maxKey+" increased from "+floatToString(*oldMax)+" to "+floatToString(*newMax))
-		} else if oldMax != nil && newMax == nil {
-			errors = append(errors, "Property '"+prop+"' removed "+maxKey+" constraint")
-		}
-	}
-
-	return errors
 }

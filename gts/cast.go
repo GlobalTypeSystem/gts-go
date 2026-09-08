@@ -12,10 +12,30 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
+// CastCompatResult holds the structural-diff compatibility info returned by OP#9 (Cast).
+// This is separate from OP#8's CompatibilityResult, which uses accepted-instance-set
+// inclusion and tri-state verdicts (v0.13).
+type CastCompatResult struct {
+	FromID                 string              `json:"from"`
+	ToID                   string              `json:"to"`
+	OldID                  string              `json:"old"`
+	NewID                  string              `json:"new"`
+	Direction              string              `json:"direction"`
+	AddedProperties        []string            `json:"added_properties"`
+	RemovedProperties      []string            `json:"removed_properties"`
+	ChangedProperties      []map[string]string `json:"changed_properties"`
+	IsFullyCompatible      bool                `json:"is_fully_compatible"`
+	IsBackwardCompatible   bool                `json:"is_backward_compatible"`
+	IsForwardCompatible    bool                `json:"is_forward_compatible"`
+	IncompatibilityReasons []string            `json:"incompatibility_reasons"`
+	BackwardErrors         []string            `json:"backward_errors"`
+	ForwardErrors          []string            `json:"forward_errors"`
+	Error                  string              `json:"error,omitempty"`
+}
+
 // CastResult represents the result of casting an instance to a new schema version
-// It extends CompatibilityResult with the casted entity
 type CastResult struct {
-	*CompatibilityResult
+	*CastCompatResult
 	CastedEntity map[string]any `json:"casted_entity,omitempty"`
 }
 
@@ -114,7 +134,7 @@ func castInstance(
 	}
 
 	return &CastResult{
-		CompatibilityResult: &CompatibilityResult{
+		CastCompatResult: &CastCompatResult{
 			FromID:                 fromInstanceID,
 			ToID:                   toTypeID,
 			OldID:                  fromInstanceID,
