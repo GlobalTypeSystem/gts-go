@@ -27,6 +27,7 @@ The commands are:
 	match-id-pattern match a GTS ID against a pattern
 	uuid            generate UUID from a GTS ID
 	validate        validate an instance against its schema
+	validate-json   validate all JSON documents in a file or directory
 	validate-schema validate a derived schema against its chain
 	validate-entity validate any entity (schema or instance) including traits
 	relationships   resolve relationships for an entity
@@ -85,6 +86,7 @@ var commands = []*Command{
 	cmdMatchIDPattern,
 	cmdUUID,
 	cmdValidate,
+	cmdValidateJson,
 	cmdValidateSchema,
 	cmdValidateEntity,
 	cmdRelationships,
