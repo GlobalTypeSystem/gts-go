@@ -76,7 +76,7 @@ func TestSpecOp8_ForwardCompatible(t *testing.T) {
 	regSpec(t, store, map[string]any{
 		"$$id": "gts://gts.x.test8.compat.forward.v1.0~", "$$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
-		"properties":            map[string]any{"eventId": map[string]any{"type": "string"}},
+		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": true,
 	})
 	regSpec(t, store, map[string]any{
@@ -202,13 +202,13 @@ func TestSpecOp8_RemoveRequiredClosedModel(t *testing.T) {
 	regSpec(t, store, map[string]any{
 		"$$id": "gts://gts.x.test8.compat.closed_req.v1.0~", "$$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "importantField"},
-		"properties": map[string]any{"eventId": map[string]any{"type": "string"}, "importantField": map[string]any{"type": "string"}},
+		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}, "importantField": map[string]any{"type": "string"}},
 		"additionalProperties": false,
 	})
 	regSpec(t, store, map[string]any{
 		"$$id": "gts://gts.x.test8.compat.closed_req.v1.1~", "$$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
-		"properties": map[string]any{"eventId": map[string]any{"type": "string"}},
+		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": false,
 	})
 	r := store.CheckCompatibility("gts.x.test8.compat.closed_req.v1.0~", "gts.x.test8.compat.closed_req.v1.1~")

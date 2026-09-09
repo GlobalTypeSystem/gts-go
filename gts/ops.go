@@ -78,7 +78,10 @@ type UUIDResult struct {
 	Error string `json:"error"`
 }
 
-// IDToUUID converts a GTS ID to a UUID
+// IDToUUID converts a GTS ID to a UUID.
+// For combined anonymous instances (IDs ending with a UUID tail segment),
+// the embedded UUID is returned directly. For all other IDs, a deterministic
+// UUID5 is computed from the GTS namespace.
 func IDToUUID(gtsID string) *UUIDResult {
 	id, err := NewGtsID(gtsID)
 	if err != nil {
@@ -86,6 +89,14 @@ func IDToUUID(gtsID string) *UUIDResult {
 			ID:    gtsID,
 			UUID:  "",
 			Error: err.Error(),
+		}
+	}
+
+	// Combined anonymous instances carry their UUID in the last segment.
+	if segs := id.Segments; len(segs) > 0 && segs[len(segs)-1].IsUUID {
+		return &UUIDResult{
+			ID:   gtsID,
+			UUID: segs[len(segs)-1].Segment,
 		}
 	}
 

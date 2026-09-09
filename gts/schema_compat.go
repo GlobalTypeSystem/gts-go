@@ -233,24 +233,38 @@ func validateSchemaCompatibility(base, derived *effectiveSchema, baseID, derived
 					propName, derivedID, baseID,
 				))
 			}
-		} else if !nested {
-			// Only flag omission when derived is explicitly closed (has a properties key or AP:false).
-			// An open-model derived schema implicitly accepts all properties.
-			derivedIsClosed := derived.propertiesSet
+		} else {
+			derivedAPFalse := false
 			if ap, ok := derived.additionalProperties.(bool); ok && !ap {
-				derivedIsClosed = true
+				derivedAPFalse = true
 			}
-			if !exists && derivedIsClosed {
+
+			// Flag omission when derived is explicitly closed.
+			// At top level: when derived has a properties key or AP:false.
+			// Nested: when derived has AP:false (orphans ancestor property under allOf).
+			shouldCheckOmission := false
+			if !nested {
+				shouldCheckOmission = derived.propertiesSet || derivedAPFalse
+			} else {
+				shouldCheckOmission = derivedAPFalse
+			}
+
+			if !exists && shouldCheckOmission {
 				errors = append(errors, fmt.Sprintf(
 					"property '%s': derived schema '%s' omits property defined in base '%s'",
 					propName, derivedID, baseID,
 				))
-			} else if _, baseIsObj := baseProp.(map[string]any); baseIsObj && exists {
-				if _, derivedIsObj := derivedProp.(map[string]any); !derivedIsObj {
-					errors = append(errors, fmt.Sprintf(
-						"property '%s': derived schema '%s' replaces object schema with a non-object value, loosening base '%s' constraints",
-						propName, derivedID, baseID,
-					))
+			}
+
+			// Check replacement (top-level only)
+			if !nested && exists {
+				if _, baseIsObj := baseProp.(map[string]any); baseIsObj {
+					if _, derivedIsObj := derivedProp.(map[string]any); !derivedIsObj {
+						errors = append(errors, fmt.Sprintf(
+							"property '%s': derived schema '%s' replaces object schema with a non-object value, loosening base '%s' constraints",
+							propName, derivedID, baseID,
+						))
+					}
 				}
 			}
 		}
@@ -812,6 +826,8 @@ func jsonEqual(a, b any) bool {
 // ── Ref resolution ────────────────────────────────────────────────────────────
 
 // resolveSchemaRefsChecked resolves $ref references in a named schema, detecting cycles.
+// Content is deep-copied and $$ref keys are normalized to $ref before resolution
+// (the $$ prefix is the httprunner convention for escaping $ in JSON keys).
 func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, error) {
 	entity := s.Get(schemaID)
 	if entity == nil {
@@ -820,7 +836,8 @@ func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, er
 	if !entity.IsTypeSchema {
 		return nil, fmt.Errorf("entity '%s' is not a schema", schemaID)
 	}
-	return s.resolveRefs(entity.Content)
+	normalized := normalizeDollarRefs(entity.Content)
+	return s.resolveRefs(normalized)
 }
 
 // resolveRefs resolves all $ref references in a schema map, detecting cycles.

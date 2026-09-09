@@ -76,6 +76,7 @@ type GtsIDSegment struct {
 	Type       string
 	VerMajor   int
 	VerMinor   *int
+	HasVersion bool
 	IsType     bool
 	IsWildcard bool
 	IsUUID     bool
@@ -371,6 +372,7 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 		}
 
 		seg.VerMajor = major
+		seg.HasVersion = true
 	}
 
 	// Parse minor version

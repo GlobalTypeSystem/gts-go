@@ -184,7 +184,26 @@ func (s *GtsStore) matchesIDPattern(entityID *GtsID, basePattern string, isWildc
 
 	// Use the existing MatchIDPattern function
 	matchResult := MatchIDPattern(entityID.ID, basePattern)
-	return matchResult.Match
+	if !matchResult.Match {
+		return false
+	}
+
+	// For ~* query patterns, exclude entities that are themselves base types
+	// (same segment count as the pattern minus the wildcard). The ~* query
+	// semantically finds derived/instance entities, not the type itself.
+	if strings.HasSuffix(basePattern, "~*") {
+		patternID, err := validateWildcard(basePattern)
+		if err == nil {
+			// The pattern has N segments where the last is the bare wildcard.
+			// Only include entities that have more segments than N-1 (the base type).
+			baseSegCount := len(patternID.Segments) - 1 // exclude the wildcard segment
+			if len(entityID.Segments) <= baseSegCount {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 // matchesFilters checks if entity content matches all filter criteria

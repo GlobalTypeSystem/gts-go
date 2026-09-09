@@ -243,11 +243,23 @@ func wildcardMatch(candidate, pattern *GtsID) bool {
 	return matchSegments(pattern.Segments, candidate.Segments)
 }
 
+// isBareWildcard returns true if the segment is a bare wildcard (*) with no
+// other fields set — i.e. the segment parsed from a lone "*" token after ~.
+func isBareWildcard(seg *GtsIDSegment) bool {
+	return seg.IsWildcard && seg.Vendor == "" && seg.Package == "" && seg.Namespace == "" && seg.Type == ""
+}
+
 // matchSegments matches pattern segments against candidate segments
 func matchSegments(patternSegs, candidateSegs []*GtsIDSegment) bool {
-	// If pattern is longer than candidate, no match
+	// If pattern is longer than candidate, allow the last pattern segment to be
+	// a bare wildcard that matches zero additional segments (e.g. ~* matching
+	// the type itself with no instance segments).
 	if len(patternSegs) > len(candidateSegs) {
-		return false
+		if len(patternSegs) == len(candidateSegs)+1 && isBareWildcard(patternSegs[len(patternSegs)-1]) {
+			patternSegs = patternSegs[:len(patternSegs)-1]
+		} else {
+			return false
+		}
 	}
 
 	for i, pSeg := range patternSegs {
@@ -269,7 +281,7 @@ func matchSegments(patternSegs, candidateSegs []*GtsIDSegment) bool {
 				return false
 			}
 			// Check version fields if they are set in the pattern
-			if pSeg.VerMajor != 0 && pSeg.VerMajor != cSeg.VerMajor {
+			if pSeg.HasVersion && pSeg.VerMajor != cSeg.VerMajor {
 				return false
 			}
 			if pSeg.VerMinor != nil && (cSeg.VerMinor == nil || *pSeg.VerMinor != *cSeg.VerMinor) {

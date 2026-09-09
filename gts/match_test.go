@@ -32,10 +32,10 @@ func TestMatchIDPattern_Positive2(t *testing.T) {
 		match     bool
 	}{
 		{
-			name:      "Type identifier with ~* does not match",
+			name:      "Type identifier with ~* matches",
 			candidate: "gts.vendor.pkg.ns.type.v0~",
 			pattern:   "gts.vendor.pkg.ns.type.v0~*",
-			match:     false,
+			match:     true,
 		},
 		{
 			name:      "Derived instance with ~* matches",
@@ -65,10 +65,10 @@ func TestMatchIDPattern_Positive3(t *testing.T) {
 		match     bool
 	}{
 		{
-			name:      "Type with different minor version does not match ~*",
+			name:      "Type with different minor version matches ~*",
 			candidate: "gts.vendor.pkg.ns.type.v0.1~",
 			pattern:   "gts.vendor.pkg.ns.type.v0~*",
-			match:     false,
+			match:     true,
 		},
 		{
 			name:      "Derived instance with different minor version matches ~*",

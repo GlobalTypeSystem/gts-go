@@ -6,14 +6,11 @@ Released under Apache License 2.0
 package main
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/GlobalTypeSystem/gts-go/gts"
 )
 
 var cmdValidateJson = &Command{
-	UsageLine: "validate-json -path <path>",
+	UsageLine: "validate-all -path <path>",
 	Short:     "validate all JSON documents in a file or directory",
 	Long: `
 ValidateJson validates all JSON documents in a file or directory.
@@ -25,8 +22,8 @@ The -path flag specifies a JSON file or directory to scan. If not provided,
 the global -path flag value is used.
 
 Example:
-  gts validate-json -path ./schemas
-  gts validate-json -path ./my-schema.json
+  gts validate-all -path ./schemas
+  gts validate-all -path ./my-schema.json
 	`,
 }
 
@@ -54,14 +51,6 @@ func runValidateJson(cmd *Command, args []string) {
 
 	validator := NewGtsJsonValidator(scanPath, cfg)
 	result := validator.Validate()
-
-	for _, issue := range result.Issues {
-		suffix := ""
-		if issue.Index != nil {
-			suffix = fmt.Sprintf("#%d", *issue.Index)
-		}
-		fmt.Fprintf(os.Stderr, "%s%s: %s: %s\n", issue.File, suffix, issue.Stage, issue.Message)
-	}
 
 	writeJSON(result)
 }

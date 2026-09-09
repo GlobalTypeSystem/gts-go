@@ -113,15 +113,10 @@ func (v *GtsJsonValidator) collectJSONFiles() []string {
 
 	err = filepath.Walk(resolved, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			v.addIssue(path, "discovery", err.Error(), nil)
 			return nil
 		}
 		if info.IsDir() {
-			name := info.Name()
-			for _, excluded := range gts.ExcludeList {
-				if name == excluded {
-					return filepath.SkipDir
-				}
-			}
 			return nil
 		}
 		if strings.EqualFold(filepath.Ext(path), ".json") {
@@ -144,14 +139,26 @@ func (v *GtsJsonValidator) collectJSONFiles() []string {
 	return files
 }
 
-func (v *GtsJsonValidator) readFile(filePath string) {
-	v.files++
+// isGtsMarker checks raw file text for GTS markers before paying JSON parse cost.
+const xGtsRefKeyword = "x-gts-ref"
 
+func isGtsMarker(text string) bool {
+	return strings.Contains(text, gts.GtsPrefix) ||
+		strings.Contains(text, gts.GtsURIPrefix) ||
+		strings.Contains(text, xGtsRefKeyword)
+}
+
+func (v *GtsJsonValidator) readFile(filePath string) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		v.addIssue(filePath, "json", err.Error(), nil)
 		return
 	}
+
+	if !isGtsMarker(string(data)) {
+		return
+	}
+	v.files++
 
 	var content any
 	if err := json.Unmarshal(data, &content); err != nil {
@@ -211,7 +218,9 @@ func (v *GtsJsonValidator) registerGtsEntities() *gts.GtsStore {
 
 		key := validatorRegistryKey(entity)
 		if key == "" {
-			v.addIssueEntity(entity, "registry", "GTS-related document has no registrable GTS ID")
+			if entity.IsTypeSchema {
+				v.addIssueEntity(entity, "registry", "GTS schema has a malformed or non-GTS $id")
+			}
 			continue
 		}
 
@@ -243,9 +252,6 @@ func (v *GtsJsonValidator) countSchemaInstance() (int, int) {
 	schemas := 0
 	instances := 0
 	for _, entity := range v.entities {
-		if !isGtsRelated(entity.Content) {
-			continue
-		}
 		if validatorRegistryKey(entity) == "" {
 			continue
 		}
@@ -259,11 +265,13 @@ func (v *GtsJsonValidator) countSchemaInstance() (int, int) {
 }
 
 func (v *GtsJsonValidator) validateSchemas(store *gts.GtsStore) {
-	type schemaEntry struct {
-		id    string
+	type schemaPending struct {
 		depth int
+		id    string
+		file  string
+		index *int
 	}
-	var schemaIDs []schemaEntry
+	var pending []schemaPending
 
 	for _, entity := range v.entities {
 		if !entity.IsTypeSchema || entity.GtsID == nil {
@@ -273,51 +281,116 @@ func (v *GtsJsonValidator) validateSchemas(store *gts.GtsStore) {
 		if store.Get(id) == nil {
 			continue
 		}
-		depth := len(entity.GtsID.Segments)
-		schemaIDs = append(schemaIDs, schemaEntry{id: id, depth: depth})
+		pending = append(pending, schemaPending{
+			depth: len(entity.GtsID.Segments),
+			id:    id,
+			file:  validatorEntityFile(entity),
+			index: entity.ListSequence,
+		})
 	}
 
-	sort.Slice(schemaIDs, func(i, j int) bool {
-		return schemaIDs[i].depth < schemaIDs[j].depth
+	sort.Slice(pending, func(i, j int) bool {
+		a, b := pending[i], pending[j]
+		if a.depth != b.depth {
+			return a.depth < b.depth
+		}
+		if a.id != b.id {
+			return a.id < b.id
+		}
+		if a.file != b.file {
+			return a.file < b.file
+		}
+		ai := -1
+		if a.index != nil {
+			ai = *a.index
+		}
+		bi := -1
+		if b.index != nil {
+			bi = *b.index
+		}
+		return ai < bi
 	})
 
-	// Validate base types first (depth 1)
-	for _, entry := range schemaIDs {
-		if entry.depth != 1 {
-			continue
+	for _, s := range pending {
+		stage := "base-type"
+		if s.depth > 1 {
+			stage = "derived-type"
 		}
-		if err := store.ValidateSchema(entry.id); err != nil {
-			entity := store.Get(entry.id)
-			file, index := validatorEntityFileInfo(entity)
-			v.addIssue(file, "base-type", err.Error(), index)
-		}
-	}
-
-	// Then derived types (depth > 1)
-	for _, entry := range schemaIDs {
-		if entry.depth <= 1 {
-			continue
-		}
-		if err := store.ValidateSchema(entry.id); err != nil {
-			entity := store.Get(entry.id)
-			file, index := validatorEntityFileInfo(entity)
-			v.addIssue(file, "derived-type", err.Error(), index)
+		if err := store.ValidateSchema(s.id); err != nil {
+			v.addIssue(s.file, stage, err.Error(), s.index)
 		}
 	}
 }
 
+func entityDepth(entity *gts.JsonEntity) int {
+	if entity.GtsID != nil {
+		return len(entity.GtsID.Segments)
+	}
+	if entity.TypeID != "" {
+		if gid, err := gts.NewGtsID(entity.TypeID); err == nil {
+			return len(gid.Segments)
+		}
+	}
+	return 0
+}
+
 func (v *GtsJsonValidator) validateInstances(store *gts.GtsStore) {
+	type instancePending struct {
+		depth       int
+		id          string
+		file        string
+		index       *int
+		registryKey string
+	}
+	var pending []instancePending
+
 	for _, entity := range v.entities {
-		if entity.IsTypeSchema || !isGtsRelated(entity.Content) {
+		if entity.IsTypeSchema {
 			continue
 		}
 		key := validatorRegistryKey(entity)
 		if key == "" {
 			continue
 		}
-		result := store.ValidateInstance(key)
+		gtsIDStr := ""
+		if entity.GtsID != nil {
+			gtsIDStr = entity.GtsID.ID
+		}
+		pending = append(pending, instancePending{
+			depth:       entityDepth(entity),
+			id:          gtsIDStr,
+			file:        validatorEntityFile(entity),
+			index:       entity.ListSequence,
+			registryKey: key,
+		})
+	}
+
+	sort.Slice(pending, func(i, j int) bool {
+		a, b := pending[i], pending[j]
+		if a.depth != b.depth {
+			return a.depth < b.depth
+		}
+		if a.id != b.id {
+			return a.id < b.id
+		}
+		if a.file != b.file {
+			return a.file < b.file
+		}
+		ai := -1
+		if a.index != nil {
+			ai = *a.index
+		}
+		bi := -1
+		if b.index != nil {
+			bi = *b.index
+		}
+		return ai < bi
+	})
+
+	for _, p := range pending {
+		result := store.ValidateInstance(p.registryKey)
 		if !result.OK {
-			v.addIssueEntity(entity, "instance", result.Error)
+			v.addIssue(p.file, "instance", result.Error, p.index)
 		}
 	}
 }
@@ -350,7 +423,9 @@ func isGtsRelated(content map[string]any) bool {
 func isGtsRelatedValue(val any) bool {
 	switch v := val.(type) {
 	case string:
-		return strings.Contains(v, "gts.")
+		return strings.Contains(v, gts.GtsPrefix) ||
+			strings.Contains(v, gts.GtsURIPrefix) ||
+			strings.Contains(v, xGtsRefKeyword)
 	case map[string]any:
 		for _, value := range v {
 			if isGtsRelatedValue(value) {

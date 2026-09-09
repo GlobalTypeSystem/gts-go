@@ -86,7 +86,7 @@ func TestCheckCompatibility_ForwardCompatible_AddOptionalOpen(t *testing.T) {
 	registerSchema(t, store, map[string]any{
 		"$id": "gts.x.core.compat.forward.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
-		"properties":            map[string]any{"eventId": map[string]any{"type": "string"}},
+		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": true,
 	})
 	registerSchema(t, store, map[string]any{
@@ -151,7 +151,7 @@ func TestCheckCompatibility_ClosedModel_AddOptional(t *testing.T) {
 	registerSchema(t, store, map[string]any{
 		"$id": "gts.x.core.compat.closed_add.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
-		"properties":            map[string]any{"eventId": map[string]any{"type": "string"}},
+		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": false,
 	})
 	registerSchema(t, store, map[string]any{
@@ -180,7 +180,7 @@ func TestCheckCompatibility_ClosedModel_RemoveOptional(t *testing.T) {
 	registerSchema(t, store, map[string]any{
 		"$id": "gts.x.core.compat.closed_rm.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
-		"properties":            map[string]any{"eventId": map[string]any{"type": "string"}},
+		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": false,
 	})
 
@@ -201,7 +201,7 @@ func TestCheckCompatibility_ClosedModel_RemoveRequired(t *testing.T) {
 	registerSchema(t, store, map[string]any{
 		"$id": "gts.x.core.compat.closed_req.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
-		"properties":            map[string]any{"eventId": map[string]any{"type": "string"}},
+		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": false,
 	})
 
@@ -216,13 +216,13 @@ func TestCheckCompatibility_ClosingOpenObject(t *testing.T) {
 	registerSchema(t, store, map[string]any{
 		"$id": "gts.x.core.compat.closing.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
-		"properties":            map[string]any{"eventId": map[string]any{"type": "string"}},
+		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": true,
 	})
 	registerSchema(t, store, map[string]any{
 		"$id": "gts.x.core.compat.closing.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
-		"properties":            map[string]any{"eventId": map[string]any{"type": "string"}},
+		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": false,
 	})
 
@@ -235,13 +235,13 @@ func TestCheckCompatibility_OpeningClosedObject(t *testing.T) {
 	registerSchema(t, store, map[string]any{
 		"$id": "gts.x.core.compat.opening.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
-		"properties":            map[string]any{"eventId": map[string]any{"type": "string"}},
+		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": false,
 	})
 	registerSchema(t, store, map[string]any{
 		"$id": "gts.x.core.compat.opening.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
-		"properties":            map[string]any{"eventId": map[string]any{"type": "string"}},
+		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": true,
 	})
 

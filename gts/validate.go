@@ -9,9 +9,35 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dlclark/regexp2"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"golang.org/x/text/message"
 )
+
+// regexp2RE adapts dlclark/regexp2 (PCRE-compatible) to the jsonschema.Regexp interface.
+type regexp2RE struct {
+	re *regexp2.Regexp
+}
+
+func (r *regexp2RE) MatchString(s string) bool {
+	ok, _ := r.re.MatchString(s)
+	return ok
+}
+
+func (r *regexp2RE) String() string {
+	return r.re.String()
+}
+
+// ecmaRegexpEngine compiles patterns using ECMA-262 compatible regexp2.
+// JSON Schema specifies ECMA-262 regex, which supports lookaheads ((?!, (?=)
+// that Go's stdlib regexp (RE2) does not.
+func ecmaRegexpEngine(s string) (jsonschema.Regexp, error) {
+	re, err := regexp2.Compile(s, regexp2.ECMAScript)
+	if err != nil {
+		return nil, err
+	}
+	return &regexp2RE{re}, nil
+}
 
 // gtsURLLoader implements jsonschema.URLLoader for GTS ID reference resolution
 type gtsURLLoader struct {
@@ -226,6 +252,11 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 
 	// Create a custom compiler with GTS reference resolution
 	compiler := jsonschema.NewCompiler()
+
+	// Use ECMA-262 compatible regexp engine for pattern validation.
+	// Go's stdlib regexp uses RE2 which rejects lookaheads ((?!, (?=)
+	// that are valid in JSON Schema patterns.
+	compiler.UseRegexpEngine(ecmaRegexpEngine)
 
 	// Register x-gts-ref as a proper vocabulary so the library treats it as a real
 	// keyword with validation semantics. This prevents oneOf/anyOf/allOf branches

@@ -305,6 +305,11 @@ func (s *GtsStore) validateEntityGtsReferences(entity *JsonEntity) error {
 			continue
 		}
 
+		// Skip wildcard patterns — they are x-gts-ref constraints, not concrete entity IDs
+		if strings.Contains(ref.ID, "*") {
+			continue
+		}
+
 		// Check if the referenced entity exists in the store
 		referencedEntity := s.Get(ref.ID)
 		if referencedEntity == nil {
@@ -374,11 +379,6 @@ func (s *GtsStore) ValidateSchema(gtsID string) error {
 		return fmt.Errorf("x-gts-ref validation failed: %s", strings.Join(errorMsgs, "; "))
 	}
 
-	// Validate GTS references in the schema
-	if err := s.validateEntityGtsReferences(entity); err != nil {
-		return fmt.Errorf("schema GTS reference validation failed: %w", err)
-	}
-
 	log.Printf("Schema %s passed validation", gtsID)
 	return nil
 }
@@ -419,11 +419,6 @@ func (s *GtsStore) ValidateInstanceWithXGtsRef(instanceID string) error {
 			errorMsgs = append(errorMsgs, err.Error())
 		}
 		return fmt.Errorf("x-gts-ref validation failed: %s", strings.Join(errorMsgs, "; "))
-	}
-
-	// Validate GTS references in the instance
-	if err := s.validateEntityGtsReferences(instance); err != nil {
-		return fmt.Errorf("instance GTS reference validation failed: %w", err)
 	}
 
 	log.Printf("Instance %s passed validation", instanceID)
