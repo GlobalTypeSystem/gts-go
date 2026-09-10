@@ -60,17 +60,10 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		validationParam = r.URL.Query().Get("validation")
 	}
 
+	// Only the canonical JSON Schema keywords $schema/$id are recognized.
 	hasSchemaField := false
 	if schemaVal, ok := content["$schema"]; ok && schemaVal != nil {
 		hasSchemaField = true
-	} else if schemaVal, ok := content["$$schema"]; ok && schemaVal != nil {
-		content["$schema"] = schemaVal
-		hasSchemaField = true
-	}
-	if _, exists := content["$id"]; !exists {
-		if idVal, ok := content["$$id"]; ok {
-			content["$id"] = idVal
-		}
 	}
 
 	if hasSchemaField {

@@ -66,8 +66,20 @@ func NewJsonEntityWithFile(content map[string]any, cfg *GtsConfig, file *JsonFil
 
 	// ID extraction logic based on entity type
 	if entity.IsTypeSchema {
-		// For type-schemas: use entity ID (should be from $id field)
-		if entityIDValue != "" && IsValidGtsID(entityIDValue) {
+		// Validate that schema $id uses the gts:// URI form, not the bare gts.
+		// prefix. Per gts-spec, schemas must place the identifier in $id as a
+		// gts:// URI. Leaving GtsID nil here causes downstream registration to
+		// fail with a "malformed or non-GTS $id" diagnostic (mirrors Rust
+		// entities.rs). This lives in the core library so every client (server,
+		// batch validator, direct callers) enforces it uniformly.
+		validPrefix := true
+		if rawID, ok := content["$id"].(string); ok {
+			rawID = strings.TrimSpace(rawID)
+			if strings.HasPrefix(rawID, GtsPrefix) && !strings.HasPrefix(rawID, GtsURIPrefix) {
+				validPrefix = false
+			}
+		}
+		if validPrefix && entityIDValue != "" && IsValidGtsID(entityIDValue) {
 			gtsID, _ := NewGtsID(entityIDValue)
 			entity.GtsID = gtsID
 		}
@@ -142,13 +154,10 @@ func isJSONSchema(content map[string]any) bool {
 		return false
 	}
 
-	// Schema Detection: a JSON document is a schema if and only if it has a $schema field
+	// Schema Detection: only canonical $schema is recognized.
+	// The doubled-dollar $$schema form is an HttpRunner escaping artifact,
+	// not a JSON Schema keyword.
 	_, hasSchema := content["$schema"]
-	if !hasSchema {
-		// Try alternative field name
-		_, hasSchema = content["$$schema"]
-	}
-
 	return hasSchema
 }
 

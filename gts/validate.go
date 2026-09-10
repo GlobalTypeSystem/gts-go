@@ -235,20 +235,25 @@ func newXGtsRefVocabulary(store *GtsStore) *jsonschema.Vocabulary {
 	}
 }
 
+// normalizeSchemaForCompile returns a shallow copy of a schema with the gts://
+// URI prefix stripped from $id. This ensures the embedded $id agrees with the
+// (already normalized) resource URL used by the JSON Schema compiler, so
+// relative $ref values resolve correctly.
+func normalizeSchemaForCompile(schema map[string]any) map[string]any {
+	normalized := make(map[string]any, len(schema))
+	for k, v := range schema {
+		normalized[k] = v
+	}
+	if id, ok := normalized["$id"].(string); ok {
+		normalized["$id"] = strings.TrimPrefix(id, GtsURIPrefix)
+	}
+	return normalized
+}
+
 // validateWithSchema performs the actual JSON Schema validation
 func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string]any) error {
-	// Normalize schema to convert $$id to $id and $$schema to $schema for JSON Schema validation
-	normalizedSchema := make(map[string]any)
-	for k, v := range schema {
-		switch k {
-		case "$$id":
-			normalizedSchema["$id"] = v
-		case "$$schema":
-			normalizedSchema["$schema"] = v
-		default:
-			normalizedSchema[k] = v
-		}
-	}
+	// Normalize schema by stripping the gts:// prefix from $id for JSON Schema validation
+	normalizedSchema := normalizeSchemaForCompile(schema)
 
 	// Create a custom compiler with GTS reference resolution
 	compiler := jsonschema.NewCompiler()
@@ -299,10 +304,15 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 	}
 
 	// Pre-load all schemas from the store (matches Python's store dict pre-population)
-	// Note: Store IDs are already normalized (without gts:// prefix)
+	// Note: Store IDs are already normalized (without gts:// prefix). The schema
+	// content, however, may still carry a gts:// $id which would override the
+	// resource URL and make relative $ref resolution produce malformed URLs
+	// (e.g. "gts://base/ref"). Normalize each pre-loaded schema's $id so the
+	// resource URL and embedded $id agree.
 	for id, entity := range s.byID {
 		if entity.IsTypeSchema && id != normalizedSchemaID {
-			if err := compiler.AddResource(id, entity.Content); err != nil {
+			resource := normalizeSchemaForCompile(entity.Content)
+			if err := compiler.AddResource(id, resource); err != nil {
 				// Ignore errors - gtsURLLoader will handle dynamic resolution
 				continue
 			}

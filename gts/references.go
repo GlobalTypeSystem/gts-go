@@ -5,7 +5,10 @@ Released under Apache License 2.0
 
 package gts
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // GtsReference represents a GTS ID reference found in JSON content
 type GtsReference struct {
@@ -31,15 +34,18 @@ func walkAndCollectRefs(node any, path string, refs *[]*GtsReference, seen map[s
 
 	// Check if current node is a GTS ID string
 	if str, ok := node.(string); ok {
-		if IsValidGtsID(str) {
+		// Strip the gts:// URI prefix (used in JSON Schema $id/$ref) before
+		// validating, matching gts-python _extract_gts_ids_with_paths.
+		id := strings.TrimPrefix(str, GtsURIPrefix)
+		if IsValidGtsID(id) {
 			sourcePath := path
 			if sourcePath == "" {
 				sourcePath = "root"
 			}
-			key := str + "|" + sourcePath
+			key := id + "|" + sourcePath
 			if !seen[key] {
 				*refs = append(*refs, &GtsReference{
-					ID:         str,
+					ID:         id,
 					SourcePath: sourcePath,
 				})
 				seen[key] = true
