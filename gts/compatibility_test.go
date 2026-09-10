@@ -36,7 +36,7 @@ func registerSchema(t *testing.T, store *GtsStore, schema map[string]any) {
 func TestCheckCompatibility_BackwardCompatible_RemoveOptionalOpen(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.event.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.event.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "timestamp", "userId"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "timestamp": map[string]any{"type": "string"},
@@ -44,7 +44,7 @@ func TestCheckCompatibility_BackwardCompatible_RemoveOptionalOpen(t *testing.T) 
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.event.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.event.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "timestamp", "userId"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "timestamp": map[string]any{"type": "string"},
@@ -65,12 +65,12 @@ func TestCheckCompatibility_BackwardCompatible_RemoveOptionalOpen(t *testing.T) 
 func TestCheckCompatibility_BackwardIncompatible_AddRequired(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.breaking.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.breaking.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties": map[string]any{"eventId": map[string]any{"type": "string"}},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.breaking.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.breaking.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "newRequiredField"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "newRequiredField": map[string]any{"type": "string"},
@@ -84,13 +84,13 @@ func TestCheckCompatibility_BackwardIncompatible_AddRequired(t *testing.T) {
 func TestCheckCompatibility_ForwardCompatible_AddOptionalOpen(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.forward.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.forward.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": true,
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.forward.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.forward.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "newField": map[string]any{"type": "string"},
@@ -105,14 +105,14 @@ func TestCheckCompatibility_ForwardCompatible_AddOptionalOpen(t *testing.T) {
 func TestCheckCompatibility_ForwardIncompatible_RemoveRequired(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.fwd_break.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.fwd_break.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "importantField"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "importantField": map[string]any{"type": "string"},
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.fwd_break.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.fwd_break.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties": map[string]any{"eventId": map[string]any{"type": "string"}},
 	})
@@ -124,7 +124,7 @@ func TestCheckCompatibility_ForwardIncompatible_RemoveRequired(t *testing.T) {
 func TestCheckCompatibility_FullyCompatible_AnnotationsOnly(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.full.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.full.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string", "description": "Event identifier"},
@@ -132,7 +132,7 @@ func TestCheckCompatibility_FullyCompatible_AnnotationsOnly(t *testing.T) {
 		"additionalProperties": true,
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.full.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.full.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string", "description": "Stable event identifier", "examples": []any{"evt-123"}},
@@ -149,13 +149,13 @@ func TestCheckCompatibility_FullyCompatible_AnnotationsOnly(t *testing.T) {
 func TestCheckCompatibility_ClosedModel_AddOptional(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.closed_add.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.closed_add.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": false,
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.closed_add.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.closed_add.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "label": map[string]any{"type": "string"},
@@ -170,7 +170,7 @@ func TestCheckCompatibility_ClosedModel_AddOptional(t *testing.T) {
 func TestCheckCompatibility_ClosedModel_RemoveOptional(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.closed_rm.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.closed_rm.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "label": map[string]any{"type": "string"},
@@ -178,7 +178,7 @@ func TestCheckCompatibility_ClosedModel_RemoveOptional(t *testing.T) {
 		"additionalProperties": false,
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.closed_rm.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.closed_rm.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": false,
@@ -191,7 +191,7 @@ func TestCheckCompatibility_ClosedModel_RemoveOptional(t *testing.T) {
 func TestCheckCompatibility_ClosedModel_RemoveRequired(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.closed_req.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.closed_req.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "importantField"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "importantField": map[string]any{"type": "string"},
@@ -199,7 +199,7 @@ func TestCheckCompatibility_ClosedModel_RemoveRequired(t *testing.T) {
 		"additionalProperties": false,
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.closed_req.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.closed_req.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": false,
@@ -214,13 +214,13 @@ func TestCheckCompatibility_ClosedModel_RemoveRequired(t *testing.T) {
 func TestCheckCompatibility_ClosingOpenObject(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.closing.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.closing.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": true,
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.closing.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.closing.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": false,
@@ -233,13 +233,13 @@ func TestCheckCompatibility_ClosingOpenObject(t *testing.T) {
 func TestCheckCompatibility_OpeningClosedObject(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.opening.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.opening.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": false,
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.opening.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.opening.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId"},
 		"properties":           map[string]any{"eventId": map[string]any{"type": "string"}},
 		"additionalProperties": true,
@@ -254,14 +254,14 @@ func TestCheckCompatibility_OpeningClosedObject(t *testing.T) {
 func TestCheckCompatibility_TypeChange(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.typechange.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.typechange.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "count"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "count": map[string]any{"type": "number"},
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.typechange.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.typechange.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "count"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "count": map[string]any{"type": "string"},
@@ -275,14 +275,14 @@ func TestCheckCompatibility_TypeChange(t *testing.T) {
 func TestCheckCompatibility_NumericWidening(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.widen.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.widen.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "amount"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "amount": map[string]any{"type": "integer"},
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.widen.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.widen.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "amount"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "amount": map[string]any{"type": "number"},
@@ -296,14 +296,14 @@ func TestCheckCompatibility_NumericWidening(t *testing.T) {
 func TestCheckCompatibility_NumericNarrowing(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.narrow.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.narrow.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "amount"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "amount": map[string]any{"type": "number"},
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.narrow.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.narrow.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "amount"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "amount": map[string]any{"type": "integer"},
@@ -319,7 +319,7 @@ func TestCheckCompatibility_NumericNarrowing(t *testing.T) {
 func TestCheckCompatibility_EnumExpansion(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.enum.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.enum.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "status"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"},
@@ -327,7 +327,7 @@ func TestCheckCompatibility_EnumExpansion(t *testing.T) {
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.enum.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.enum.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "status"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"},
@@ -342,7 +342,7 @@ func TestCheckCompatibility_EnumExpansion(t *testing.T) {
 func TestCheckCompatibility_EnumReduction(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.enum_red.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.enum_red.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "status"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"},
@@ -350,7 +350,7 @@ func TestCheckCompatibility_EnumReduction(t *testing.T) {
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.enum_red.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.enum_red.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "status"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"},
@@ -367,7 +367,7 @@ func TestCheckCompatibility_EnumReduction(t *testing.T) {
 func TestCheckCompatibility_ConstIdentityChange(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.const_id.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.const_id.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "kind"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"},
@@ -375,7 +375,7 @@ func TestCheckCompatibility_ConstIdentityChange(t *testing.T) {
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.const_id.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.const_id.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "kind"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"},
@@ -392,7 +392,7 @@ func TestCheckCompatibility_ConstIdentityChange(t *testing.T) {
 func TestCheckCompatibility_ConstraintRelaxation(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.constraints.product.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.constraints.product.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"productId", "price"},
 		"properties": map[string]any{
 			"productId": map[string]any{"type": "string"},
@@ -401,7 +401,7 @@ func TestCheckCompatibility_ConstraintRelaxation(t *testing.T) {
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.constraints.product.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.constraints.product.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"productId", "price"},
 		"properties": map[string]any{
 			"productId": map[string]any{"type": "string"},
@@ -417,7 +417,7 @@ func TestCheckCompatibility_ConstraintRelaxation(t *testing.T) {
 func TestCheckCompatibility_ConstraintTightening(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.tight.item.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.tight.item.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"itemId", "quantity"},
 		"properties": map[string]any{
 			"itemId":   map[string]any{"type": "string"},
@@ -425,7 +425,7 @@ func TestCheckCompatibility_ConstraintTightening(t *testing.T) {
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.tight.item.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.tight.item.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"itemId", "quantity"},
 		"properties": map[string]any{
 			"itemId":   map[string]any{"type": "string"},
@@ -442,7 +442,7 @@ func TestCheckCompatibility_ConstraintTightening(t *testing.T) {
 func TestCheckCompatibility_NestedObjectChanges(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.nested_compat.order.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.nested_compat.order.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"orderId", "customer"},
 		"properties": map[string]any{
 			"orderId": map[string]any{"type": "string"},
@@ -452,7 +452,7 @@ func TestCheckCompatibility_NestedObjectChanges(t *testing.T) {
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.nested_compat.order.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.nested_compat.order.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"orderId", "customer"},
 		"properties": map[string]any{
 			"orderId": map[string]any{"type": "string"},
@@ -471,7 +471,7 @@ func TestCheckCompatibility_NestedObjectChanges(t *testing.T) {
 func TestCheckCompatibility_ArrayItemSchemaChange(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.array_compat.list.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.array_compat.list.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"listId", "items"},
 		"properties": map[string]any{
 			"listId": map[string]any{"type": "string"},
@@ -483,7 +483,7 @@ func TestCheckCompatibility_ArrayItemSchemaChange(t *testing.T) {
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.array_compat.list.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.array_compat.list.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"listId", "items"},
 		"properties": map[string]any{
 			"listId": map[string]any{"type": "string"},
@@ -506,14 +506,14 @@ func TestCheckCompatibility_ArrayItemSchemaChange(t *testing.T) {
 func TestCheckCompatibility_RenameProperty(t *testing.T) {
 	store := NewGtsStore(nil)
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.rename.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.rename.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "userId"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "userId": map[string]any{"type": "string"},
 		},
 	})
 	registerSchema(t, store, map[string]any{
-		"$id": "gts.x.core.compat.rename.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"$id": "gts://gts.x.core.compat.rename.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object", "required": []any{"eventId", "accountId"},
 		"properties": map[string]any{
 			"eventId": map[string]any{"type": "string"}, "accountId": map[string]any{"type": "string"},

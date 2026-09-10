@@ -23,7 +23,7 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 		{
 			name: "valid absolute GTS pattern",
 			schema: map[string]interface{}{
-				"$id":  "gts.x.test.ns.module.v1~",
+				"$id":  "gts://gts.x.test.ns.module.v1~",
 				"type": "object",
 				"properties": map[string]interface{}{
 					"capability": map[string]interface{}{
@@ -37,7 +37,7 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 		{
 			name: "valid self-reference",
 			schema: map[string]interface{}{
-				"$id":  "gts.x.test.ns.module.v1~",
+				"$id":  "gts://gts.x.test.ns.module.v1~",
 				"type": "object",
 				"properties": map[string]interface{}{
 					"type": map[string]interface{}{
@@ -51,7 +51,7 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 		{
 			name: "valid wildcard pattern",
 			schema: map[string]interface{}{
-				"$id":  "gts.x.test.ns.module.v1~",
+				"$id":  "gts://gts.x.test.ns.module.v1~",
 				"type": "object",
 				"properties": map[string]interface{}{
 					"capability": map[string]interface{}{
@@ -65,7 +65,7 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 		{
 			name: "invalid GTS identifier",
 			schema: map[string]interface{}{
-				"$id":  "gts.x.test.ns.module.v1~",
+				"$id":  "gts://gts.x.test.ns.module.v1~",
 				"type": "object",
 				"properties": map[string]interface{}{
 					"capability": map[string]interface{}{
@@ -80,7 +80,7 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 		{
 			name: "invalid non-GTS pattern",
 			schema: map[string]interface{}{
-				"$id":  "gts.x.test.ns.module.v1~",
+				"$id":  "gts://gts.x.test.ns.module.v1~",
 				"type": "object",
 				"properties": map[string]interface{}{
 					"capability": map[string]interface{}{
@@ -95,7 +95,7 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 		{
 			name: "invalid pointer resolution",
 			schema: map[string]interface{}{
-				"$id":  "gts.x.test.ns.module.v1~",
+				"$id":  "gts://gts.x.test.ns.module.v1~",
 				"type": "object",
 				"properties": map[string]interface{}{
 					"capability": map[string]interface{}{
@@ -143,7 +143,7 @@ func TestXGtsRefValidator_ValidateInstance_PrefixValidation(t *testing.T) {
 
 	// Register base capability schema
 	capabilitySchema := map[string]interface{}{
-		"$id":      "gts.x.testref.ns.capability.v1~",
+		"$id":      "gts://gts.x.testref.ns.capability.v1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []interface{}{"id", "description"},
@@ -172,7 +172,7 @@ func TestXGtsRefValidator_ValidateInstance_PrefixValidation(t *testing.T) {
 
 	// Register module schema that references capabilities
 	moduleSchema := map[string]interface{}{
-		"$id":      "gts.x.testref.ns.module.v1~",
+		"$id":      "gts://gts.x.testref.ns.module.v1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []interface{}{"type", "id", "capabilities"},
@@ -287,7 +287,7 @@ func TestXGtsRefValidator_ValidateInstance_JsonPointerResolution(t *testing.T) {
 
 	// Register schema with JSON pointer references
 	pointerSchema := map[string]interface{}{
-		"$id":         "gts.x.testref.ns.pointer.v1~",
+		"$id":         "gts://gts.x.testref.ns.pointer.v1~",
 		"$schema":     "http://json-schema.org/draft-07/schema#",
 		"title":       "PTR-TITLE",
 		"description": "PTR-DESC",
@@ -496,7 +496,7 @@ func TestGtsStore_ValidateSchemaWithXGtsRef(t *testing.T) {
 
 	// Register the capability schema that will be referenced
 	capabilitySchema := map[string]interface{}{
-		"$id":     "gts.x.test.ns.capability.v1~",
+		"$id":     "gts://gts.x.test.ns.capability.v1~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"properties": map[string]interface{}{
@@ -510,7 +510,7 @@ func TestGtsStore_ValidateSchemaWithXGtsRef(t *testing.T) {
 
 	// Register a schema with x-gts-ref
 	schema := map[string]interface{}{
-		"$id":     "gts.x.test.ns.module.v1~",
+		"$id":     "gts://gts.x.test.ns.module.v1~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"properties": map[string]interface{}{
@@ -540,7 +540,7 @@ func TestGtsStore_ValidateInstanceWithXGtsRef(t *testing.T) {
 
 	// Register capability schema
 	capabilitySchema := map[string]interface{}{
-		"$id":     "gts.x.test.ns.capability.v1~",
+		"$id":     "gts://gts.x.test.ns.capability.v1~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"properties": map[string]interface{}{
@@ -561,7 +561,7 @@ func TestGtsStore_ValidateInstanceWithXGtsRef(t *testing.T) {
 
 	// Register module schema with x-gts-ref
 	moduleSchema := map[string]interface{}{
-		"$id":     "gts.x.test.ns.module.v1~",
+		"$id":     "gts://gts.x.test.ns.module.v1~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"properties": map[string]interface{}{

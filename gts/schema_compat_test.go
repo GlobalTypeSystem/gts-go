@@ -681,7 +681,7 @@ func mustRegister(t *testing.T, store *GtsStore, content map[string]any) {
 func TestValidateSchemaChain_SingleSegment(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{
-		"$id":  "gts.x.chain.ns.base.v1~",
+		"$id":  "gts://gts.x.chain.ns.base.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"id": map[string]any{"type": "string"},
@@ -705,7 +705,7 @@ func TestValidateSchemaChain_MissingBase(t *testing.T) {
 	store := NewGtsStore(nil)
 	// Only register derived, not base
 	mustRegister(t, store, map[string]any{
-		"$id":  "gts.x.chain.ns.base.v1~x.chain.ns.derived.v1~",
+		"$id":  "gts://gts.x.chain.ns.base.v1~x.chain.ns.derived.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"id": map[string]any{"type": "string"},
@@ -720,7 +720,7 @@ func TestValidateSchemaChain_MissingBase(t *testing.T) {
 func TestValidateSchemaChain_TwoLevel_Compatible(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{
-		"$id":      "gts.x.chain.ns.animal.v1~",
+		"$id":      "gts://gts.x.chain.ns.animal.v1~",
 		"type":     "object",
 		"required": []any{"name"},
 		"properties": map[string]any{
@@ -729,7 +729,7 @@ func TestValidateSchemaChain_TwoLevel_Compatible(t *testing.T) {
 	})
 	// Derived tightens name with a minLength — compatible
 	mustRegister(t, store, map[string]any{
-		"$id":      "gts.x.chain.ns.animal.v1~x.chain.ns.dog.v1~",
+		"$id":      "gts://gts.x.chain.ns.animal.v1~x.chain.ns.dog.v1~",
 		"type":     "object",
 		"required": []any{"name"},
 		"properties": map[string]any{
@@ -746,7 +746,7 @@ func TestValidateSchemaChain_TwoLevel_Compatible(t *testing.T) {
 func TestValidateSchemaChain_TwoLevel_TypeChange(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{
-		"$id":  "gts.x.chain.ns.item.v1~",
+		"$id":  "gts://gts.x.chain.ns.item.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"count": map[string]any{"type": "integer"},
@@ -754,7 +754,7 @@ func TestValidateSchemaChain_TwoLevel_TypeChange(t *testing.T) {
 	})
 	// Derived changes count type — incompatible
 	mustRegister(t, store, map[string]any{
-		"$id":  "gts.x.chain.ns.item.v1~x.chain.ns.item2.v1~",
+		"$id":  "gts://gts.x.chain.ns.item.v1~x.chain.ns.item2.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"count": map[string]any{"type": "string"},
@@ -769,7 +769,7 @@ func TestValidateSchemaChain_TwoLevel_TypeChange(t *testing.T) {
 func TestValidateSchemaChain_TwoLevel_ExplicitlyLoosensAdditionalProperties(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{
-		"$id":                  "gts.x.chain.ns.closed.v1~",
+		"$id":                  "gts://gts.x.chain.ns.closed.v1~",
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
@@ -780,7 +780,7 @@ func TestValidateSchemaChain_TwoLevel_ExplicitlyLoosensAdditionalProperties(t *t
 	// is the only case that loosens (ADR-0001). Merely omitting the keyword is
 	// not loosening, because closedness is inherited via $ref/allOf composition.
 	mustRegister(t, store, map[string]any{
-		"$id":                  "gts.x.chain.ns.closed.v1~x.chain.ns.open.v1~",
+		"$id":                  "gts://gts.x.chain.ns.closed.v1~x.chain.ns.open.v1~",
 		"type":                 "object",
 		"additionalProperties": true,
 		"allOf": []any{
@@ -796,7 +796,7 @@ func TestValidateSchemaChain_TwoLevel_ExplicitlyLoosensAdditionalProperties(t *t
 func TestValidateSchemaChain_TwoLevel_OmitsAdditionalProperties_InheritsClosedness(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{
-		"$id":                  "gts.x.chain.ns.closed2.v1~",
+		"$id":                  "gts://gts.x.chain.ns.closed2.v1~",
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
@@ -806,7 +806,7 @@ func TestValidateSchemaChain_TwoLevel_OmitsAdditionalProperties_InheritsClosedne
 	// Derived as allOf:[{$ref: base}] omitting additionalProperties — closedness
 	// flows through the $ref; this is NOT loosening (ADR-0001 / 9a086c0).
 	mustRegister(t, store, map[string]any{
-		"$id":  "gts.x.chain.ns.closed2.v1~x.chain.ns.omit.v1~",
+		"$id":  "gts://gts.x.chain.ns.closed2.v1~x.chain.ns.omit.v1~",
 		"type": "object",
 		"allOf": []any{
 			map[string]any{"$ref": "gts://gts.x.chain.ns.closed2.v1~"},
@@ -821,7 +821,7 @@ func TestValidateSchemaChain_TwoLevel_OmitsAdditionalProperties_InheritsClosedne
 func TestValidateSchemaChain_TwoLevel_RemovesRequired(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{
-		"$id":      "gts.x.chain.ns.req.v1~",
+		"$id":      "gts://gts.x.chain.ns.req.v1~",
 		"type":     "object",
 		"required": []any{"id", "name"},
 		"properties": map[string]any{
@@ -831,7 +831,7 @@ func TestValidateSchemaChain_TwoLevel_RemovesRequired(t *testing.T) {
 	})
 	// Derived drops 'name' from required
 	mustRegister(t, store, map[string]any{
-		"$id":      "gts.x.chain.ns.req.v1~x.chain.ns.req2.v1~",
+		"$id":      "gts://gts.x.chain.ns.req.v1~x.chain.ns.req2.v1~",
 		"type":     "object",
 		"required": []any{"id"},
 		"properties": map[string]any{
@@ -849,7 +849,7 @@ func TestValidateSchemaChain_ThreeLevel_AllCompatible(t *testing.T) {
 	store := NewGtsStore(nil)
 	// A
 	mustRegister(t, store, map[string]any{
-		"$id":      "gts.x.chain3.ns.a.v1~",
+		"$id":      "gts://gts.x.chain3.ns.a.v1~",
 		"type":     "object",
 		"required": []any{"id"},
 		"properties": map[string]any{
@@ -858,7 +858,7 @@ func TestValidateSchemaChain_ThreeLevel_AllCompatible(t *testing.T) {
 	})
 	// A~B — adds optional field
 	mustRegister(t, store, map[string]any{
-		"$id":      "gts.x.chain3.ns.a.v1~x.chain3.ns.b.v1~",
+		"$id":      "gts://gts.x.chain3.ns.a.v1~x.chain3.ns.b.v1~",
 		"type":     "object",
 		"required": []any{"id"},
 		"properties": map[string]any{
@@ -868,7 +868,7 @@ func TestValidateSchemaChain_ThreeLevel_AllCompatible(t *testing.T) {
 	})
 	// A~B~C — tightens label minLength
 	mustRegister(t, store, map[string]any{
-		"$id":      "gts.x.chain3.ns.a.v1~x.chain3.ns.b.v1~x.chain3.ns.c.v1~",
+		"$id":      "gts://gts.x.chain3.ns.a.v1~x.chain3.ns.b.v1~x.chain3.ns.c.v1~",
 		"type":     "object",
 		"required": []any{"id"},
 		"properties": map[string]any{
@@ -885,7 +885,7 @@ func TestValidateSchemaChain_ThreeLevel_AllCompatible(t *testing.T) {
 func TestValidateSchemaChain_ThreeLevel_MiddleIncompatible(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{
-		"$id":  "gts.x.chain3b.ns.a.v1~",
+		"$id":  "gts://gts.x.chain3b.ns.a.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"val": map[string]any{"type": "string"},
@@ -893,14 +893,14 @@ func TestValidateSchemaChain_ThreeLevel_MiddleIncompatible(t *testing.T) {
 	})
 	// B changes val type — incompatible with A
 	mustRegister(t, store, map[string]any{
-		"$id":  "gts.x.chain3b.ns.a.v1~x.chain3b.ns.b.v1~",
+		"$id":  "gts://gts.x.chain3b.ns.a.v1~x.chain3b.ns.b.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"val": map[string]any{"type": "integer"},
 		},
 	})
 	mustRegister(t, store, map[string]any{
-		"$id":  "gts.x.chain3b.ns.a.v1~x.chain3b.ns.b.v1~x.chain3b.ns.c.v1~",
+		"$id":  "gts://gts.x.chain3b.ns.a.v1~x.chain3b.ns.b.v1~x.chain3b.ns.c.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"val": map[string]any{"type": "integer"},
@@ -916,14 +916,14 @@ func TestValidateSchemaChain_CircularRef(t *testing.T) {
 	store := NewGtsStore(nil)
 	// Schema that directly references itself via $ref
 	mustRegister(t, store, map[string]any{
-		"$id":  "gts.x.cyclic.ns.self.v1~",
+		"$id":  "gts://gts.x.cyclic.ns.self.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"child": map[string]any{"$ref": "gts.x.cyclic.ns.self.v1~"},
 		},
 	})
 	mustRegister(t, store, map[string]any{
-		"$id":  "gts.x.cyclic.ns.self.v1~x.cyclic.ns.derived.v1~",
+		"$id":  "gts://gts.x.cyclic.ns.self.v1~x.cyclic.ns.derived.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"child": map[string]any{"$ref": "gts.x.cyclic.ns.self.v1~"},

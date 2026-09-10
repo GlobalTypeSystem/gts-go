@@ -363,7 +363,7 @@ func setupWildcardUseCaseStore() *GtsStore {
 	// Base schema v1.0
 	entity1 := NewJsonEntity(map[string]any{
 		"$schema":     "http://json-schema.org/draft-07/schema#",
-		"$id":         "gts.x.test10_llm.chat.message.v1.0~",
+		"$id":         "gts://gts.x.test10_llm.chat.message.v1.0~",
 		"type":        "object",
 		"description": "Base chat message v1.0",
 	}, DefaultGtsConfig())
@@ -372,7 +372,7 @@ func setupWildcardUseCaseStore() *GtsStore {
 	// Derived schema from v1.0
 	entity2 := NewJsonEntity(map[string]any{
 		"$schema":     "http://json-schema.org/draft-07/schema#",
-		"$id":         "gts.x.test10_llm.chat.message.v1.0~x.test10_llm._.system_message.v1.0~",
+		"$id":         "gts://gts.x.test10_llm.chat.message.v1.0~x.test10_llm._.system_message.v1.0~",
 		"type":        "object",
 		"description": "System message derived from v1.0",
 		"allOf": []any{
@@ -386,7 +386,7 @@ func setupWildcardUseCaseStore() *GtsStore {
 	// Base schema v1.1
 	entity3 := NewJsonEntity(map[string]any{
 		"$schema":     "http://json-schema.org/draft-07/schema#",
-		"$id":         "gts.x.test10_llm.chat.message.v1.1~",
+		"$id":         "gts://gts.x.test10_llm.chat.message.v1.1~",
 		"type":        "object",
 		"description": "Base chat message v1.1",
 	}, DefaultGtsConfig())
@@ -395,7 +395,7 @@ func setupWildcardUseCaseStore() *GtsStore {
 	// Derived schema from v1.1
 	entity4 := NewJsonEntity(map[string]any{
 		"$schema":     "http://json-schema.org/draft-07/schema#",
-		"$id":         "gts.x.test10_llm.chat.message.v1.1~x.test10_llm._.user_message.v1.1~",
+		"$id":         "gts://gts.x.test10_llm.chat.message.v1.1~x.test10_llm._.user_message.v1.1~",
 		"type":        "object",
 		"description": "User message derived from v1.1",
 		"allOf": []any{
