@@ -52,12 +52,15 @@ func (e *StoreGtsCastFromSchemaNotAllowedError) Error() string {
 type RegistryConfig struct {
 	// ValidateGtsReferences enables validation of GTS references on entity registration
 	ValidateGtsReferences bool
+	// Verbose enables debug logging of store operations. Off by default.
+	Verbose bool
 }
 
 // DefaultRegistryConfig returns the default registry configuration
 func DefaultRegistryConfig() *RegistryConfig {
 	return &RegistryConfig{
 		ValidateGtsReferences: false,
+		Verbose:               false,
 	}
 }
 
@@ -97,7 +100,9 @@ func NewGtsStoreWithConfig(reader GtsReader, config *RegistryConfig) *GtsStore {
 		store.populateFromReader()
 	}
 
-	log.Printf("Created GtsStore with %d entities (validation: %v)", len(store.byID), config.ValidateGtsReferences)
+	if config.Verbose {
+		log.Printf("Created GtsStore with %d entities (validation: %v)", len(store.byID), config.ValidateGtsReferences)
+	}
 	return store
 }
 
@@ -139,7 +144,9 @@ func (s *GtsStore) registerLocked(entity *JsonEntity) error {
 	}
 
 	s.byID[key] = entity
-	log.Printf("Registered entity: %s (type-schema: %v, refs: %d)", key, entity.IsTypeSchema, len(entity.GtsRefs))
+	if s.config.Verbose {
+		log.Printf("Registered entity: %s (type-schema: %v, refs: %d)", key, entity.IsTypeSchema, len(entity.GtsRefs))
+	}
 	return nil
 }
 
@@ -350,7 +357,9 @@ func (s *GtsStore) ValidateSchema(gtsID string) error {
 		return fmt.Errorf("entity '%s' is not a type-schema", gtsID)
 	}
 
-	log.Printf("Validating schema %s", gtsID)
+	if s.config.Verbose {
+		log.Printf("Validating schema %s", gtsID)
+	}
 
 	// Validate JSON Schema meta-schema (basic check)
 	if entity.Content == nil {
@@ -379,7 +388,14 @@ func (s *GtsStore) ValidateSchema(gtsID string) error {
 		return fmt.Errorf("x-gts-ref validation failed: %s", strings.Join(errorMsgs, "; "))
 	}
 
-	log.Printf("Schema %s passed validation", gtsID)
+	// Validate GTS references in the schema
+	if err := s.validateEntityGtsReferences(entity); err != nil {
+		return fmt.Errorf("schema GTS reference validation failed: %w", err)
+	}
+
+	if s.config.Verbose {
+		log.Printf("Schema %s passed validation", gtsID)
+	}
 	return nil
 }
 
@@ -408,7 +424,9 @@ func (s *GtsStore) ValidateInstanceWithXGtsRef(instanceID string) error {
 		return fmt.Errorf("type-schema entity '%s' is not marked as type-schema", instance.TypeID)
 	}
 
-	log.Printf("Validating instance %s against type-schema %s", instanceID, instance.TypeID)
+	if s.config.Verbose {
+		log.Printf("Validating instance %s against type-schema %s", instanceID, instance.TypeID)
+	}
 
 	// Validate x-gts-ref constraints
 	xGtsRefValidator := NewXGtsRefValidator(s)
@@ -421,6 +439,13 @@ func (s *GtsStore) ValidateInstanceWithXGtsRef(instanceID string) error {
 		return fmt.Errorf("x-gts-ref validation failed: %s", strings.Join(errorMsgs, "; "))
 	}
 
-	log.Printf("Instance %s passed validation", instanceID)
+	// Validate GTS references in the instance
+	if err := s.validateEntityGtsReferences(instance); err != nil {
+		return fmt.Errorf("instance GTS reference validation failed: %w", err)
+	}
+
+	if s.config.Verbose {
+		log.Printf("Instance %s passed validation", instanceID)
+	}
 	return nil
 }

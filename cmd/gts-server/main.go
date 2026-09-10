@@ -19,8 +19,8 @@ func main() {
 	verbose := flag.Int("verbose", 1, "Verbosity level (0=silent, 1=info, 2=debug)")
 	flag.Parse()
 
-	// Create store
-	store := gts.NewGtsStore(nil)
+	// Create store; store logging follows the -verbose flag
+	store := gts.NewGtsStoreWithConfig(nil, &gts.RegistryConfig{Verbose: *verbose >= 1})
 
 	// Create and start server
 	srv := server.NewServer(store, *host, *port, *verbose)
