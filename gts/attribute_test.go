@@ -22,7 +22,7 @@ func TestGetAttribute_RootField(t *testing.T) {
 		"occurredAt": "2025-09-20T21:00:00Z",
 		"payload":    map[string]any{},
 	}, DefaultGtsConfig())
-	store.Register(instance)
+	_ = store.Register(instance)
 
 	// Access root field
 	result := store.GetAttribute("gts.x.test11.events.type.v1~x.test11.nested.type.v1.0~x.test11.my.event.v1.0@eventId")
@@ -55,7 +55,7 @@ func TestGetAttribute_NestedField(t *testing.T) {
 			},
 		},
 	}, DefaultGtsConfig())
-	store.Register(instance)
+	_ = store.Register(instance)
 
 	// Access nested field
 	result := store.GetAttribute("gts.x.test11.events.type.v1~x.test11.nested.type.v1.0~x.test11.my.event.v1.0@payload.customer.email")
@@ -84,7 +84,7 @@ func TestGetAttribute_NonExistentField(t *testing.T) {
 			"field1": "value1",
 		},
 	}, DefaultGtsConfig())
-	store.Register(instance)
+	_ = store.Register(instance)
 
 	// Access non-existent field
 	result := store.GetAttribute("gts.x.test11.events.type.v1~x.test11.missing.event.v1.0@payload.nonExistent")
@@ -112,7 +112,7 @@ func TestGetAttribute_MissingAtSymbol(t *testing.T) {
 			"field1": "value1",
 		},
 	}, DefaultGtsConfig())
-	store.Register(instance)
+	_ = store.Register(instance)
 
 	// Access without @ symbol
 	result := store.GetAttribute("gts.x.test11.events.type.v1~x.test11.nosymbol.event.v1.0")
@@ -157,7 +157,7 @@ func TestGetAttribute_ArrayElementAccess(t *testing.T) {
 			map[string]any{"sku": "SKU-003", "name": "Item 3", "price": 30.99},
 		},
 	}, DefaultGtsConfig())
-	store.Register(instance)
+	_ = store.Register(instance)
 
 	// Access first array element
 	result := store.GetAttribute("gts.x.test11.array_access.order.v1~x.test11._.order_arr.v1@items[0].sku")
@@ -204,7 +204,7 @@ func TestGetAttribute_DeepNesting(t *testing.T) {
 			},
 		},
 	}, DefaultGtsConfig())
-	store.Register(instance)
+	_ = store.Register(instance)
 
 	// Access deeply nested value
 	result := store.GetAttribute("gts.x.test11.deep.nested.v1~x.test11._.deep1.v1@level1.level2.level3.level4.level5.level6.deepValue")
@@ -248,7 +248,7 @@ func TestGetAttribute_MixedArrayAndNesting(t *testing.T) {
 			},
 		},
 	}, DefaultGtsConfig())
-	store.Register(instance)
+	_ = store.Register(instance)
 
 	// Access nested field in array element
 	result := store.GetAttribute("gts.x.test11.mixed.complex.v1~x.test11._.mixed1.v1@records[0].details.metadata.author")
@@ -286,7 +286,7 @@ func TestGetAttribute_BooleanValue(t *testing.T) {
 		"maxRetries": 5,
 		"timeout":    30.5,
 	}, DefaultGtsConfig())
-	store.Register(instance)
+	_ = store.Register(instance)
 
 	// Access boolean value
 	result := store.GetAttribute("gts.x.test11.types.config.v1~x.test11._.config1.v1@enabled")
@@ -314,7 +314,7 @@ func TestGetAttribute_IntegerValue(t *testing.T) {
 		"maxRetries": 5,
 		"timeout":    30.5,
 	}, DefaultGtsConfig())
-	store.Register(instance)
+	_ = store.Register(instance)
 
 	// Access integer value
 	result := store.GetAttribute("gts.x.test11.types.config.v1~x.test11._.config1.v1@maxRetries")
@@ -351,7 +351,7 @@ func TestGetAttribute_FloatValue(t *testing.T) {
 		"maxRetries": 5,
 		"timeout":    30.5,
 	}, DefaultGtsConfig())
-	store.Register(instance)
+	_ = store.Register(instance)
 
 	// Access float value
 	result := store.GetAttribute("gts.x.test11.types.config.v1~x.test11._.config1.v1@timeout")
@@ -380,7 +380,7 @@ func TestGetAttribute_ArrayIndexOutOfBounds(t *testing.T) {
 			map[string]any{"sku": "SKU-002"},
 		},
 	}, DefaultGtsConfig())
-	store.Register(instance)
+	_ = store.Register(instance)
 
 	// Try to access out-of-bounds index
 	result := store.GetAttribute("gts.x.test11.array_access.order.v1~x.test11._.order_arr.v1@items[10].sku")

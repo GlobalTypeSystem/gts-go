@@ -67,10 +67,9 @@ func TestGetAttribute_NotFound(t *testing.T) {
 func TestGetAttribute_NoPath(t *testing.T) {
 	store := NewGtsStore(nil)
 	r := store.GetAttribute("gts.x.test.v1~x.inst.v1")
-	// Should handle missing @ gracefully
-	if r.Error == "" && r.Resolved {
-		// For no-path, depends on implementation
-	}
+	// Should handle a missing @ gracefully; exact behavior depends on the
+	// implementation, so we only assert it does not panic.
+	_ = r
 }
 
 func TestGetAttribute_MissingField(t *testing.T) {

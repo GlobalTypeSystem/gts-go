@@ -6,6 +6,8 @@ Released under Apache License 2.0
 package main
 
 import (
+	"os"
+
 	"github.com/GlobalTypeSystem/gts-go/gts"
 )
 
@@ -49,8 +51,11 @@ func runValidateJson(cmd *Command, args []string) {
 		cfg = loadConfig(cfgPath)
 	}
 
-	validator := NewGtsJsonValidator(scanPath, cfg)
+	validator := NewGtsJsonValidator(scanPath, cfg).WithExclude(parseExclude())
 	result := validator.Validate()
 
 	writeJSON(result)
+	if !result.OK {
+		os.Exit(1)
+	}
 }

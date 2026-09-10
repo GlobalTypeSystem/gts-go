@@ -21,7 +21,7 @@ func setupQueryTestStore() *GtsStore {
 		"status":   "active",
 		"category": "order",
 	}, DefaultGtsConfig())
-	store.Register(entity1)
+	_ = store.Register(entity1)
 
 	// Entity 2
 	entity2 := NewJsonEntity(map[string]any{
@@ -31,7 +31,7 @@ func setupQueryTestStore() *GtsStore {
 		"status":   "inactive",
 		"category": "payment",
 	}, DefaultGtsConfig())
-	store.Register(entity2)
+	_ = store.Register(entity2)
 
 	// Entity 3
 	entity3 := NewJsonEntity(map[string]any{
@@ -41,7 +41,7 @@ func setupQueryTestStore() *GtsStore {
 		"status":   "active",
 		"category": "email",
 	}, DefaultGtsConfig())
-	store.Register(entity3)
+	_ = store.Register(entity3)
 
 	// Entity 4
 	entity4 := NewJsonEntity(map[string]any{
@@ -51,7 +51,7 @@ func setupQueryTestStore() *GtsStore {
 		"status":   "some",
 		"category": "email",
 	}, DefaultGtsConfig())
-	store.Register(entity4)
+	_ = store.Register(entity4)
 
 	// Entity 5
 	entity5 := NewJsonEntity(map[string]any{
@@ -61,7 +61,7 @@ func setupQueryTestStore() *GtsStore {
 		"status":   "active",
 		"category": "order",
 	}, DefaultGtsConfig())
-	store.Register(entity5)
+	_ = store.Register(entity5)
 
 	return store
 }
@@ -367,7 +367,7 @@ func setupWildcardUseCaseStore() *GtsStore {
 		"type":        "object",
 		"description": "Base chat message v1.0",
 	}, DefaultGtsConfig())
-	store.Register(entity1)
+	_ = store.Register(entity1)
 
 	// Derived schema from v1.0
 	entity2 := NewJsonEntity(map[string]any{
@@ -381,7 +381,7 @@ func setupWildcardUseCaseStore() *GtsStore {
 			},
 		},
 	}, DefaultGtsConfig())
-	store.Register(entity2)
+	_ = store.Register(entity2)
 
 	// Base schema v1.1
 	entity3 := NewJsonEntity(map[string]any{
@@ -390,7 +390,7 @@ func setupWildcardUseCaseStore() *GtsStore {
 		"type":        "object",
 		"description": "Base chat message v1.1",
 	}, DefaultGtsConfig())
-	store.Register(entity3)
+	_ = store.Register(entity3)
 
 	// Derived schema from v1.1
 	entity4 := NewJsonEntity(map[string]any{
@@ -404,7 +404,7 @@ func setupWildcardUseCaseStore() *GtsStore {
 			},
 		},
 	}, DefaultGtsConfig())
-	store.Register(entity4)
+	_ = store.Register(entity4)
 
 	return store
 }

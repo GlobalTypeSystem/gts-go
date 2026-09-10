@@ -160,7 +160,7 @@ func TestXGtsRefValidator_ValidateInstance_PrefixValidation(t *testing.T) {
 	}
 
 	capabilityEntity := NewJsonEntity(capabilitySchema, DefaultGtsConfig())
-	store.Register(capabilityEntity)
+	_ = store.Register(capabilityEntity)
 
 	// Register valid capability instance
 	validCapability := map[string]interface{}{
@@ -168,7 +168,7 @@ func TestXGtsRefValidator_ValidateInstance_PrefixValidation(t *testing.T) {
 		"description": "Has WebSocket",
 	}
 	validCapabilityEntity := NewJsonEntity(validCapability, DefaultGtsConfig())
-	store.Register(validCapabilityEntity)
+	_ = store.Register(validCapabilityEntity)
 
 	// Register module schema that references capabilities
 	moduleSchema := map[string]interface{}{
@@ -198,7 +198,7 @@ func TestXGtsRefValidator_ValidateInstance_PrefixValidation(t *testing.T) {
 	}
 
 	moduleEntity := NewJsonEntity(moduleSchema, DefaultGtsConfig())
-	store.Register(moduleEntity)
+	_ = store.Register(moduleEntity)
 
 	tests := []struct {
 		name          string
@@ -307,7 +307,7 @@ func TestXGtsRefValidator_ValidateInstance_JsonPointerResolution(t *testing.T) {
 	}
 
 	pointerEntity := NewJsonEntity(pointerSchema, DefaultGtsConfig())
-	store.Register(pointerEntity)
+	_ = store.Register(pointerEntity)
 
 	// Register the instance entity that will be referenced
 	instanceEntity := map[string]interface{}{
@@ -315,7 +315,7 @@ func TestXGtsRefValidator_ValidateInstance_JsonPointerResolution(t *testing.T) {
 		"type": "gts.x.testref.ns.pointer.v1~",
 	}
 	instanceEntityObj := NewJsonEntity(instanceEntity, DefaultGtsConfig())
-	store.Register(instanceEntityObj)
+	_ = store.Register(instanceEntityObj)
 
 	tests := []struct {
 		name          string
@@ -506,7 +506,7 @@ func TestGtsStore_ValidateSchemaWithXGtsRef(t *testing.T) {
 		},
 	}
 	capabilityEntity := NewJsonEntity(capabilitySchema, DefaultGtsConfig())
-	store.Register(capabilityEntity)
+	_ = store.Register(capabilityEntity)
 
 	// Register a schema with x-gts-ref
 	schema := map[string]interface{}{
@@ -526,7 +526,7 @@ func TestGtsStore_ValidateSchemaWithXGtsRef(t *testing.T) {
 	}
 
 	entity := NewJsonEntity(schema, DefaultGtsConfig())
-	store.Register(entity)
+	_ = store.Register(entity)
 
 	// Test validation
 	err := store.ValidateSchema("gts.x.test.ns.module.v1~")
@@ -550,14 +550,14 @@ func TestGtsStore_ValidateInstanceWithXGtsRef(t *testing.T) {
 		},
 	}
 	capabilityEntity := NewJsonEntity(capabilitySchema, DefaultGtsConfig())
-	store.Register(capabilityEntity)
+	_ = store.Register(capabilityEntity)
 
 	// Register capability instance
 	capability := map[string]interface{}{
 		"id": "gts.x.test.ns.capability.v1~x.vendor._.ws.v1",
 	}
 	capabilityInstanceEntity := NewJsonEntity(capability, DefaultGtsConfig())
-	store.Register(capabilityInstanceEntity)
+	_ = store.Register(capabilityInstanceEntity)
 
 	// Register module schema with x-gts-ref
 	moduleSchema := map[string]interface{}{
@@ -576,7 +576,7 @@ func TestGtsStore_ValidateInstanceWithXGtsRef(t *testing.T) {
 		},
 	}
 	moduleEntity := NewJsonEntity(moduleSchema, DefaultGtsConfig())
-	store.Register(moduleEntity)
+	_ = store.Register(moduleEntity)
 
 	// Register valid module instance
 	validModule := map[string]interface{}{
@@ -585,7 +585,7 @@ func TestGtsStore_ValidateInstanceWithXGtsRef(t *testing.T) {
 		"capability": "gts.x.test.ns.capability.v1~x.vendor._.ws.v1",
 	}
 	validModuleEntity := NewJsonEntity(validModule, DefaultGtsConfig())
-	store.Register(validModuleEntity)
+	_ = store.Register(validModuleEntity)
 
 	// Test validation
 	err := store.ValidateInstanceWithXGtsRef("gts.x.test.ns.module.v1~x.vendor._.test.v1")
@@ -660,14 +660,14 @@ func TestXGtsRefValidator_ValidateInstance_DollarIdWithGtsURIPrefix(t *testing.T
 
 	// Register the schema entity
 	schemaEntity := NewJsonEntity(schema, DefaultGtsConfig())
-	store.Register(schemaEntity)
+	_ = store.Register(schemaEntity)
 
 	// Register the instance entity for store validation
 	validInstance := map[string]interface{}{
 		"id": "gts.x.test.ns.entity.v1~x.vendor._.instance.v1",
 	}
 	instanceEntity := NewJsonEntity(validInstance, DefaultGtsConfig())
-	store.Register(instanceEntity)
+	_ = store.Register(instanceEntity)
 
 	tests := []struct {
 		name          string

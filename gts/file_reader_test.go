@@ -182,17 +182,17 @@ func TestGtsFileReader_ExcludeDirectories(t *testing.T) {
 		"gtsId": "gts.vendor.package.namespace.root.v0~",
 	}
 	data, _ := json.Marshal(rootContent)
-	os.WriteFile(rootFile, data, 0644)
+	_ = os.WriteFile(rootFile, data, 0644)
 
 	// Create node_modules directory with a file
 	nodeModules := filepath.Join(tmpDir, "node_modules")
-	os.Mkdir(nodeModules, 0755)
+	_ = os.Mkdir(nodeModules, 0755)
 	nmFile := filepath.Join(nodeModules, "excluded.json")
 	nmContent := map[string]any{
 		"gtsId": "gts.vendor.package.namespace.excluded.v0~",
 	}
 	data, _ = json.Marshal(nmContent)
-	os.WriteFile(nmFile, data, 0644)
+	_ = os.WriteFile(nmFile, data, 0644)
 
 	// Create reader
 	reader := NewGtsFileReaderFromPath(tmpDir, nil)
@@ -227,7 +227,7 @@ func TestGtsFileReader_Reset(t *testing.T) {
 	}
 
 	data, _ := json.Marshal(content)
-	os.WriteFile(testFile, data, 0644)
+	_ = os.WriteFile(testFile, data, 0644)
 
 	reader := NewGtsFileReaderFromPath(testFile, nil)
 
@@ -261,8 +261,8 @@ func TestGtsFileReader_MultiplePaths(t *testing.T) {
 	// Create two separate directories
 	dir1 := filepath.Join(tmpDir, "dir1")
 	dir2 := filepath.Join(tmpDir, "dir2")
-	os.Mkdir(dir1, 0755)
-	os.Mkdir(dir2, 0755)
+	_ = os.Mkdir(dir1, 0755)
+	_ = os.Mkdir(dir2, 0755)
 
 	// Create a file in each directory
 	file1 := filepath.Join(dir1, "entity1.json")
@@ -270,14 +270,14 @@ func TestGtsFileReader_MultiplePaths(t *testing.T) {
 		"gtsId": "gts.vendor.package.namespace.type1.v0~",
 	}
 	data1, _ := json.Marshal(content1)
-	os.WriteFile(file1, data1, 0644)
+	_ = os.WriteFile(file1, data1, 0644)
 
 	file2 := filepath.Join(dir2, "entity2.json")
 	content2 := map[string]any{
 		"gtsId": "gts.vendor.package.namespace.type2.v0~",
 	}
 	data2, _ := json.Marshal(content2)
-	os.WriteFile(file2, data2, 0644)
+	_ = os.WriteFile(file2, data2, 0644)
 
 	// Create reader with multiple paths
 	reader := NewGtsFileReader([]string{dir1, dir2}, nil)
@@ -312,7 +312,7 @@ func TestGtsFileReader_NoGtsID(t *testing.T) {
 	}
 
 	data, _ := json.Marshal(content)
-	os.WriteFile(testFile, data, 0644)
+	_ = os.WriteFile(testFile, data, 0644)
 
 	reader := NewGtsFileReaderFromPath(testFile, nil)
 
@@ -337,7 +337,7 @@ func TestGtsFileReader_InvalidJSON(t *testing.T) {
 
 	// Create an invalid JSON file
 	invalidFile := filepath.Join(tmpDir, "invalid.json")
-	os.WriteFile(invalidFile, []byte("not valid json {"), 0644)
+	_ = os.WriteFile(invalidFile, []byte("not valid json {"), 0644)
 
 	// Create a valid file
 	validFile := filepath.Join(tmpDir, "valid.json")
@@ -345,7 +345,7 @@ func TestGtsFileReader_InvalidJSON(t *testing.T) {
 		"gtsId": "gts.vendor.package.namespace.type.v0~",
 	}
 	data, _ := json.Marshal(content)
-	os.WriteFile(validFile, data, 0644)
+	_ = os.WriteFile(validFile, data, 0644)
 
 	reader := NewGtsFileReaderFromPath(tmpDir, nil)
 
@@ -373,7 +373,7 @@ func TestGtsFileReader_ReadByID(t *testing.T) {
 		"gtsId": "gts.vendor.package.namespace.type.v0~",
 	}
 	data, _ := json.Marshal(content)
-	os.WriteFile(testFile, data, 0644)
+	_ = os.WriteFile(testFile, data, 0644)
 
 	reader := NewGtsFileReaderFromPath(testFile, nil)
 

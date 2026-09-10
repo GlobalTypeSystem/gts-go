@@ -354,13 +354,13 @@ func validateWithGtsIDTolerance(instance, schema map[string]any, store *GtsStore
 	// Pre-load all schemas from the store
 	for id, entity := range store.byID {
 		if entity.IsTypeSchema {
-			compiler.AddResource(id, entity.Content)
+			_ = compiler.AddResource(id, entity.Content)
 		}
 	}
 
 	// Add the modified schema as a resource
 	schemaID := "_cast_validation"
-	compiler.AddResource(schemaID, modifiedSchema)
+	_ = compiler.AddResource(schemaID, modifiedSchema)
 
 	// Compile the modified schema
 	schemaObj, err := compiler.Compile(schemaID)

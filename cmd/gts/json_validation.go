@@ -40,6 +40,7 @@ type GtsJsonValidationResult struct {
 type GtsJsonValidator struct {
 	path      string
 	cfg       *gts.GtsConfig
+	exclude   []string
 	files     int
 	documents int
 	entities  []*gts.JsonEntity
@@ -59,10 +60,20 @@ func NewGtsJsonValidator(path string, cfg *gts.GtsConfig) *GtsJsonValidator {
 		}
 	}
 	return &GtsJsonValidator{
-		path:   path,
-		cfg:    cfg,
-		issues: make([]*GtsJsonValidationIssue, 0),
+		path:    path,
+		cfg:     cfg,
+		exclude: append([]string(nil), gts.ExcludeList...),
+		issues:  make([]*GtsJsonValidationIssue, 0),
 	}
+}
+
+// WithExclude overrides the directory names skipped during scanning. An empty
+// list is ignored so callers keep the default exclusions.
+func (v *GtsJsonValidator) WithExclude(exclude []string) *GtsJsonValidator {
+	if len(exclude) > 0 {
+		v.exclude = exclude
+	}
+	return v
 }
 
 // Validate performs the full JSON validation workflow
@@ -113,10 +124,15 @@ func (v *GtsJsonValidator) collectJSONFiles() []string {
 
 	err = filepath.Walk(resolved, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			v.addIssue(path, "discovery", err.Error(), nil)
+			v.addIssue(path, "discovery", fmt.Sprintf("Traversal error: %s", err.Error()), nil)
 			return nil
 		}
 		if info.IsDir() {
+			for _, excl := range v.exclude {
+				if info.Name() == excl {
+					return filepath.SkipDir
+				}
+			}
 			return nil
 		}
 		if strings.EqualFold(filepath.Ext(path), ".json") {
@@ -212,7 +228,7 @@ func (v *GtsJsonValidator) registerGtsEntities() *gts.GtsStore {
 	keys := make(map[string]bool)
 
 	for _, entity := range v.entities {
-		if !isGtsRelated(entity.Content) {
+		if !v.isGtsRelated(entity.Content) {
 			continue
 		}
 
@@ -352,6 +368,10 @@ func (v *GtsJsonValidator) validateInstances(store *gts.GtsStore) {
 		if key == "" {
 			continue
 		}
+		// Skip rejected duplicates: only validate the registered entity
+		if store.Get(key) != entity {
+			continue
+		}
 		gtsIDStr := ""
 		if entity.GtsID != nil {
 			gtsIDStr = entity.GtsID.ID
@@ -416,25 +436,27 @@ func (v *GtsJsonValidator) addIssueEntity(entity *gts.JsonEntity, stage, message
 
 // Helper functions
 
-func isGtsRelated(content map[string]any) bool {
-	return isGtsRelatedValue(content)
+// looksGts checks whether a string value looks like a GTS identifier
+// (valid or potentially malformed) by checking for known prefixes.
+func looksGts(v string) bool {
+	normalized := strings.TrimPrefix(v, gts.GtsURIPrefix)
+	return strings.HasPrefix(normalized, gts.GtsPrefix) || strings.HasPrefix(v, gts.GtsURIPrefix)
 }
 
-func isGtsRelatedValue(val any) bool {
-	switch v := val.(type) {
-	case string:
-		return strings.Contains(v, gts.GtsPrefix) ||
-			strings.Contains(v, gts.GtsURIPrefix) ||
-			strings.Contains(v, xGtsRefKeyword)
-	case map[string]any:
-		for _, value := range v {
-			if isGtsRelatedValue(value) {
+// isGtsRelated checks whether a JSON object contains GTS-related identifiers
+// in the configured entity or type ID fields. This avoids false positives from
+// incidental "gts." mentions in arbitrary nested strings.
+func (v *GtsJsonValidator) isGtsRelated(content map[string]any) bool {
+	for _, f := range v.cfg.EntityIDFields {
+		if val, ok := content[f]; ok {
+			if s, isStr := val.(string); isStr && looksGts(s) {
 				return true
 			}
 		}
-	case []any:
-		for _, item := range v {
-			if isGtsRelatedValue(item) {
+	}
+	for _, f := range v.cfg.TypeIDFields {
+		if val, ok := content[f]; ok {
+			if s, isStr := val.(string); isStr && looksGts(s) {
 				return true
 			}
 		}
@@ -468,11 +490,4 @@ func validatorEntityFile(entity *gts.JsonEntity) string {
 		return entity.File.Path
 	}
 	return entity.Label
-}
-
-func validatorEntityFileInfo(entity *gts.JsonEntity) (string, *int) {
-	if entity == nil {
-		return "", nil
-	}
-	return validatorEntityFile(entity), entity.ListSequence
 }

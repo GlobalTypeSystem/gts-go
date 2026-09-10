@@ -26,7 +26,7 @@ func newStore() *gts.GtsStore {
 		if cfgPath != "" {
 			cfg = loadConfig(cfgPath)
 		}
-		reader = gts.NewGtsFileReader(paths, cfg)
+		reader = gts.NewGtsFileReader(paths, cfg).WithExclude(parseExclude())
 		if verbose > 0 {
 			log.Printf("loaded entities from: %s", strings.Join(paths, ", "))
 		}
@@ -37,6 +37,20 @@ func newStore() *gts.GtsStore {
 		log.Printf("entity count: %d", store.Count())
 	}
 	return store
+}
+
+// parseExclude splits the global comma-separated --exclude value into a list of
+// directory names, trimming whitespace and dropping empty entries.
+func parseExclude() []string {
+	parts := strings.Split(exclude, ",")
+	dirs := make([]string, 0, len(parts))
+	for _, d := range parts {
+		d = strings.TrimSpace(d)
+		if d != "" {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
 }
 
 // parsePaths splits a comma-separated path specification into individual paths

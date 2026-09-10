@@ -71,22 +71,17 @@ func NewJsonEntityWithFile(content map[string]any, cfg *GtsConfig, file *JsonFil
 			gtsID, _ := NewGtsID(entityIDValue)
 			entity.GtsID = gtsID
 		}
-	} else {
-		// For instances: different logic based on well-known vs anonymous
-		if entityIDValue != "" && IsValidGtsID(entityIDValue) {
-			// Well-known instance: GTS ID in id field
-			gtsID, _ := NewGtsID(entityIDValue)
-			entity.GtsID = gtsID
-			// Type ID should be derived from the chain if not explicitly set
-			if entity.TypeID == "" && entity.SelectedEntityField != "" {
-				entity.TypeID = entity.calcJSONTypeID(cfg, entityIDValue)
-			}
-		} else {
-			// Anonymous instance: non-GTS ID in id field, GTS type in type field
-			// GtsID remains nil for anonymous instances
-			// entity.TypeID should be set from type field
+	} else if entityIDValue != "" && IsValidGtsID(entityIDValue) {
+		// Well-known instance: GTS ID in id field
+		gtsID, _ := NewGtsID(entityIDValue)
+		entity.GtsID = gtsID
+		// Type ID should be derived from the chain if not explicitly set
+		if entity.TypeID == "" && entity.SelectedEntityField != "" {
+			entity.TypeID = entity.calcJSONTypeID(cfg, entityIDValue)
 		}
 	}
+	// Anonymous instance (non-schema, non-GTS id): GtsID stays nil and
+	// entity.TypeID is taken from the type field — nothing more to do here.
 
 	// Extract GTS references from content
 	entity.GtsRefs = extractGtsReferences(content)
