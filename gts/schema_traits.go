@@ -315,20 +315,7 @@ func validateTraitsAgainstSchema(traitSchema map[string]any, effectiveTraits map
 	// Use jsonschema library for standard JSON Schema validation
 	compiler := jsonschema.NewCompiler()
 	compiler.UseRegexpEngine(ecmaRegexpEngine)
-
-	// Register lenient format validators
-	lenientValidator := func(v any) error { return nil }
-	formats := []string{
-		"uuid", "date-time", "date", "time", "email", "hostname",
-		"ipv4", "ipv6", "uri", "uri-reference", "iri", "iri-reference",
-		"uri-template", "json-pointer", "relative-json-pointer", "regex",
-	}
-	for _, fmt := range formats {
-		compiler.RegisterFormat(&jsonschema.Format{
-			Name:     fmt,
-			Validate: lenientValidator,
-		})
-	}
+	compiler.AssertFormat()
 
 	// Remove x-gts-ref and x-gts-traits from schema before validation
 	cleanSchema := removeXGtsFields(traitSchema)
@@ -554,6 +541,9 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	// schema, including the required-trait completeness check (this type is
 	// non-abstract — abstract types returned OK above).
 	errs := validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)
+	for _, err := range NewXGtsRefValidator(s).ValidateInstance(effectiveTraits, effectiveTraitSchema, "") {
+		errs = append(errs, err.Error())
+	}
 	if len(errs) > 0 {
 		return &ValidateSchemaTraitsResult{
 			TypeID: schemaID,
