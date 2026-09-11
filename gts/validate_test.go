@@ -7,6 +7,7 @@ package gts
 
 import (
 	"testing"
+	"time"
 )
 
 func TestValidateInstance_ValidInstance(t *testing.T) {
@@ -426,5 +427,19 @@ func TestValidateInstance_NoSchemaID(t *testing.T) {
 	}
 	if result.Error == "" {
 		t.Errorf("Expected error message for instance without schema")
+	}
+}
+
+func TestECMARegexpEngine(t *testing.T) {
+	matcher, err := ecmaRegexpEngine("^(?!x).*$")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matcher.MatchString("valid") || matcher.MatchString("x-invalid") {
+		t.Error("ECMA lookahead matching failed")
+	}
+	regexp := matcher.(*regexp2RE)
+	if regexp.re.MatchTimeout != time.Second {
+		t.Errorf("expected one-second regexp timeout, got %s", regexp.re.MatchTimeout)
 	}
 }

@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -718,16 +717,14 @@ func checkEnumeratedValuesAgainstBase(baseProp map[string]any, values []any, pro
 	}
 
 	if basePat, ok := baseProp["pattern"].(string); ok && basePat != "" {
-		re, err := regexp.Compile(basePat)
+		re, err := ecmaRegexpEngine(basePat)
 		if err == nil {
 			for _, val := range values {
-				if s, ok := val.(string); ok {
-					if !re.MatchString(s) {
-						errors = append(errors, fmt.Sprintf(
-							"property '%s': derived const/enum value %q does not match base pattern %q",
-							propName, s, basePat,
-						))
-					}
+				if s, ok := val.(string); ok && !re.MatchString(s) {
+					errors = append(errors, fmt.Sprintf(
+						"property '%s': derived const/enum value %q does not match base pattern %q",
+						propName, s, basePat,
+					))
 				}
 			}
 		}

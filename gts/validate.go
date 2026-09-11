@@ -8,6 +8,7 @@ package gts
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dlclark/regexp2"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -20,8 +21,8 @@ type regexp2RE struct {
 }
 
 func (r *regexp2RE) MatchString(s string) bool {
-	ok, _ := r.re.MatchString(s)
-	return ok
+	ok, err := r.re.MatchString(s)
+	return err == nil && ok
 }
 
 func (r *regexp2RE) String() string {
@@ -36,6 +37,7 @@ func ecmaRegexpEngine(s string) (jsonschema.Regexp, error) {
 	if err != nil {
 		return nil, err
 	}
+	re.MatchTimeout = time.Second
 	return &regexp2RE{re}, nil
 }
 

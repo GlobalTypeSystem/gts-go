@@ -314,6 +314,7 @@ func validateTraitsAgainstSchema(traitSchema map[string]any, effectiveTraits map
 
 	// Use jsonschema library for standard JSON Schema validation
 	compiler := jsonschema.NewCompiler()
+	compiler.UseRegexpEngine(ecmaRegexpEngine)
 
 	// Register lenient format validators
 	lenientValidator := func(v any) error { return nil }

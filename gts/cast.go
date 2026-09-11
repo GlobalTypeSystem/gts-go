@@ -347,6 +347,7 @@ func validateWithGtsIDTolerance(instance, schema map[string]any, store *GtsStore
 
 	// Compile and validate
 	compiler := jsonschema.NewCompiler()
+	compiler.UseRegexpEngine(ecmaRegexpEngine)
 
 	// Set up custom loader for GTS ID references
 	compiler.UseLoader(&gtsURLLoader{store: store})
