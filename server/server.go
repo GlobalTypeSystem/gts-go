@@ -63,6 +63,8 @@ func (s *Server) registerRoutes() {
 
 	// OP#6 - Validate Instance
 	s.mux.HandleFunc("POST /validate-instance", s.handleValidateInstance)
+	s.mux.HandleFunc("POST /validate-json", s.handleValidateJSON)
+	s.mux.HandleFunc("POST /validate-json/{typeID}", s.handleValidateJSON)
 
 	// OP#7 - Resolve Relationships
 	s.mux.HandleFunc("GET /resolve-relationships", s.handleResolveRelationships)

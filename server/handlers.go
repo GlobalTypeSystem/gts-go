@@ -6,6 +6,7 @@ Released under Apache License 2.0
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -38,7 +39,10 @@ func (s *Server) handleGetEntity(w http.ResponseWriter, r *http.Request) {
 
 	entity := s.store.Get(id)
 	if entity == nil {
-		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Entity not found: %s", id))
+		s.writeJSON(w, http.StatusOK, map[string]any{
+			"ok":    false,
+			"error": fmt.Sprintf("Entity not found: %s", id),
+		})
 		return
 	}
 
@@ -341,14 +345,18 @@ func (s *Server) handleAddEntities(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAddSchema(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TypeID string         `json:"type_id"`
-		Schema map[string]any `json:"schema"`
+		TypeID     string         `json:"type_id"`
+		Schema     map[string]any `json:"schema"`
+		TypeSchema map[string]any `json:"type_schema"`
 	}
 	if err := s.readJSON(r, &req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid JSON")
 		return
 	}
 
+	if req.Schema == nil {
+		req.Schema = req.TypeSchema
+	}
 	err := s.store.RegisterSchema(req.TypeID, req.Schema)
 	if err != nil {
 		s.writeJSON(w, http.StatusOK, map[string]any{
@@ -441,6 +449,20 @@ func (s *Server) handleValidateInstance(w http.ResponseWriter, r *http.Request) 
 
 	result := s.store.ValidateInstance(req.InstanceID)
 	s.writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleValidateJSON(w http.ResponseWriter, r *http.Request) {
+	var value any
+	if err := json.NewDecoder(r.Body).Decode(&value); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
+	content, ok := value.(map[string]any)
+	if !ok {
+		s.writeError(w, http.StatusUnprocessableEntity, "JSON validation body must be an object")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.store.ValidateTransientJSON(content, r.PathValue("typeID")))
 }
 
 // OP#7 - Resolve Relationships

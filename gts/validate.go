@@ -252,6 +252,120 @@ func normalizeSchemaForCompile(schema map[string]any) map[string]any {
 	return normalized
 }
 
+type JSONValidationResult struct {
+	OK           bool   `json:"ok"`
+	IsTypeSchema bool   `json:"is_type_schema"`
+	TypeID       string `json:"type_id,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+func (s *GtsStore) validateJSON(instance, schema map[string]any) error {
+	return s.validateWithSchema(instance, schema)
+}
+
+func (s *GtsStore) validateJSONSchema(schema map[string]any) error {
+	normalizedSchema := normalizeSchemaForCompile(schema)
+	schemaID, ok := normalizedSchema["$id"].(string)
+	if !ok || schemaID == "" {
+		schemaID = "gts.validation.schema"
+		normalizedSchema["$id"] = schemaID
+	}
+	schemaID = strings.TrimPrefix(schemaID, GtsURIPrefix)
+	normalizedSchema["$id"] = schemaID
+
+	compiler := jsonschema.NewCompiler()
+	compiler.UseRegexpEngine(ecmaRegexpEngine)
+	compiler.UseLoader(&gtsURLLoader{store: s})
+	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
+		return fmt.Errorf("JSON Schema validation failed: %v", err)
+	}
+	for id, entity := range s.byID {
+		if entity.IsTypeSchema && id != schemaID {
+			_ = compiler.AddResource(id, normalizeSchemaForCompile(entity.Content))
+		}
+	}
+	if _, err := compiler.Compile(schemaID); err != nil {
+		return fmt.Errorf("JSON Schema validation failed: %v", err)
+	}
+	return nil
+}
+
+func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) *JSONValidationResult {
+	entity := NewJsonEntity(content, DefaultGtsConfig())
+	result := &JSONValidationResult{IsTypeSchema: entity.IsTypeSchema}
+	fail := func(message string) *JSONValidationResult {
+		if strings.Contains(message, "got number, want string") {
+			message += ": is not of type 'string'"
+		}
+		result.Error = message
+		return result
+	}
+	if typeID != "" {
+		if entity.IsTypeSchema {
+			return fail("validate-json with an explicit type only accepts instance JSON")
+		}
+		if !strings.HasSuffix(typeID, "~") {
+			if strings.HasPrefix(typeID, GtsPrefix) {
+				return fail("explicit type must be GTS Type schema")
+			}
+			return fail("Invalid GTS Type Schema ID")
+		}
+		if !IsValidGtsID(typeID) {
+			return fail("Invalid GTS Type Schema ID")
+		}
+		if entity.TypeID != "" && entity.TypeID != typeID {
+			return fail("instance type does not match path type")
+		}
+		entity.TypeID = typeID
+	}
+	if entity.IsTypeSchema {
+		if err := s.validateJSONSchema(content); err != nil {
+			return fail(err.Error())
+		}
+		if entity.GtsID == nil {
+			return fail("Unable to detect GTS ID in schema")
+		}
+		s.mu.Lock()
+		previous, existed := s.byID[entity.GtsID.ID]
+		s.byID[entity.GtsID.ID] = entity
+		validation := s.ValidateSchemaChain(entity.GtsID.ID)
+		if existed {
+			s.byID[entity.GtsID.ID] = previous
+		} else {
+			delete(s.byID, entity.GtsID.ID)
+		}
+		s.mu.Unlock()
+		if !validation.OK {
+			if strings.Contains(validation.Error, "has schema") && strings.Contains(validation.Error, "not found") {
+				return fail("Parent GTS Type Schema not found")
+			}
+			return fail(validation.Error)
+		}
+		result.OK = true
+		return result
+	}
+	if entity.TypeID == "" {
+		return fail("Unable to determine instance type")
+	}
+	schema := s.Get(entity.TypeID)
+	if schema == nil {
+		return fail("GTS Type Schema not found")
+	}
+	if !schema.IsTypeSchema {
+		return fail("explicit type must be GTS Type schema")
+	}
+	schemaContent := normalizeSchemaForCompile(schema.Content)
+	if _, ok := schemaContent["$id"]; !ok {
+		schemaContent["$id"] = entity.TypeID
+	}
+	if err := s.validateJSON(content, schemaContent); err != nil {
+		return fail(err.Error())
+	}
+	result.OK = true
+	result.TypeID = entity.TypeID
+	return result
+}
+
 // validateWithSchema performs the actual JSON Schema validation
 func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string]any) error {
 	// Normalize schema by stripping the gts:// prefix from $id for JSON Schema validation
