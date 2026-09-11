@@ -5,7 +5,10 @@ Released under Apache License 2.0
 
 package gts
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 const (
 	KeyXGtsFinal    = "x-gts-final"
@@ -14,6 +17,32 @@ const (
 
 // ValidateSchemaModifiers checks that x-gts-final and x-gts-abstract are well-formed:
 // boolean type, not both true, and not placed inside allOf entries at any depth.
+func ValidateSchemaExtensions(content map[string]any) error {
+	allowed := map[string]bool{KeyXGtsFinal: true, KeyXGtsAbstract: true, KeyXGtsTraits: true, KeyXGtsTraitsSchema: true, "x-gts-ref": true}
+	var walk func(any) error
+	walk = func(value any) error {
+		switch node := value.(type) {
+		case map[string]any:
+			for key, child := range node {
+				if strings.HasPrefix(key, "x-gts-") && !allowed[key] {
+					return fmt.Errorf("unknown GTS extension keyword: %s", key)
+				}
+				if err := walk(child); err != nil {
+					return err
+				}
+			}
+		case []any:
+			for _, child := range node {
+				if err := walk(child); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	return walk(content)
+}
+
 func ValidateSchemaModifiers(content map[string]any) error {
 	final, err := readBoolModifier(content, KeyXGtsFinal)
 	if err != nil {

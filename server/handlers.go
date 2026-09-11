@@ -147,7 +147,7 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeJSON(w, status, map[string]any{
 			"ok":             false,
-			"error":          "Unable to extract GTS ID from entity",
+			"error":          "Unable to detect GTS ID in instance entity",
 			"is_type_schema": entity.IsTypeSchema,
 		})
 		return
@@ -223,6 +223,12 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 	// type-level keywords and MUST appear only at the schema top level
 	// (gts-spec §9.7.1/§9.11).
 	if entity.IsTypeSchema {
+		if err := gts.ValidateSchemaExtensions(entity.Content); err != nil {
+			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"ok": false, "error": err.Error(), "is_type_schema": true,
+			})
+			return
+		}
 		if err := gts.ValidateSchemaModifiers(entity.Content); err != nil {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"ok":             false,
