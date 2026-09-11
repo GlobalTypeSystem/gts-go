@@ -213,8 +213,42 @@ func checkInclusion(subset, superset map[string]any) *bool {
 		return checkArrayInclusion(subset, superset)
 	}
 
-	// Primitive or mixed schemas.
-	return checkPrimitiveInclusion(subset, superset, subType)
+	results := []*bool{checkPrimitiveInclusion(subset, superset, subType)}
+	if subType == "" && supType == "" {
+		if hasObjectKeywords(subset) || hasObjectKeywords(superset) {
+			results = append(results, checkObjectInclusion(subset, superset))
+		}
+		if hasArrayKeywords(subset) || hasArrayKeywords(superset) {
+			results = append(results, checkArrayInclusion(subset, superset))
+		}
+	}
+	for _, result := range results {
+		if result == nil {
+			return nil
+		}
+		if !*result {
+			return boolPtr(false)
+		}
+	}
+	return boolPtr(true)
+}
+
+func hasObjectKeywords(schema map[string]any) bool {
+	for _, key := range []string{"properties", "required", "additionalProperties", "patternProperties"} {
+		if _, ok := schema[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArrayKeywords(schema map[string]any) bool {
+	for _, key := range []string{"items", "additionalItems", "minItems", "maxItems", "uniqueItems", "contains"} {
+		if _, ok := schema[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // isTypeSubsetOf returns true when every value of subType is also of supType.

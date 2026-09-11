@@ -14,52 +14,75 @@ package gts
 
 // flattenSchema merges allOf schemas into a single schema.
 func flattenSchema(schema map[string]any) map[string]any {
-	result := map[string]any{
-		"properties": make(map[string]any),
-		"required":   []any{},
-	}
+	result := deepCopyMap(schema)
+	delete(result, "allOf")
 
-	if allOfVal, ok := schema["allOf"]; ok {
-		if allOfList, ok := allOfVal.([]any); ok {
-			for _, subSchemaAny := range allOfList {
-				if subSchema, ok := subSchemaAny.(map[string]any); ok {
-					flattened := flattenSchema(subSchema)
-					if props, ok := flattened["properties"].(map[string]any); ok {
-						if resultProps, ok := result["properties"].(map[string]any); ok {
-							for k, v := range props {
-								resultProps[k] = v
-							}
-						}
-					}
-					if req, ok := flattened["required"].([]any); ok {
-						if resultReq, ok := result["required"].([]any); ok {
-							result["required"] = append(resultReq, req...)
-						}
-					}
-					if addProps, ok := flattened["additionalProperties"]; ok {
-						result["additionalProperties"] = addProps
+	if allOf, ok := schema["allOf"].([]any); ok {
+		for _, value := range allOf {
+			if subschema, ok := value.(map[string]any); ok {
+				result = mergeFlattenedSchemas(result, flattenSchema(subschema))
+			}
+		}
+	}
+	return result
+}
+
+func mergeFlattenedSchemas(left, right map[string]any) map[string]any {
+	result := deepCopyMap(left)
+	for key, value := range right {
+		switch key {
+		case "properties":
+			rightProperties, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			leftProperties, _ := result[key].(map[string]any)
+			if leftProperties == nil {
+				leftProperties = make(map[string]any)
+			}
+			for property, rightSchema := range rightProperties {
+				if leftSchema, exists := leftProperties[property].(map[string]any); exists {
+					if rightSchema, ok := rightSchema.(map[string]any); ok {
+						leftProperties[property] = mergeFlattenedSchemas(leftSchema, rightSchema)
+						continue
 					}
 				}
+				leftProperties[property] = deepCopyValue(rightSchema)
+			}
+			result[key] = leftProperties
+		case "required":
+			existing, _ := result[key].([]any)
+			for _, required := range value.([]any) {
+				if !anySliceContains(existing, required) {
+					existing = append(existing, required)
+				}
+			}
+			result[key] = existing
+		case "additionalProperties":
+			if left, ok := result[key].(bool); ok && !left {
+				continue
+			}
+			if right, ok := value.(bool); ok && !right {
+				result[key] = false
+			} else if _, exists := result[key]; !exists {
+				result[key] = deepCopyValue(value)
+			}
+		case "items":
+			if left, ok := result[key].(map[string]any); ok {
+				if right, ok := value.(map[string]any); ok {
+					result[key] = mergeFlattenedSchemas(left, right)
+					continue
+				}
+			}
+			if _, exists := result[key]; !exists {
+				result[key] = deepCopyValue(value)
+			}
+		default:
+			if _, exists := result[key]; !exists {
+				result[key] = deepCopyValue(value)
 			}
 		}
 	}
-
-	if props, ok := schema["properties"].(map[string]any); ok {
-		if resultProps, ok := result["properties"].(map[string]any); ok {
-			for k, v := range props {
-				resultProps[k] = v
-			}
-		}
-	}
-	if req, ok := schema["required"].([]any); ok {
-		if resultReq, ok := result["required"].([]any); ok {
-			result["required"] = append(resultReq, req...)
-		}
-	}
-	if addProps, ok := schema["additionalProperties"]; ok {
-		result["additionalProperties"] = addProps
-	}
-
 	return result
 }
 
@@ -109,20 +132,26 @@ func checkStructuralCompatibility(oldSchema, newSchema map[string]any, checkBack
 		if oldType != "" && newType != "" && oldType != newType {
 			errors = append(errors, "Property '"+prop+"' type changed from "+oldType+" to "+newType)
 		}
-		oldEnum := getStringSlice(oldPropSchema, "enum")
-		newEnum := getStringSlice(newPropSchema, "enum")
-		if len(oldEnum) > 0 && len(newEnum) > 0 {
-			oldEnumSet := stringSliceToSet(oldEnum)
-			newEnumSet := stringSliceToSet(newEnum)
+		oldEnum, oldHasEnum := oldPropSchema["enum"].([]any)
+		newEnum, newHasEnum := newPropSchema["enum"].([]any)
+		if checkBackward && !oldHasEnum && newHasEnum {
+			errors = append(errors, "Property '"+prop+"' added enum constraint")
+		} else if !checkBackward && oldHasEnum && !newHasEnum {
+			errors = append(errors, "Property '"+prop+"' removed enum constraint")
+		} else if oldHasEnum && newHasEnum {
 			if checkBackward {
-				addedEnumValues := setDifference(newEnumSet, oldEnumSet)
-				if len(addedEnumValues) > 0 {
-					errors = append(errors, "Property '"+prop+"' added enum values: "+joinStrings(addedEnumValues))
+				for _, value := range newEnum {
+					if !anySliceContains(oldEnum, value) {
+						errors = append(errors, "Property '"+prop+"' added enum values")
+						break
+					}
 				}
 			} else {
-				removedEnumValues := setDifference(oldEnumSet, newEnumSet)
-				if len(removedEnumValues) > 0 {
-					errors = append(errors, "Property '"+prop+"' removed enum values: "+joinStrings(removedEnumValues))
+				for _, value := range oldEnum {
+					if !anySliceContains(newEnum, value) {
+						errors = append(errors, "Property '"+prop+"' removed enum values")
+						break
+					}
 				}
 			}
 		}

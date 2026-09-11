@@ -395,6 +395,47 @@ func TestCheckStructuralCompatibility_EnumChanges(t *testing.T) {
 	}
 }
 
+func TestFlattenSchemaPreservesAllOfConstraints(t *testing.T) {
+	flat := flattenSchema(map[string]any{
+		"allOf": []any{
+			map[string]any{"type": "object", "properties": map[string]any{"status": map[string]any{"enum": []any{"active"}}}},
+			map[string]any{"properties": map[string]any{"status": map[string]any{"minLength": float64(3)}, "items": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}}},
+		},
+	})
+	status := getMap(getPropertiesMap(flat), "status")
+	if status == nil || !anySliceContains(status["enum"].([]any), "active") || getNumber(status, "minLength") == nil {
+		t.Errorf("allOf property constraints were not preserved: %v", flat)
+	}
+	items := getMap(getPropertiesMap(flat), "items")
+	if items == nil || getMap(items, "items") == nil {
+		t.Errorf("allOf array item constraints were not preserved: %v", flat)
+	}
+}
+
+func TestStructuralEnumAdditionRemoval(t *testing.T) {
+	withoutEnum := map[string]any{"properties": map[string]any{"status": map[string]any{"type": "string"}}}
+	withEnum := map[string]any{"properties": map[string]any{"status": map[string]any{"type": "string", "enum": []any{float64(1), true}}}}
+	if compatible, _ := checkBackwardCompatibility(withoutEnum, withEnum); compatible {
+		t.Error("adding an enum must be backward-incompatible")
+	}
+	if compatible, _ := checkForwardCompatibility(withEnum, withoutEnum); compatible {
+		t.Error("removing an enum must be forward-incompatible")
+	}
+}
+
+func TestCheckInclusion_TypeLessObjectAndArray(t *testing.T) {
+	objectOld := map[string]any{"required": []any{"id"}}
+	objectNew := map[string]any{"required": []any{"id", "source"}}
+	if result := checkInclusion(objectOld, objectNew); result == nil || *result {
+		t.Error("type-less required property addition must reject old objects")
+	}
+	arrayOld := map[string]any{"items": map[string]any{"type": "string"}}
+	arrayNew := map[string]any{"items": map[string]any{"type": "string", "maxLength": float64(10)}}
+	if result := checkInclusion(arrayOld, arrayNew); result == nil || *result {
+		t.Error("type-less item constraint must reject old arrays")
+	}
+}
+
 func TestCheckMinMaxConstraint_AllBranches(t *testing.T) {
 	// Backward: increase minimum → tighten
 	old := map[string]any{"minimum": float64(0), "maximum": float64(100)}
@@ -405,7 +446,14 @@ func TestCheckMinMaxConstraint_AllBranches(t *testing.T) {
 	}
 
 	// Backward: add minimum where none existed
-	errs2 := checkMinMaxConstraint("prop", map[string]any{}, newS, "minimum", "maximum", true)
+	errs2 := checkMinMaxConstraint(
+		"prop",
+		map[string]any{},
+		map[string]any{"minimum": float64(10)},
+		"minimum",
+		"maximum",
+		true,
+	)
 	if len(errs2) == 0 {
 		t.Error("adding minimum constraint should be an error for backward")
 	}
