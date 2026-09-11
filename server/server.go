@@ -98,6 +98,7 @@ func (s *Server) Start() error {
 // Helper methods
 
 func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Connection", "close")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
