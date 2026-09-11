@@ -70,54 +70,61 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		idField, exists := content["$id"]
 		if !exists || idField == nil {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id field is required when $schema is present",
+				"ok":             false,
+				"error":          "Unable to detect GTS ID in schema",
+				"is_type_schema": true,
 			})
 			return
 		}
 		idStr, ok := idField.(string)
 		if !ok {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id field must be a string",
+				"ok":             false,
+				"error":          "JSON Schema $id field must be a string",
+				"is_type_schema": true,
 			})
 			return
 		}
 		idStr = strings.TrimSpace(idStr)
 		if idStr == "" {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id field cannot be empty",
+				"ok":             false,
+				"error":          "JSON Schema $id field cannot be empty",
+				"is_type_schema": true,
 			})
 			return
 		}
 		if !strings.HasPrefix(idStr, gts.GtsURIPrefix) && !strings.HasPrefix(idStr, gts.GtsPrefix) {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id must be a valid GTS identifier (optionally using gts:// prefix)",
+				"ok":             false,
+				"error":          "JSON Schema $id must be a valid GTS identifier (optionally using gts:// prefix)",
+				"is_type_schema": true,
 			})
 			return
 		}
 		normalizedID := strings.TrimPrefix(idStr, gts.GtsURIPrefix)
 		if strings.Contains(normalizedID, "*") {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "Wildcards are not allowed in schema IDs, only in patterns for access control",
+				"ok":             false,
+				"error":          "Wildcards are not allowed in schema IDs, only in patterns for access control",
+				"is_type_schema": true,
 			})
 			return
 		}
 		isBaseSchemaID := strings.Count(normalizedID, "~") == 1 && strings.HasSuffix(normalizedID, "~")
 		if isBaseSchemaID && !strings.HasPrefix(idStr, gts.GtsURIPrefix) {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id field must use gts:// URI prefix for base schemas",
+				"ok":             false,
+				"error":          "JSON Schema $id field must use gts:// URI prefix for base schemas",
+				"is_type_schema": true,
 			})
 			return
 		}
 		if !gts.IsValidGtsID(normalizedID) {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id must be a well-formed GTS identifier",
+				"ok":             false,
+				"error":          "JSON Schema $id must be a well-formed GTS identifier",
+				"is_type_schema": true,
 			})
 			return
 		}
@@ -135,8 +142,9 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusUnprocessableEntity
 		}
 		s.writeJSON(w, status, map[string]any{
-			"ok":    false,
-			"error": "Unable to extract GTS ID from entity",
+			"ok":             false,
+			"error":          "Unable to extract GTS ID from entity",
+			"is_type_schema": entity.IsTypeSchema,
 		})
 		return
 	}
@@ -154,8 +162,9 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 					// If it's a base schema (only 2 parts: prefix and empty after ~), require gts://
 					if len(tildeParts) == 2 && tildeParts[1] == "" {
 						s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-							"ok":    false,
-							"error": "JSON Schema $id field must use gts:// URI prefix for GTS identifiers, not plain gts. prefix",
+							"ok":             false,
+							"error":          "JSON Schema $id field must use gts:// URI prefix for GTS identifiers, not plain gts. prefix",
+							"is_type_schema": true,
 						})
 						return
 					}
@@ -163,8 +172,9 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 				// Check for wildcards in any GTS schema IDs
 				if (strings.HasPrefix(idStr, "gts://") || strings.HasPrefix(idStr, "gts.")) && strings.Contains(idStr, "*") {
 					s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-						"ok":    false,
-						"error": "Wildcards are not allowed in schema IDs, only in patterns for access control",
+						"ok":             false,
+						"error":          "Wildcards are not allowed in schema IDs, only in patterns for access control",
+						"is_type_schema": true,
 					})
 					return
 				}
@@ -180,8 +190,9 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 				errorMsgs = append(errorMsgs, err.Error())
 			}
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": fmt.Sprintf("$ref validation failed: %s", strings.Join(errorMsgs, "; ")),
+				"ok":             false,
+				"error":          fmt.Sprintf("$ref validation failed: %s", strings.Join(errorMsgs, "; ")),
+				"is_type_schema": true,
 			})
 			return
 		}
@@ -195,8 +206,9 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 				errorMsgs = append(errorMsgs, err.Error())
 			}
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": fmt.Sprintf("x-gts-ref validation failed: %s", strings.Join(errorMsgs, "; ")),
+				"ok":             false,
+				"error":          fmt.Sprintf("x-gts-ref validation failed: %s", strings.Join(errorMsgs, "; ")),
+				"is_type_schema": true,
 			})
 			return
 		}
@@ -209,15 +221,17 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 	if entity.IsTypeSchema {
 		if err := gts.ValidateSchemaModifiers(entity.Content); err != nil {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": err.Error(),
+				"ok":             false,
+				"error":          err.Error(),
+				"is_type_schema": true,
 			})
 			return
 		}
 		if err := gts.ValidateTraitPlacement(entity.Content); err != nil {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": err.Error(),
+				"ok":             false,
+				"error":          err.Error(),
+				"is_type_schema": true,
 			})
 			return
 		}
@@ -246,14 +260,16 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": err.Error(),
+				"ok":             false,
+				"error":          err.Error(),
+				"is_type_schema": entity.IsTypeSchema,
 			})
 			return
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{
-			"ok":     true,
-			"gts_id": responseID,
+			"ok":             true,
+			"gts_id":         responseID,
+			"is_type_schema": entity.IsTypeSchema,
 		})
 		return
 	}
@@ -261,15 +277,17 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 	err := s.store.Register(entity)
 	if err != nil {
 		s.writeJSON(w, http.StatusOK, map[string]any{
-			"ok":    false,
-			"error": err.Error(),
+			"ok":             false,
+			"error":          err.Error(),
+			"is_type_schema": entity.IsTypeSchema,
 		})
 		return
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":     true,
-		"gts_id": responseID,
+		"ok":             true,
+		"gts_id":         responseID,
+		"is_type_schema": entity.IsTypeSchema,
 	})
 }
 
@@ -288,8 +306,9 @@ func (s *Server) handleAddEntities(w http.ResponseWriter, r *http.Request) {
 		responseID := entity.EffectiveID()
 		if responseID == "" {
 			result[i] = map[string]any{
-				"ok":    false,
-				"error": "Unable to extract GTS ID from entity",
+				"ok":             false,
+				"error":          "Unable to extract GTS ID from entity",
+				"is_type_schema": entity.IsTypeSchema,
 			}
 			continue
 		}
@@ -297,15 +316,17 @@ func (s *Server) handleAddEntities(w http.ResponseWriter, r *http.Request) {
 		err := s.store.Register(entity)
 		if err != nil {
 			result[i] = map[string]any{
-				"ok":    false,
-				"error": err.Error(),
+				"ok":             false,
+				"error":          err.Error(),
+				"is_type_schema": entity.IsTypeSchema,
 			}
 			continue
 		}
 
 		result[i] = map[string]any{
-			"ok":     true,
-			"gts_id": responseID,
+			"ok":             true,
+			"gts_id":         responseID,
+			"is_type_schema": entity.IsTypeSchema,
 		}
 		successCount++
 	}
