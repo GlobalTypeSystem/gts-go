@@ -181,18 +181,30 @@ func TestGtsFileReader_ExcludeDirectories(t *testing.T) {
 	rootContent := map[string]any{
 		"gtsId": "gts.vendor.package.namespace.root.v0~",
 	}
-	data, _ := json.Marshal(rootContent)
-	_ = os.WriteFile(rootFile, data, 0644)
+	data, err := json.Marshal(rootContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rootFile, data, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create node_modules directory with a file
 	nodeModules := filepath.Join(tmpDir, "node_modules")
-	_ = os.Mkdir(nodeModules, 0755)
+	if err := os.Mkdir(nodeModules, 0755); err != nil {
+		t.Fatal(err)
+	}
 	nmFile := filepath.Join(nodeModules, "excluded.json")
 	nmContent := map[string]any{
 		"gtsId": "gts.vendor.package.namespace.excluded.v0~",
 	}
-	data, _ = json.Marshal(nmContent)
-	_ = os.WriteFile(nmFile, data, 0644)
+	data, err = json.Marshal(nmContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nmFile, data, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create reader
 	reader := NewGtsFileReaderFromPath(tmpDir, nil)

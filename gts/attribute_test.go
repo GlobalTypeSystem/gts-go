@@ -84,7 +84,9 @@ func TestGetAttribute_NonExistentField(t *testing.T) {
 			"field1": "value1",
 		},
 	}, DefaultGtsConfig())
-	_ = store.Register(instance)
+	if err := store.Register(instance); err != nil {
+		t.Fatal(err)
+	}
 
 	// Access non-existent field
 	result := store.GetAttribute("gts.x.test11.events.type.v1~x.test11.missing.event.v1.0@payload.nonExistent")

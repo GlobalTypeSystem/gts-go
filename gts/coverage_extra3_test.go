@@ -165,8 +165,8 @@ func TestQuery_WithFilter(t *testing.T) {
 	_ = store.Register(NewJsonEntity(s2, DefaultGtsConfig()))
 
 	r := store.Query("gts.x.test.ns.*[status=active]", 100)
-	if r.Count < 1 {
-		t.Errorf("expected at least 1 filtered result, got %d (error: %s)", r.Count, r.Error)
+	if r.Count != 1 {
+		t.Errorf("expected exactly 1 filtered result, got %d (error: %s)", r.Count, r.Error)
 	}
 }
 
