@@ -30,6 +30,9 @@ type CastCompatResult struct {
 	IncompatibilityReasons []string            `json:"incompatibility_reasons"`
 	BackwardErrors         []string            `json:"backward_errors"`
 	ForwardErrors          []string            `json:"forward_errors"`
+	BackwardCompatibility  string              `json:"backward_compatibility"`
+	ForwardCompatibility   string              `json:"forward_compatibility"`
+	FullCompatibility      string              `json:"full_compatibility"`
 	Error                  string              `json:"error,omitempty"`
 }
 
@@ -78,7 +81,15 @@ func (s *GtsStore) Cast(instanceID, toTypeID string) (*CastResult, error) {
 	toSchemaContent := toSchema.Content
 
 	// Perform the cast
-	return castInstance(instanceID, toTypeID, instanceContent, fromSchemaContent, toSchemaContent, s)
+	result, err := castInstance(instanceID, toTypeID, instanceContent, fromSchemaContent, toSchemaContent, s)
+	if err != nil {
+		return nil, err
+	}
+	compatibility := s.CheckCompatibility(fromTypeID, toTypeID)
+	result.BackwardCompatibility = compatibility.BackwardCompatibility
+	result.ForwardCompatibility = compatibility.ForwardCompatibility
+	result.FullCompatibility = compatibility.FullCompatibility
+	return result, nil
 }
 
 // castInstance performs the actual casting logic
