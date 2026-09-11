@@ -167,7 +167,7 @@ func (s *GtsStore) validateQueryPattern(basePattern string, isWildcard bool) err
 		// Check if pattern is incomplete (missing version or type)
 		// A complete GTS ID must end with a version (v1, v1.2) or ~ for types
 		lastSeg := gtsID.Segments[len(gtsID.Segments)-1]
-		if !lastSeg.IsType && lastSeg.VerMajor == 0 {
+		if !lastSeg.IsType && !lastSeg.HasVersion {
 			return errors.New("Invalid query: incomplete GTS ID pattern")
 		}
 	}

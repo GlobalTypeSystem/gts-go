@@ -469,6 +469,21 @@ func TestQuery_UseCase4_AllV1BaseAndDerived(t *testing.T) {
 	}
 }
 
+func TestQuery_ExactMatchExplicitV0Instance(t *testing.T) {
+	store := NewGtsStore(nil)
+	entity := NewJsonEntity(map[string]any{
+		"id":   "gts.x.test10.zero.event.v0~x.test10._.instance.v0",
+		"type": "gts.x.test10.zero.event.v0~",
+	}, DefaultGtsConfig())
+	if err := store.Register(entity); err != nil {
+		t.Fatal(err)
+	}
+	result := store.Query("gts.x.test10.zero.event.v0~x.test10._.instance.v0", 100)
+	if result.Error != "" || result.Count != 1 {
+		t.Errorf("expected one explicit v0 result, got count=%d error=%q", result.Count, result.Error)
+	}
+}
+
 // Helper function to check if string contains substring
 func containsString(s, substr string) bool {
 	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) >= len(substr) && indexOf(s, substr) >= 0)
