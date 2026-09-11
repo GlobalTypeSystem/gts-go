@@ -306,16 +306,12 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 		}
 	}
 
-	// Optionally check if entity exists in store
-	if v.store != nil {
-		entity := v.store.Get(value)
-		if entity == nil {
-			return &XGtsRefValidationError{
-				FieldPath:  fieldPath,
-				Value:      value,
-				RefPattern: pattern,
-				Reason:     fmt.Sprintf("Referenced entity '%s' not found in registry", value),
-			}
+	if v.store != nil && strings.HasSuffix(pattern, "~") && v.store.Get(pattern) != nil && v.store.Get(value) == nil {
+		return &XGtsRefValidationError{
+			FieldPath:  fieldPath,
+			Value:      value,
+			RefPattern: pattern,
+			Reason:     fmt.Sprintf("Referenced entity '%s' not found in registry", value),
 		}
 	}
 

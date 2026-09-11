@@ -55,6 +55,9 @@ func (s *GtsStore) CheckCompatibility(oldTypeID, newTypeID string) *Compatibilit
 	if oldEntity == nil || newEntity == nil || oldEntity.Content == nil || newEntity.Content == nil {
 		return unknownResult
 	}
+	if dialectsDiffer(oldEntity.Content, newEntity.Content) {
+		return unknownResult
+	}
 
 	// Normalize $$ref → $ref and resolve all $ref references so the
 	// comparison operates on fully-resolved effective schemas.
@@ -63,6 +66,9 @@ func (s *GtsStore) CheckCompatibility(oldTypeID, newTypeID string) *Compatibilit
 	if err1 != nil || err2 != nil {
 		return unknownResult
 	}
+
+	oldResolved = lowerUnevaluatedProperties(oldResolved)
+	newResolved = lowerUnevaluatedProperties(newResolved)
 
 	// backward: Valid(old) ⊆ Valid(new)
 	backward := verdict(isSubschema(oldResolved, newResolved))
@@ -79,6 +85,30 @@ func (s *GtsStore) CheckCompatibility(oldTypeID, newTypeID string) *Compatibilit
 }
 
 // ── Verdict helpers ──────────────────────────────────────────────────────────
+
+func dialectsDiffer(oldSchema, newSchema map[string]any) bool {
+	oldDialect, oldOK := oldSchema["$schema"].(string)
+	newDialect, newOK := newSchema["$schema"].(string)
+	canonical := func(dialect string) string {
+		dialect = strings.TrimSuffix(dialect, "#")
+		dialect = strings.TrimPrefix(dialect, "https://")
+		return strings.TrimPrefix(dialect, "http://")
+	}
+	return oldOK && newOK && canonical(oldDialect) != canonical(newDialect)
+}
+
+func lowerUnevaluatedProperties(schema map[string]any) map[string]any {
+	value, ok := schema["unevaluatedProperties"]
+	if !ok {
+		return schema
+	}
+	result := deepCopyMap(schema)
+	delete(result, "unevaluatedProperties")
+	if _, exists := result["additionalProperties"]; !exists {
+		result["additionalProperties"] = value
+	}
+	return result
+}
 
 func verdict(result *bool) string {
 	if result == nil {
