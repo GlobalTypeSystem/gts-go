@@ -384,20 +384,9 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 	// containing only x-gts-ref from being treated as empty match-all schemas.
 	compiler.RegisterVocabulary(newXGtsRefVocabulary(s))
 
-	// Register lenient format validators to match Python's jsonschema behavior
-	// Python's jsonschema library does NOT validate formats by default
-	lenientValidator := func(v any) error { return nil }
-	formats := []string{
-		"uuid", "date-time", "date", "time", "email", "hostname",
-		"ipv4", "ipv6", "uri", "uri-reference", "iri", "iri-reference",
-		"uri-template", "json-pointer", "relative-json-pointer", "regex",
-	}
-	for _, fmt := range formats {
-		compiler.RegisterFormat(&jsonschema.Format{
-			Name:     fmt,
-			Validate: lenientValidator,
-		})
-	}
+	// Assert JSON Schema format keywords (uuid, email, date-time, …) so
+	// format violations are reported as validation errors (gts-spec OP#6).
+	compiler.AssertFormat()
 
 	// Set up custom loader for GTS ID references (matches Python's resolve_gts_ref handler)
 	compiler.UseLoader(&gtsURLLoader{store: s})
