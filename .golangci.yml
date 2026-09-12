@@ -1,0 +1,15 @@
+version: "2"
+
+# Uses the default (standard) linter set. The only project-specific tweak is
+# excluding staticcheck ST1005 ("error strings should not be capitalized").
+# gts-go deliberately uses capitalized, user-facing error messages that are
+# surfaced as JSON `error` fields by the REST API and asserted verbatim by the
+# gts-spec conformance suite (e.g. assert_contains(body.error, "Invalid query")).
+# Lowercasing them to satisfy ST1005 would break the API contract, so ST1005 is
+# excluded while every other staticcheck/standard check stays enabled.
+linters:
+  exclusions:
+    rules:
+      - linters:
+          - staticcheck
+        text: "ST1005"

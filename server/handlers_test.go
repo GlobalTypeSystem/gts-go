@@ -50,7 +50,7 @@ func TestServerClosesConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	if !response.Close {
 		t.Fatal("response connection remains open")
