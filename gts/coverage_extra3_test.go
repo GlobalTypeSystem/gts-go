@@ -166,6 +166,31 @@ func TestCheckEnumeratedValuesAgainstBase_Pattern(t *testing.T) {
 	}
 }
 
+// TestCheckEnumeratedValuesAgainstBase_PatternCardinalityBound ensures an
+// oversized enum is rejected before running unbounded regexp matches (CWE-1333).
+func TestCheckEnumeratedValuesAgainstBase_PatternCardinalityBound(t *testing.T) {
+	base := map[string]any{"pattern": "^[a-z]+$"}
+
+	// Within the bound: valid values produce no errors.
+	within := make([]any, maxEnumeratedPatternChecks)
+	for i := range within {
+		within[i] = "abc"
+	}
+	if errs := checkEnumeratedValuesAgainstBase(base, within, "prop"); len(errs) != 0 {
+		t.Errorf("expected no errors within bound, got: %v", errs)
+	}
+
+	// Beyond the bound: reject without matching every value.
+	over := make([]any, maxEnumeratedPatternChecks+1)
+	for i := range over {
+		over[i] = "abc"
+	}
+	errs := checkEnumeratedValuesAgainstBase(base, over, "prop")
+	if len(errs) != 1 {
+		t.Errorf("expected exactly one cardinality error, got %d: %v", len(errs), errs)
+	}
+}
+
 // ── file_reader.go — NewGtsFileReader branches ──────────────────────────────
 
 func TestNewGtsFileReader_EmptyPaths(t *testing.T) {

@@ -649,6 +649,13 @@ func checkLooseningKeywords(baseProp, derivedProp map[string]any, propName strin
 
 // ── Enumerated value helpers ─────────────────────────────────────────────────
 
+// maxEnumeratedPatternChecks bounds how many const/enum string values are matched
+// against a base "pattern". Each ECMA regexp match may run up to the configured
+// MatchTimeout (see ecmaRegexpEngine), so an unbounded enum would allow aggregate
+// ReDoS work (CWE-1333) via an attacker-supplied schema. Schemas whose enum
+// cardinality exceeds this limit are rejected instead of validated.
+const maxEnumeratedPatternChecks = 100
+
 // collectDerivedEnumeratedValues returns (values, true) when derived uses const or enum.
 func collectDerivedEnumeratedValues(derivedProp map[string]any) ([]any, bool) {
 	if c, ok := derivedProp["const"]; ok {
@@ -721,12 +728,27 @@ func checkEnumeratedValuesAgainstBase(baseProp map[string]any, values []any, pro
 	if basePat, ok := baseProp["pattern"].(string); ok && basePat != "" {
 		re, err := ecmaRegexpEngine(basePat)
 		if err == nil {
+			// Bound aggregate regexp work: cap how many string values are matched
+			// against the base pattern to avoid unbounded ReDoS (CWE-1333).
+			stringValues := 0
 			for _, val := range values {
-				if s, ok := val.(string); ok && !re.MatchString(s) {
-					errors = append(errors, fmt.Sprintf(
-						"property '%s': derived const/enum value %q does not match base pattern %q",
-						propName, s, basePat,
-					))
+				if _, ok := val.(string); ok {
+					stringValues++
+				}
+			}
+			if stringValues > maxEnumeratedPatternChecks {
+				errors = append(errors, fmt.Sprintf(
+					"property '%s': derived const/enum has %d values to match against base pattern %q, exceeding the limit of %d",
+					propName, stringValues, basePat, maxEnumeratedPatternChecks,
+				))
+			} else {
+				for _, val := range values {
+					if s, ok := val.(string); ok && !re.MatchString(s) {
+						errors = append(errors, fmt.Sprintf(
+							"property '%s': derived const/enum value %q does not match base pattern %q",
+							propName, s, basePat,
+						))
+					}
 				}
 			}
 		}
