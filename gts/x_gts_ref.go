@@ -8,6 +8,8 @@ package gts
 import (
 	"fmt"
 	"strings"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // XGtsRefValidationError represents a validation error for x-gts-ref constraints
@@ -153,7 +155,7 @@ func (v *XGtsRefValidator) validateRefValue(value string, refPattern interface{}
 	}
 
 	// Resolve pattern if it's a relative reference
-	if strings.HasPrefix(refPatternStr, "/") {
+	if strings.HasPrefix(refPatternStr, PointerPrefix) {
 		resolved := v.resolvePointer(schema, refPatternStr)
 		if resolved == "" {
 			return &XGtsRefValidationError{
@@ -164,7 +166,7 @@ func (v *XGtsRefValidator) validateRefValue(value string, refPattern interface{}
 			}
 		}
 		// Check if the resolved value is a pointer that needs further resolution
-		if strings.HasPrefix(resolved, "/") {
+		if strings.HasPrefix(resolved, PointerPrefix) {
 			// Recursive resolution
 			furtherResolved := v.resolvePointer(schema, resolved)
 			if furtherResolved == "" {
@@ -178,7 +180,7 @@ func (v *XGtsRefValidator) validateRefValue(value string, refPattern interface{}
 			resolved = furtherResolved
 		}
 
-		if !strings.HasPrefix(resolved, "gts.") {
+		if !gtsid.HasPrefix(resolved) {
 			return &XGtsRefValidationError{
 				FieldPath:  fieldPath,
 				Value:      value,
@@ -206,12 +208,12 @@ func (v *XGtsRefValidator) validateRefPattern(refPattern interface{}, fieldPath 
 	}
 
 	// Case 1: Absolute GTS pattern
-	if strings.HasPrefix(refPatternStr, "gts.") {
+	if gtsid.HasPrefix(refPatternStr) {
 		return v.validateGtsIDOrPattern(refPatternStr, fieldPath)
 	}
 
 	// Case 2: Relative reference
-	if strings.HasPrefix(refPatternStr, "/") {
+	if strings.HasPrefix(refPatternStr, PointerPrefix) {
 		resolved := v.resolvePointer(rootSchema, refPatternStr)
 		if resolved == "" {
 			return &XGtsRefValidationError{
@@ -221,7 +223,7 @@ func (v *XGtsRefValidator) validateRefPattern(refPattern interface{}, fieldPath 
 				Reason:     fmt.Sprintf("Cannot resolve reference path '%s'", refPatternStr),
 			}
 		}
-		if !IsValidGtsID(resolved) {
+		if !gtsid.IsValid(resolved) {
 			return &XGtsRefValidationError{
 				FieldPath:  fieldPath,
 				Value:      refPattern,
@@ -242,14 +244,14 @@ func (v *XGtsRefValidator) validateRefPattern(refPattern interface{}, fieldPath 
 
 // validateGtsIDOrPattern validates a GTS ID or pattern in schema definition
 func (v *XGtsRefValidator) validateGtsIDOrPattern(pattern, fieldPath string) *XGtsRefValidationError {
-	if pattern == "gts.*" {
+	if pattern == gtsid.Prefix+gtsid.WildcardMarker {
 		return nil // Valid wildcard
 	}
 
-	if strings.Contains(pattern, "*") {
+	if gtsid.HasWildcard(pattern) {
 		// Wildcard pattern - validate prefix
-		prefix := strings.TrimSuffix(pattern, "*")
-		if !strings.HasPrefix(prefix, "gts.") {
+		prefix := strings.TrimSuffix(pattern, gtsid.WildcardMarker)
+		if !gtsid.HasPrefix(prefix) {
 			return &XGtsRefValidationError{
 				FieldPath:  fieldPath,
 				Value:      pattern,
@@ -261,7 +263,7 @@ func (v *XGtsRefValidator) validateGtsIDOrPattern(pattern, fieldPath string) *XG
 	}
 
 	// Specific GTS ID
-	if !IsValidGtsID(pattern) {
+	if !gtsid.IsValid(pattern) {
 		return &XGtsRefValidationError{
 			FieldPath:  fieldPath,
 			Value:      pattern,
@@ -275,7 +277,7 @@ func (v *XGtsRefValidator) validateGtsIDOrPattern(pattern, fieldPath string) *XG
 // validateGtsPattern validates value matches a GTS pattern
 func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) *XGtsRefValidationError {
 	// Validate it's a valid GTS ID
-	if !IsValidGtsID(value) {
+	if !gtsid.IsValid(value) {
 		return &XGtsRefValidationError{
 			FieldPath:  fieldPath,
 			Value:      value,
@@ -285,9 +287,9 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 	}
 
 	// Check pattern match
-	if pattern == "gts.*" {
+	if pattern == gtsid.Prefix+gtsid.WildcardMarker {
 		// Any valid GTS ID matches
-	} else if strings.HasSuffix(pattern, "*") {
+	} else if strings.HasSuffix(pattern, gtsid.WildcardMarker) {
 		prefix := pattern[:len(pattern)-1]
 		if !strings.HasPrefix(value, prefix) {
 			return &XGtsRefValidationError{
@@ -306,7 +308,7 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 		}
 	}
 
-	if v.store != nil && strings.HasSuffix(pattern, "~") && v.store.Get(pattern) != nil && v.store.Get(value) == nil {
+	if v.store != nil && gtsid.IsTypeID(pattern) && v.store.Get(pattern) != nil && v.store.Get(value) == nil {
 		return &XGtsRefValidationError{
 			FieldPath:  fieldPath,
 			Value:      value,
@@ -318,19 +320,11 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 	return nil
 }
 
-// stripGtsURIPrefix removes the "gts://" prefix from a value if present.
-// This is used for /$id relative references where the schema's $id field
-// contains a full GTS URI (e.g., "gts://gts.x.example._.user.v1~") but the
-// instance value should match without the prefix (e.g., "gts.x.example._.user.v1~").
-func stripGtsURIPrefix(value string) string {
-	return strings.TrimPrefix(value, GtsURIPrefix)
-}
-
 // resolvePointer resolves a JSON Pointer in the schema
 // Note: For /$id references, the gts:// prefix is stripped from the value
 // as per GTS specification (relative self-reference should match the $id without the prefix).
 func (v *XGtsRefValidator) resolvePointer(schema map[string]interface{}, pointer string) string {
-	path := strings.TrimPrefix(pointer, "/")
+	path := strings.TrimPrefix(pointer, PointerPrefix)
 	if path == "" {
 		return ""
 	}
@@ -349,16 +343,19 @@ func (v *XGtsRefValidator) resolvePointer(schema map[string]interface{}, pointer
 		}
 	}
 
-	// If current is a string, return it (stripping gts:// prefix if present)
+	// If current is a string, return it (stripping gts:// prefix if present).
+	// For /$id relative references the schema's $id may be a full GTS URI
+	// (e.g. "gts://gts.x.example._.user.v1~") but the instance value matches
+	// without the prefix, so normalize here.
 	if str, ok := current.(string); ok {
-		return stripGtsURIPrefix(str)
+		return gtsid.NormalizeID(str)
 	}
 
 	// If current is a dict with x-gts-ref, resolve it
 	if currentMap, ok := current.(map[string]interface{}); ok {
 		if xGtsRef, hasRef := currentMap["x-gts-ref"]; hasRef {
 			if refStr, ok := xGtsRef.(string); ok {
-				if strings.HasPrefix(refStr, "/") {
+				if strings.HasPrefix(refStr, PointerPrefix) {
 					return v.resolvePointer(schema, refStr)
 				}
 				return refStr

@@ -5,9 +5,7 @@ Released under Apache License 2.0
 
 package main
 
-import (
-	"github.com/GlobalTypeSystem/gts-go/gts"
-)
+import "github.com/GlobalTypeSystem/gts-go/gtsid"
 
 var cmdMatchIDPattern = &Command{
 	UsageLine: "match-id-pattern -pattern <pattern> -candidate <gts-id>",
@@ -40,6 +38,6 @@ func runMatchIDPattern(cmd *Command, args []string) {
 		cmd.Usage()
 	}
 
-	result := gts.MatchIDPattern(matchCandidate, matchPattern)
+	result := gtsid.Match(matchCandidate, matchPattern)
 	writeJSON(result)
 }

@@ -3,13 +3,13 @@ Copyright © 2025 Global Type System
 Released under Apache License 2.0
 */
 
-package gts
+package gtsid
 
 import "testing"
 
 // TestMatchIDPattern_Positive1 tests basic wildcard matching with chained identifiers
 func TestMatchIDPattern_Positive1(t *testing.T) {
-	result := MatchIDPattern(
+	result := Match(
 		"gts.x.test4.events.type.v1~abc.app._.custom_event.v1.2",
 		"gts.x.test4.events.type.v1~abc.*",
 	)
@@ -47,7 +47,7 @@ func TestMatchIDPattern_Positive2(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchIDPattern(tt.candidate, tt.pattern)
+			result := Match(tt.candidate, tt.pattern)
 
 			if result.Match != tt.match {
 				t.Errorf("Expected match=%v, got match=%v (error: %s)", tt.match, result.Match, result.Error)
@@ -80,7 +80,7 @@ func TestMatchIDPattern_Positive3(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchIDPattern(tt.candidate, tt.pattern)
+			result := Match(tt.candidate, tt.pattern)
 
 			if result.Match != tt.match {
 				t.Errorf("Expected match=%v, got match=%v (error: %s)", tt.match, result.Match, result.Error)
@@ -131,7 +131,7 @@ func TestMatchIDPattern_VersionWildcards(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchIDPattern(tt.candidate, tt.pattern)
+			result := Match(tt.candidate, tt.pattern)
 
 			if result.Match != tt.match {
 				t.Errorf("Expected match=%v, got match=%v (error: %s)", tt.match, result.Match, result.Error)
@@ -167,7 +167,7 @@ func TestMatchIDPattern_ChainedPatterns(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchIDPattern(tt.candidate, tt.pattern)
+			result := Match(tt.candidate, tt.pattern)
 
 			if result.Match != tt.match {
 				t.Errorf("Expected match=%v, got match=%v", tt.match, result.Match)
@@ -218,7 +218,7 @@ func TestMatchIDPattern_MultiLevelWildcards(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchIDPattern(tt.candidate, tt.pattern)
+			result := Match(tt.candidate, tt.pattern)
 
 			if result.Match != tt.match {
 				t.Errorf("Expected match=%v, got match=%v", tt.match, result.Match)
@@ -261,7 +261,7 @@ func TestMatchIDPattern_Negative(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchIDPattern(tt.candidate, tt.pattern)
+			result := Match(tt.candidate, tt.pattern)
 
 			if result.Match {
 				t.Errorf("Expected match=false, got match=true")
@@ -296,7 +296,7 @@ func TestMatchIDPattern_Invalid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchIDPattern(tt.candidate, tt.pattern)
+			result := Match(tt.candidate, tt.pattern)
 
 			if result.Match {
 				t.Errorf("Expected match=false for invalid pattern")
@@ -351,7 +351,7 @@ func TestMatchIDPattern_ExactMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchIDPattern(tt.candidate, tt.pattern)
+			result := Match(tt.candidate, tt.pattern)
 
 			if result.Match != tt.match {
 				t.Errorf("Expected match=%v, got match=%v (error: %s)", tt.match, result.Match, result.Error)
@@ -396,7 +396,7 @@ func TestMatchIDPattern_WildcardValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchIDPattern("gts.vendor.pkg.ns.type.v1~", tt.pattern)
+			result := Match("gts.vendor.pkg.ns.type.v1~", tt.pattern)
 
 			if tt.expectError && result.Error == "" {
 				t.Error("Expected error for invalid pattern but got none")
@@ -445,7 +445,7 @@ func TestMatchIDPattern_ChainedIdentifiers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchIDPattern(tt.candidate, tt.pattern)
+			result := Match(tt.candidate, tt.pattern)
 
 			if result.Match != tt.match {
 				t.Errorf("Expected match=%v, got match=%v (error: %s)", tt.match, result.Match, result.Error)
@@ -480,7 +480,7 @@ func TestMatchIDPattern_InvalidCandidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchIDPattern(tt.candidate, tt.pattern)
+			result := Match(tt.candidate, tt.pattern)
 
 			if result.Match {
 				t.Error("Expected match=false for invalid candidate")
@@ -494,37 +494,37 @@ func TestMatchIDPattern_InvalidCandidate(t *testing.T) {
 }
 
 // TestWildcardMatch_DirectCall tests the wildcardMatch function directly
-// to ensure defensive validation even if validateWildcard is bypassed
+// to ensure defensive validation even if ValidateWildcard is bypassed
 func TestWildcardMatch_DirectCall(t *testing.T) {
 	// Create a valid candidate
-	candidateID, _ := NewGtsID("gts.vendor.pkg.ns.type.v1~")
+	candidateID, _ := New("gts.vendor.pkg.ns.type.v1~")
 
 	tests := []struct {
 		name      string
-		patternID *GtsID
+		patternID *ID
 		match     bool
 	}{
 		{
 			name: "Pattern with multiple wildcards returns false",
-			patternID: &GtsID{
+			patternID: &ID{
 				ID:       "gts.*.pkg.*.type.v1~",
-				Segments: []*GtsIDSegment{{IsWildcard: true}},
+				Segments: []*Segment{{IsWildcard: true}},
 			},
 			match: false,
 		},
 		{
 			name: "Pattern with wildcard not at end returns false",
-			patternID: &GtsID{
+			patternID: &ID{
 				ID:       "gts.vendor*pkg.ns.type.v1~",
-				Segments: []*GtsIDSegment{{Vendor: "vendor"}},
+				Segments: []*Segment{{Vendor: "vendor"}},
 			},
 			match: false,
 		},
 		{
 			name: "Pattern with wildcard at end matches",
-			patternID: &GtsID{
+			patternID: &ID{
 				ID:       "gts.vendor.pkg.ns.*",
-				Segments: []*GtsIDSegment{{Vendor: "vendor", Package: "pkg", Namespace: "ns", IsWildcard: true}},
+				Segments: []*Segment{{Vendor: "vendor", Package: "pkg", Namespace: "ns", IsWildcard: true}},
 			},
 			match: true,
 		},

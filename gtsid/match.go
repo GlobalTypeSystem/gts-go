@@ -3,15 +3,15 @@ Copyright © 2025 Global Type System
 Released under Apache License 2.0
 */
 
-package gts
+package gtsid
 
 import (
 	"fmt"
 	"strings"
 )
 
-// MatchIDResult represents the result of matching a GTS identifier against a pattern
-type MatchIDResult struct {
+// MatchResult represents the result of matching a GTS identifier against a pattern
+type MatchResult struct {
 	Candidate string `json:"candidate"`
 	Pattern   string `json:"pattern"`
 	Match     bool   `json:"match"`
@@ -31,24 +31,24 @@ func (e *InvalidWildcardError) Error() string {
 	return fmt.Sprintf("Invalid GTS wildcard pattern: %s", e.Pattern)
 }
 
-// MatchIDPattern matches a candidate GTS identifier against a pattern with wildcards
-// Returns a MatchIDResult with Match=true if the candidate matches the pattern,
+// Match matches a candidate GTS identifier against a pattern with wildcards
+// Returns a MatchResult with Match=true if the candidate matches the pattern,
 // or Match=false with an optional Error message on failure or mismatch
-func MatchIDPattern(candidate, pattern string) MatchIDResult {
+func Match(candidate, pattern string) MatchResult {
 	// Parse candidate - it can be either a regular GTS ID or a wildcard pattern
-	var candidateID *GtsID
+	var candidateID *ID
 	var err error
 
-	if strings.Contains(candidate, "*") {
+	if HasWildcard(candidate) {
 		// Candidate contains wildcard, validate it as a wildcard pattern
-		candidateID, err = validateWildcard(candidate)
+		candidateID, err = ValidateWildcard(candidate)
 	} else {
 		// Candidate is a regular GTS ID
-		candidateID, err = NewGtsID(candidate)
+		candidateID, err = New(candidate)
 	}
 
 	if err != nil {
-		return MatchIDResult{
+		return MatchResult{
 			Candidate: candidate,
 			Pattern:   pattern,
 			Match:     false,
@@ -57,9 +57,9 @@ func MatchIDPattern(candidate, pattern string) MatchIDResult {
 	}
 
 	// Validate and parse pattern
-	patternID, err := validateWildcard(pattern)
+	patternID, err := ValidateWildcard(pattern)
 	if err != nil {
-		return MatchIDResult{
+		return MatchResult{
 			Candidate: candidate,
 			Pattern:   pattern,
 			Match:     false,
@@ -70,7 +70,7 @@ func MatchIDPattern(candidate, pattern string) MatchIDResult {
 	// Perform matching
 	match := wildcardMatch(candidateID, patternID)
 
-	return MatchIDResult{
+	return MatchResult{
 		Candidate: candidate,
 		Pattern:   pattern,
 		Match:     match,
@@ -78,20 +78,20 @@ func MatchIDPattern(candidate, pattern string) MatchIDResult {
 	}
 }
 
-// validateWildcard validates a wildcard pattern and returns a parsed GtsID
-func validateWildcard(pattern string) (*GtsID, error) {
+// ValidateWildcard validates a wildcard pattern and returns a parsed GtsID
+func ValidateWildcard(pattern string) (*ID, error) {
 	p := strings.TrimSpace(pattern)
 
 	// Must start with gts.
-	if !strings.HasPrefix(p, GtsPrefix) {
+	if !HasPrefix(p) {
 		return nil, &InvalidWildcardError{
 			Pattern: pattern,
-			Cause:   fmt.Sprintf("Does not start with '%s'", GtsPrefix),
+			Cause:   fmt.Sprintf("Does not start with '%s'", Prefix),
 		}
 	}
 
 	// Count wildcards
-	wildcardCount := strings.Count(p, "*")
+	wildcardCount := strings.Count(p, WildcardMarker)
 	if wildcardCount > 1 {
 		return nil, &InvalidWildcardError{
 			Pattern: pattern,
@@ -101,7 +101,7 @@ func validateWildcard(pattern string) (*GtsID, error) {
 
 	// If wildcard exists, must be at the end
 	if wildcardCount == 1 {
-		if !strings.HasSuffix(p, ".*") && !strings.HasSuffix(p, "~*") {
+		if !EndsWithWildcardSuffix(p) {
 			return nil, &InvalidWildcardError{
 				Pattern: pattern,
 				Cause:   "The wildcard '*' token is allowed only at the end of the pattern",
@@ -111,8 +111,8 @@ func validateWildcard(pattern string) (*GtsID, error) {
 
 	// For wildcard patterns, we need custom parsing that doesn't enforce single-segment prohibition
 	// Remove the wildcard token temporarily for validation
-	tempPattern := strings.ReplaceAll(p, ".*", "")
-	tempPattern = strings.ReplaceAll(tempPattern, "~*", "~")
+	tempPattern := strings.ReplaceAll(p, SegmentWildcardSuffix, "")
+	tempPattern = strings.ReplaceAll(tempPattern, TypeWildcardSuffix, TypeMarker)
 
 	// Try to parse the base pattern (without wildcard) using standard validation
 	// but skip single-segment instance check for wildcards
@@ -137,19 +137,19 @@ func validateWildcard(pattern string) (*GtsID, error) {
 }
 
 // validateWildcardBase validates the base pattern (without wildcards) with relaxed rules
-func validateWildcardBase(basePattern string) (*GtsID, error) {
+func validateWildcardBase(basePattern string) (*ID, error) {
 	if basePattern == "" {
 		return nil, fmt.Errorf("empty base pattern")
 	}
 
 	// Allow bare "gts" base for global wildcard patterns like "gts.*"
-	if basePattern == strings.TrimSuffix(GtsPrefix, ".") {
+	if basePattern == strings.TrimSuffix(Prefix, TokenSep) {
 		return nil, nil
 	}
 
 	// Basic prefix validation
-	if !strings.HasPrefix(basePattern, GtsPrefix) {
-		return nil, fmt.Errorf("does not start with '%s'", GtsPrefix)
+	if !HasPrefix(basePattern) {
+		return nil, fmt.Errorf("does not start with '%s'", Prefix)
 	}
 
 	// Length validation
@@ -172,70 +172,27 @@ func validateWildcardBase(basePattern string) (*GtsID, error) {
 	return nil, nil // We don't need to return a parsed ID, just validate
 }
 
-// parseWildcardGtsID parses a wildcard GTS ID with relaxed validation rules
-func parseWildcardGtsID(id string) (*GtsID, error) {
-	raw := strings.TrimSpace(id)
-
-	// Basic validation (same as NewGtsID but skip single-segment check)
-	if raw != strings.ToLower(raw) {
-		return nil, &InvalidGtsIDError{GtsID: id, Cause: "Must be lower case"}
-	}
-
-	if strings.Contains(raw, "-") {
-		return nil, &InvalidGtsIDError{GtsID: id, Cause: "Must not contain '-'"}
-	}
-
-	if !strings.HasPrefix(raw, GtsPrefix) {
-		return nil, &InvalidGtsIDError{GtsID: id, Cause: fmt.Sprintf("Does not start with '%s'", GtsPrefix)}
-	}
-
-	if len(raw) > MaxIDLength {
-		return nil, &InvalidGtsIDError{GtsID: id, Cause: "Too long"}
-	}
-
-	gtsID := &GtsID{
-		ID:       raw,
-		Segments: make([]*GtsIDSegment, 0),
-	}
-
-	// Split by ~ to get segments, preserving empties to detect trailing ~
-	remainder := raw[len(GtsPrefix):]
-	parts := splitPreservingTilde(remainder)
-
-	offset := len(GtsPrefix)
-	for i, part := range parts {
-		if part == "" {
-			return nil, &InvalidGtsIDError{GtsID: id, Cause: fmt.Sprintf("GTS segment #%d @ offset %d is empty", i+1, offset)}
-		}
-
-		segment, err := parseSegment(i+1, offset, part)
-		if err != nil {
-			return nil, err
-		}
-
-		gtsID.Segments = append(gtsID.Segments, segment)
-		offset += len(part)
-	}
-
-	// Skip single-segment instance prohibition for wildcard patterns
-	// Wildcards are allowed to match patterns that would otherwise be invalid
-
-	return gtsID, nil
+// parseWildcardGtsID parses a wildcard GTS ID with relaxed validation rules.
+// It shares the single identifier parser (parseGtsID) with New, opting out
+// of the single-segment prohibition and UUID-tail detection that do not apply to
+// wildcard patterns.
+func parseWildcardGtsID(id string) (*ID, error) {
+	return parseGtsID(id, ParseOptions{AllowSingleSegment: true})
 }
 
 // wildcardMatch performs the actual matching between candidate and pattern
-func wildcardMatch(candidate, pattern *GtsID) bool {
+func wildcardMatch(candidate, pattern *ID) bool {
 	if candidate == nil || pattern == nil {
 		return false
 	}
 
 	// If no wildcard in pattern, perform exact match with version flexibility
-	if !strings.Contains(pattern.ID, "*") {
+	if !HasWildcard(pattern.ID) {
 		return matchSegments(pattern.Segments, candidate.Segments)
 	}
 
 	// Wildcard case
-	if strings.Count(pattern.ID, "*") > 1 || !strings.HasSuffix(pattern.ID, "*") {
+	if strings.Count(pattern.ID, WildcardMarker) > 1 || !strings.HasSuffix(pattern.ID, WildcardMarker) {
 		return false
 	}
 
@@ -245,12 +202,12 @@ func wildcardMatch(candidate, pattern *GtsID) bool {
 
 // isBareWildcard returns true if the segment is a bare wildcard (*) with no
 // other fields set — i.e. the segment parsed from a lone "*" token after ~.
-func isBareWildcard(seg *GtsIDSegment) bool {
+func isBareWildcard(seg *Segment) bool {
 	return seg.IsWildcard && seg.Vendor == "" && seg.Package == "" && seg.Namespace == "" && seg.Type == ""
 }
 
 // matchSegments matches pattern segments against candidate segments
-func matchSegments(patternSegs, candidateSegs []*GtsIDSegment) bool {
+func matchSegments(patternSegs, candidateSegs []*Segment) bool {
 	// If pattern is longer than candidate, allow the last pattern segment to be
 	// a bare wildcard that matches zero additional segments (e.g. ~* matching
 	// the type itself with no instance segments).

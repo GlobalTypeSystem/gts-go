@@ -8,6 +8,8 @@ package gts
 import (
 	"fmt"
 	"strings"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // GtsReference represents a GTS ID reference found in JSON content
@@ -36,8 +38,8 @@ func walkAndCollectRefs(node any, path string, refs *[]*GtsReference, seen map[s
 	if str, ok := node.(string); ok {
 		// Strip the gts:// URI prefix (used in JSON Schema $id/$ref) before
 		// validating, matching gts-python _extract_gts_ids_with_paths.
-		id := strings.TrimPrefix(str, GtsURIPrefix)
-		if IsValidGtsID(id) {
+		id := strings.TrimPrefix(str, gtsid.URIPrefix)
+		if gtsid.IsValid(id) {
 			sourcePath := path
 			if sourcePath == "" {
 				sourcePath = "root"

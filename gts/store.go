@@ -10,6 +10,8 @@ import (
 	"log"
 	"strings"
 	"sync"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // StoreGtsObjectNotFoundError is returned when a GTS entity is not found in the store
@@ -181,12 +183,12 @@ func (s *GtsStore) RegisterWithValidation(entity *JsonEntity, validate func(id s
 // RegisterSchema registers a schema with the given type ID
 // This is a legacy method for backward compatibility
 func (s *GtsStore) RegisterSchema(typeID string, schema map[string]any) error {
-	if typeID[len(typeID)-1] != '~' {
+	if !gtsid.IsTypeID(typeID) {
 		return fmt.Errorf("schema type_id must end with '~'")
 	}
 
 	// Parse to validate
-	gtsID, err := NewGtsID(typeID)
+	gtsID, err := gtsid.New(typeID)
 	if err != nil {
 		return err
 	}
@@ -313,7 +315,7 @@ func (s *GtsStore) validateEntityGtsReferences(entity *JsonEntity) error {
 		}
 
 		// Skip wildcard patterns — they are x-gts-ref constraints, not concrete entity IDs
-		if strings.Contains(ref.ID, "*") {
+		if gtsid.HasWildcard(ref.ID) {
 			continue
 		}
 
@@ -344,7 +346,7 @@ func (s *GtsStore) validateEntityGtsReferences(entity *JsonEntity) error {
 
 // ValidateSchema validates a schema including JSON Schema meta-schema and GTS reference validation
 func (s *GtsStore) ValidateSchema(gtsID string) error {
-	if !strings.HasSuffix(gtsID, "~") {
+	if !gtsid.IsTypeID(gtsID) {
 		return fmt.Errorf("ID '%s' is not a type-schema ID (must end with '~')", gtsID)
 	}
 

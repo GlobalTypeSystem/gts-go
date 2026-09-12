@@ -21,6 +21,8 @@ import (
 	"reflect"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // Verdict constants
@@ -96,9 +98,9 @@ func dialectsDiffer(oldSchema, newSchema map[string]any) bool {
 	oldDialect, oldOK := oldSchema["$schema"].(string)
 	newDialect, newOK := newSchema["$schema"].(string)
 	canonical := func(dialect string) string {
-		dialect = strings.TrimSuffix(dialect, "#")
-		dialect = strings.TrimPrefix(dialect, "https://")
-		return strings.TrimPrefix(dialect, "http://")
+		dialect = strings.TrimSuffix(dialect, LocalRefPrefix)
+		dialect = strings.TrimPrefix(dialect, HTTPSPrefix)
+		return strings.TrimPrefix(dialect, HTTPPrefix)
 	}
 	return oldOK && newOK && canonical(oldDialect) != canonical(newDialect)
 }
@@ -172,7 +174,7 @@ func sanitizeSchema(schema any) any {
 			if nonAssertionKeywords[key] {
 				continue
 			}
-			if strings.HasPrefix(key, "x-gts-") {
+			if IsXGtsExtension(key) {
 				continue
 			}
 			if key == "type" && dropType {
@@ -504,7 +506,7 @@ func isAcceptAllSchema(schema any) bool {
 	}
 	if m, ok := schema.(map[string]any); ok {
 		for k := range m {
-			if !nonAssertionKeywords[k] && !strings.HasPrefix(k, "x-gts-") {
+			if !nonAssertionKeywords[k] && !IsXGtsExtension(k) {
 				return false
 			}
 		}
@@ -660,8 +662,8 @@ func deepCopyValue(v any) any {
 
 // inferDirection determines if going up/down based on minor version.
 func inferDirection(fromID, toID string) string {
-	fromGtsID, err1 := NewGtsID(fromID)
-	toGtsID, err2 := NewGtsID(toID)
+	fromGtsID, err1 := gtsid.New(fromID)
+	toGtsID, err2 := gtsid.New(toID)
 	if err1 != nil || err2 != nil {
 		return "unknown"
 	}

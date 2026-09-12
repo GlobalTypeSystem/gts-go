@@ -8,6 +8,8 @@ package gts
 import (
 	"strings"
 	"testing"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
@@ -743,7 +745,8 @@ func TestXGtsRefValidator_ValidateSchema_DollarIdWithGtsURIPrefix(t *testing.T) 
 	}
 }
 
-// TestStripGtsURIPrefix tests the stripGtsURIPrefix helper function
+// TestStripGtsURIPrefix tests the gtsid.NormalizeID helper (which strips the gts://
+// URI prefix used in JSON Schema $id/$ref).
 func TestStripGtsURIPrefix(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -774,7 +777,7 @@ func TestStripGtsURIPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := stripGtsURIPrefix(tt.input)
+			result := gtsid.NormalizeID(tt.input)
 			if result != tt.expected {
 				t.Errorf("Expected '%s', got '%s'", tt.expected, result)
 			}

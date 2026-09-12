@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/GlobalTypeSystem/gts-go/gts"
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // Entity Management Handlers
@@ -98,7 +99,7 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if !strings.HasPrefix(idStr, gts.GtsURIPrefix) && !strings.HasPrefix(idStr, gts.GtsPrefix) {
+		if !gtsid.HasURIPrefix(idStr) && !gtsid.HasPrefix(idStr) {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"ok":             false,
 				"error":          "JSON Schema $id must be a valid GTS identifier (optionally using gts:// prefix)",
@@ -106,8 +107,8 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		normalizedID := strings.TrimPrefix(idStr, gts.GtsURIPrefix)
-		if strings.Contains(normalizedID, "*") {
+		normalizedID := gtsid.NormalizeID(idStr)
+		if gtsid.HasWildcard(normalizedID) {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"ok":             false,
 				"error":          "Wildcards are not allowed in schema IDs, only in patterns for access control",
@@ -115,8 +116,8 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		isBaseSchemaID := strings.Count(normalizedID, "~") == 1 && strings.HasSuffix(normalizedID, "~")
-		if isBaseSchemaID && !strings.HasPrefix(idStr, gts.GtsURIPrefix) {
+		isBaseSchemaID := strings.Count(normalizedID, gtsid.TypeMarker) == 1 && gtsid.IsTypeID(normalizedID)
+		if isBaseSchemaID && !gtsid.HasURIPrefix(idStr) {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"ok":             false,
 				"error":          "JSON Schema $id field must use gts:// URI prefix for base schemas",
@@ -124,7 +125,7 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if !gts.IsValidGtsID(normalizedID) {
+		if !gtsid.IsValid(normalizedID) {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 				"ok":             false,
 				"error":          "JSON Schema $id must be a well-formed GTS identifier",
@@ -160,9 +161,9 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 			if idStr, ok := idField.(string); ok {
 				// Reject plain gts. prefix only for base schemas (single segment ending with ~)
 				// Derived schemas (multiple ~ segments) are allowed to use plain gts. format
-				if strings.HasPrefix(idStr, "gts.") && !strings.HasPrefix(idStr, "gts://") {
+				if gts.ClassifyRef(idStr) == gts.RefBareGtsID {
 					// Count ~ segments to determine if it's a base or derived schema
-					tildeParts := strings.Split(idStr, "~")
+					tildeParts := strings.Split(idStr, gtsid.TypeMarker)
 					// If it's a base schema (only 2 parts: prefix and empty after ~), require gts://
 					if len(tildeParts) == 2 && tildeParts[1] == "" {
 						s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
@@ -174,7 +175,7 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				// Check for wildcards in any GTS schema IDs
-				if (strings.HasPrefix(idStr, "gts://") || strings.HasPrefix(idStr, "gts.")) && strings.Contains(idStr, "*") {
+				if (gtsid.HasURIPrefix(idStr) || gtsid.HasPrefix(idStr)) && gtsid.HasWildcard(idStr) {
 					s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 						"ok":             false,
 						"error":          "Wildcards are not allowed in schema IDs, only in patterns for access control",
@@ -393,7 +394,7 @@ func (s *Server) handleValidateID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := gts.ValidateGtsID(gtsID)
+	result := gtsid.Validate(gtsID)
 	s.writeJSON(w, http.StatusOK, result)
 }
 
@@ -417,7 +418,7 @@ func (s *Server) handleParseID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := gts.ParseGtsID(gtsID)
+	result := gtsid.Parse(gtsID)
 	s.writeJSON(w, http.StatusOK, result)
 }
 
@@ -431,7 +432,7 @@ func (s *Server) handleMatchIDPattern(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := gts.MatchIDPattern(candidate, pattern)
+	result := gtsid.Match(candidate, pattern)
 	s.writeJSON(w, http.StatusOK, result)
 }
 
@@ -443,7 +444,7 @@ func (s *Server) handleUUID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := gts.IDToUUID(gtsID)
+	result := gtsid.IDToUUID(gtsID)
 	s.writeJSON(w, http.StatusOK, result)
 }
 

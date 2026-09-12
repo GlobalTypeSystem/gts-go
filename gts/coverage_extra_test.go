@@ -8,6 +8,8 @@ package gts
 import (
 	"strings"
 	"testing"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // ── validate.go coverage ────────────────────────────────────────────────────
@@ -29,7 +31,7 @@ func TestValidateInstance_NoTypeID(t *testing.T) {
 	entity := &JsonEntity{
 		Content: map[string]any{"name": "test"},
 	}
-	entity.GtsID = &GtsID{ID: "some-raw-id"}
+	entity.GtsID = &gtsid.ID{ID: "some-raw-id"}
 	store.byID["some-raw-id"] = entity
 	r := store.ValidateInstance("some-raw-id")
 	if r.OK {
@@ -43,7 +45,7 @@ func TestValidateInstance_SchemaNotFound(t *testing.T) {
 		Content: map[string]any{"name": "test"},
 		TypeID:  "gts.x.missing.schema.v1~",
 	}
-	entity.GtsID = &GtsID{ID: "gts.x.test.ns.type.v1~x.test.ns.inst.v1"}
+	entity.GtsID = &gtsid.ID{ID: "gts.x.test.ns.type.v1~x.test.ns.inst.v1"}
 	store.byID["gts.x.test.ns.type.v1~x.test.ns.inst.v1"] = entity
 	r := store.ValidateInstance("gts.x.test.ns.type.v1~x.test.ns.inst.v1")
 	if r.OK {
@@ -123,7 +125,7 @@ func TestValidateInstance_Invalid(t *testing.T) {
 // ── parse.go coverage ───────────────────────────────────────────────────────
 
 func TestParseID_ValidType(t *testing.T) {
-	r := ParseID("gts.x.core.ns.type.v1~")
+	r := gtsid.Parse("gts.x.core.ns.type.v1~")
 	if !r.OK {
 		t.Fatalf("expected OK: %s", r.Error)
 	}
@@ -140,7 +142,7 @@ func TestParseID_ValidType(t *testing.T) {
 }
 
 func TestParseID_ValidInstance(t *testing.T) {
-	r := ParseID("gts.x.core.ns.type.v1~x.ext.ns.inst.v1")
+	r := gtsid.Parse("gts.x.core.ns.type.v1~x.ext.ns.inst.v1")
 	if !r.OK {
 		t.Fatalf("expected OK: %s", r.Error)
 	}
@@ -153,7 +155,7 @@ func TestParseID_ValidInstance(t *testing.T) {
 }
 
 func TestParseID_Invalid(t *testing.T) {
-	r := ParseID("garbage")
+	r := gtsid.Parse("garbage")
 	if r.OK {
 		t.Fatal("expected !ok")
 	}
@@ -163,7 +165,7 @@ func TestParseID_Invalid(t *testing.T) {
 }
 
 func TestParseID_WildcardValid(t *testing.T) {
-	r := ParseID("gts.x.core.ns.*")
+	r := gtsid.Parse("gts.x.core.ns.*")
 	if !r.OK {
 		t.Fatalf("expected OK: %s", r.Error)
 	}
@@ -173,7 +175,7 @@ func TestParseID_WildcardValid(t *testing.T) {
 }
 
 func TestParseID_WildcardTypePattern(t *testing.T) {
-	r := ParseID("gts.x.core.ns.type.v1~*")
+	r := gtsid.Parse("gts.x.core.ns.type.v1~*")
 	if !r.OK {
 		t.Fatalf("expected OK: %s", r.Error)
 	}
@@ -183,7 +185,7 @@ func TestParseID_WildcardTypePattern(t *testing.T) {
 }
 
 func TestParseID_WildcardInvalid(t *testing.T) {
-	r := ParseID("gts.x.*bad*")
+	r := gtsid.Parse("gts.x.*bad*")
 	if r.OK {
 		t.Fatal("expected !ok for invalid wildcard")
 	}
@@ -192,7 +194,7 @@ func TestParseID_WildcardInvalid(t *testing.T) {
 // ── extract.go / EffectiveID coverage ───────────────────────────────────────
 
 func TestEffectiveID_FromGtsID(t *testing.T) {
-	e := &JsonEntity{GtsID: &GtsID{ID: "gts.x.test.v1~"}}
+	e := &JsonEntity{GtsID: &gtsid.ID{ID: "gts.x.test.v1~"}}
 	if e.EffectiveID() != "gts.x.test.v1~" {
 		t.Errorf("expected GTS ID: %s", e.EffectiveID())
 	}
@@ -549,7 +551,7 @@ func TestValidateEntity_NotFound_Extra(t *testing.T) {
 // ── GtsID / IsWildcard coverage ─────────────────────────────────────────────
 
 func TestGtsID_IsWildcard(t *testing.T) {
-	id, err := NewGtsID("gts.x.core.ns.type.v1~")
+	id, err := gtsid.New("gts.x.core.ns.type.v1~")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,22 +563,22 @@ func TestGtsID_IsWildcard(t *testing.T) {
 // ── GTS ID Error types ──────────────────────────────────────────────────────
 
 func TestInvalidGtsIDError(t *testing.T) {
-	e := &InvalidGtsIDError{GtsID: "bad", Cause: "reason"}
+	e := &gtsid.InvalidIDError{GtsID: "bad", Cause: "reason"}
 	if !strings.Contains(e.Error(), "bad") || !strings.Contains(e.Error(), "reason") {
 		t.Errorf("error: %s", e.Error())
 	}
-	e2 := &InvalidGtsIDError{GtsID: "bad"}
+	e2 := &gtsid.InvalidIDError{GtsID: "bad"}
 	if !strings.Contains(e2.Error(), "bad") {
 		t.Errorf("error: %s", e2.Error())
 	}
 }
 
 func TestInvalidSegmentError(t *testing.T) {
-	e := &InvalidSegmentError{Num: 1, Offset: 4, Segment: "bad", Cause: "reason"}
+	e := &gtsid.InvalidSegmentError{Num: 1, Offset: 4, Segment: "bad", Cause: "reason"}
 	if !strings.Contains(e.Error(), "bad") || !strings.Contains(e.Error(), "reason") {
 		t.Errorf("error: %s", e.Error())
 	}
-	e2 := &InvalidSegmentError{Num: 1, Offset: 4, Segment: "bad"}
+	e2 := &gtsid.InvalidSegmentError{Num: 1, Offset: 4, Segment: "bad"}
 	if !strings.Contains(e2.Error(), "bad") {
 		t.Errorf("error: %s", e2.Error())
 	}

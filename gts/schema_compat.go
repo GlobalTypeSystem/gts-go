@@ -23,6 +23,8 @@ import (
 	"math"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // ValidateSchemaChainResult is the result of OP#12 schema chain validation.
@@ -34,7 +36,7 @@ type ValidateSchemaChainResult struct {
 
 // ValidateSchemaChain validates each derived schema against its base across the chain (OP#12).
 func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResult {
-	gid, err := NewGtsID(schemaID)
+	gid, err := gtsid.New(schemaID)
 	if err != nil {
 		return &ValidateSchemaChainResult{
 			TypeID: schemaID,
@@ -103,9 +105,9 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 }
 
 // buildIDFromSegments reconstructs a GTS ID string from a slice of segments.
-func buildIDFromSegments(segments []*GtsIDSegment) string {
+func buildIDFromSegments(segments []*gtsid.Segment) string {
 	sb := strings.Builder{}
-	sb.WriteString(GtsPrefix)
+	sb.WriteString(gtsid.Prefix)
 	for _, seg := range segments {
 		sb.WriteString(seg.Segment)
 	}
@@ -449,7 +451,7 @@ func checkConstCompatibility(baseProp, derivedProp map[string]any, propName stri
 	// Per §4.4.3: GTS-ID discriminator consts (strings containing '~') may differ across versions.
 	if baseStr, ok := baseConst.(string); ok {
 		if derivedStr, ok := derivedConst.(string); ok {
-			if strings.Contains(baseStr, "~") && strings.Contains(derivedStr, "~") {
+			if strings.Contains(baseStr, gtsid.TypeMarker) && strings.Contains(derivedStr, gtsid.TypeMarker) {
 				return nil
 			}
 		}
@@ -864,7 +866,7 @@ func (s *GtsStore) resolveRefs(schema map[string]any) (map[string]any, error) {
 func findUnresolvedRef(schema any) string {
 	switch v := schema.(type) {
 	case map[string]any:
-		if ref, ok := v["$ref"].(string); ok && !strings.HasPrefix(ref, "#") {
+		if ref, ok := v["$ref"].(string); ok && !strings.HasPrefix(ref, LocalRefPrefix) {
 			return ref
 		}
 		for _, val := range v {
@@ -887,7 +889,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 	case map[string]any:
 		// Handle $ref
 		if refVal, ok := v["$ref"].(string); ok {
-			if strings.HasPrefix(refVal, "#") { // local refs kept as-is
+			if strings.HasPrefix(refVal, LocalRefPrefix) { // local refs kept as-is
 				result := make(map[string]any)
 				for k, val := range v {
 					result[k] = s.resolveRefsInner(val, visited, cycleFound)
@@ -895,7 +897,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				return result
 			}
 
-			canonical := strings.TrimPrefix(refVal, GtsURIPrefix)
+			canonical := gtsid.NormalizeID(refVal)
 			if visited[canonical] {
 				*cycleFound = true
 				result := make(map[string]any)

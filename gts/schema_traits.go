@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -378,7 +379,7 @@ func checkUnresolvedProps(schema map[string]any, traits map[string]any) []string
 // removeXGtsFields removes x-gts-* extension fields from a schema recursively.
 func removeXGtsFields(schema map[string]any) map[string]any {
 	return walkSchema(schema, nil, func(k string) bool {
-		return strings.HasPrefix(k, "x-gts-")
+		return IsXGtsExtension(k)
 	})
 }
 
@@ -393,7 +394,7 @@ type ValidateSchemaTraitsResult struct {
 // Walks the chain from base to leaf, collects x-gts-traits-schema and x-gts-traits
 // from each level's raw content, then validates.
 func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsResult {
-	gid, err := NewGtsID(schemaID)
+	gid, err := gtsid.New(schemaID)
 	if err != nil {
 		return &ValidateSchemaTraitsResult{
 			TypeID: schemaID,
@@ -611,7 +612,7 @@ func normalizeDollarRefs(m map[string]any) map[string]any {
 // not subject to the closedness check. This mirrors the type-schema-validation
 // relaxations (ADR-0002/0003) while preserving the stricter entity contract.
 func (s *GtsStore) validateEntityLevelTraits(schemaID string) error {
-	gid, err := NewGtsID(schemaID)
+	gid, err := gtsid.New(schemaID)
 	if err != nil {
 		return fmt.Errorf("invalid GTS ID: %v", err)
 	}

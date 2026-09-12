@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -244,7 +245,7 @@ func castInstanceToSchema(
 				existingStr, existingIsStr := existingVal.(string)
 				if constIsStr && existingIsStr {
 					// Only update if both are GTS IDs and they differ
-					if IsValidGtsID(constStr) && IsValidGtsID(existingStr) {
+					if gtsid.IsValid(constStr) && gtsid.IsValid(existingStr) {
 						if existingStr != constStr {
 							result[prop] = constStr
 						}
@@ -410,7 +411,7 @@ func removeGtsConstConstraints(schema any) any {
 		result := make(map[string]any)
 		for key, value := range v {
 			if key == "const" {
-				if strVal, ok := value.(string); ok && IsValidGtsID(strVal) {
+				if strVal, ok := value.(string); ok && gtsid.IsValid(strVal) {
 					// Replace const with type constraint instead
 					result["type"] = "string"
 					continue

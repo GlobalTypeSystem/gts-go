@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/GlobalTypeSystem/gts-go/gts"
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 	"github.com/google/uuid"
 )
 
@@ -156,12 +157,10 @@ func (v *GtsJsonValidator) collectJSONFiles() []string {
 }
 
 // isGtsMarker checks raw file text for GTS markers before paying JSON parse cost.
-const xGtsRefKeyword = "x-gts-ref"
-
 func isGtsMarker(text string) bool {
-	return strings.Contains(text, gts.GtsPrefix) ||
-		strings.Contains(text, gts.GtsURIPrefix) ||
-		strings.Contains(text, xGtsRefKeyword)
+	return strings.Contains(text, gtsid.Prefix) ||
+		strings.Contains(text, gtsid.URIPrefix) ||
+		strings.Contains(text, gts.KeyXGtsRef)
 }
 
 func (v *GtsJsonValidator) readFile(filePath string) {
@@ -343,7 +342,7 @@ func entityDepth(entity *gts.JsonEntity) int {
 		return len(entity.GtsID.Segments)
 	}
 	if entity.TypeID != "" {
-		if gid, err := gts.NewGtsID(entity.TypeID); err == nil {
+		if gid, err := gtsid.New(entity.TypeID); err == nil {
 			return len(gid.Segments)
 		}
 	}
@@ -437,10 +436,16 @@ func (v *GtsJsonValidator) addIssueEntity(entity *gts.JsonEntity, stage, message
 // Helper functions
 
 // looksGts checks whether a string value looks like a GTS identifier
-// (valid or potentially malformed) by checking for known prefixes.
+// (valid or potentially malformed) by checking for the bare "gts." or the
+// "gts://" URI form. It delegates to the shared reference classifier so the
+// grammar lives in one place.
 func looksGts(v string) bool {
-	normalized := strings.TrimPrefix(v, gts.GtsURIPrefix)
-	return strings.HasPrefix(normalized, gts.GtsPrefix) || strings.HasPrefix(v, gts.GtsURIPrefix)
+	switch gts.ClassifyRef(v) {
+	case gts.RefBareGtsID, gts.RefGtsURI:
+		return true
+	default:
+		return false
+	}
 }
 
 // isGtsRelated checks whether a JSON object contains GTS-related identifiers
@@ -479,7 +484,7 @@ func validatorRegistryKey(entity *gts.JsonEntity) string {
 	if entity.GtsID != nil {
 		return effectiveID
 	}
-	if entity.TypeID != "" && gts.IsValidGtsID(entity.TypeID) {
+	if entity.TypeID != "" && gtsid.IsValid(entity.TypeID) {
 		return effectiveID
 	}
 	return ""

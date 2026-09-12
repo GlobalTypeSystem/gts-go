@@ -8,6 +8,8 @@ package gts
 import (
 	"strings"
 	"testing"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // ── mergeRFC7396Recursive additional coverage ───────────────────────────────
@@ -130,7 +132,7 @@ func TestGtsStore_ValidateInstanceWithXGtsRef_IsSchema(t *testing.T) {
 func TestGtsStore_ValidateInstanceWithXGtsRef_NoTypeID(t *testing.T) {
 	store := NewGtsStore(nil)
 	entity := &JsonEntity{Content: map[string]any{"name": "test"}}
-	entity.GtsID = &GtsID{ID: "some-inst"}
+	entity.GtsID = &gtsid.ID{ID: "some-inst"}
 	store.byID["some-inst"] = entity
 	err := store.ValidateInstanceWithXGtsRef("some-inst")
 	if err == nil {
@@ -161,9 +163,9 @@ func TestMatchIDPattern_WildcardBase(t *testing.T) {
 		{"gts.x.core.ns.type.v2~", "gts.x.core.ns.type.*", true},
 	}
 	for _, tt := range tests {
-		r := MatchIDPattern(tt.candidate, tt.pattern)
+		r := gtsid.Match(tt.candidate, tt.pattern)
 		if r.Match != tt.wantMatch {
-			t.Errorf("MatchIDPattern(%q, %q): want match=%v, got %v (error=%s)",
+			t.Errorf("gtsid.Match(%q, %q): want match=%v, got %v (error=%s)",
 				tt.candidate, tt.pattern, tt.wantMatch, r.Match, r.Error)
 		}
 	}
@@ -458,7 +460,7 @@ func TestGtsStore_ValidateInstanceWithXGtsRef_SchemaNotFound(t *testing.T) {
 		Content: map[string]any{"name": "test"},
 		TypeID:  "gts.x.missing.schema.v1~",
 	}
-	entity.GtsID = &GtsID{ID: "gts.x.test.ns.type.v1~x.test.ns.inst.v1"}
+	entity.GtsID = &gtsid.ID{ID: "gts.x.test.ns.type.v1~x.test.ns.inst.v1"}
 	store.byID["gts.x.test.ns.type.v1~x.test.ns.inst.v1"] = entity
 	err := store.ValidateInstanceWithXGtsRef("gts.x.test.ns.type.v1~x.test.ns.inst.v1")
 	if err == nil {
@@ -489,11 +491,11 @@ func TestGtsStore_ValidateInstanceWithXGtsRef_ValidInstance(t *testing.T) {
 // ── match.go — MatchPatternError ────────────────────────────────────────────
 
 func TestInvalidWildcardError(t *testing.T) {
-	e := &InvalidWildcardError{Pattern: "gts.*bad", Cause: "invalid wildcard"}
+	e := &gtsid.InvalidWildcardError{Pattern: "gts.*bad", Cause: "invalid wildcard"}
 	if !strings.Contains(e.Error(), "gts.*bad") || !strings.Contains(e.Error(), "invalid wildcard") {
 		t.Errorf("error: %s", e.Error())
 	}
-	e2 := &InvalidWildcardError{Pattern: "gts.*bad"}
+	e2 := &gtsid.InvalidWildcardError{Pattern: "gts.*bad"}
 	if !strings.Contains(e2.Error(), "gts.*bad") {
 		t.Errorf("error without cause: %s", e2.Error())
 	}
@@ -537,7 +539,7 @@ func TestGtsStore_ValidateSchema_WithRefs(t *testing.T) {
 func TestGtsStore_ValidateSchema_NilContent(t *testing.T) {
 	store := NewGtsStore(nil)
 	entity := &JsonEntity{
-		GtsID:        &GtsID{ID: "gts.x.test.ns.nil.v1~"},
+		GtsID:        &gtsid.ID{ID: "gts.x.test.ns.nil.v1~"},
 		IsTypeSchema: true,
 		Content:      nil,
 	}
@@ -552,7 +554,7 @@ func TestGtsStore_ValidateSchema_NotASchema(t *testing.T) {
 	store := NewGtsStore(nil)
 	// Register a non-schema entity under a tilde-ending key
 	entity := &JsonEntity{
-		GtsID:        &GtsID{ID: "gts.x.test.ns.inst.v1~"},
+		GtsID:        &gtsid.ID{ID: "gts.x.test.ns.inst.v1~"},
 		IsTypeSchema: false,
 		Content:      map[string]any{"name": "test"},
 	}
@@ -570,7 +572,7 @@ func TestGtsStore_ValidateInstanceWithXGtsRef_SchemaNotTypeSchema(t *testing.T) 
 	store := NewGtsStore(nil)
 	// Instance points to a non-type-schema entity
 	schemaEntity := &JsonEntity{
-		GtsID:        &GtsID{ID: "gts.x.test.ns.fake.v1~"},
+		GtsID:        &gtsid.ID{ID: "gts.x.test.ns.fake.v1~"},
 		IsTypeSchema: false,
 		Content:      map[string]any{"type": "object"},
 		TypeID:       "",
@@ -578,7 +580,7 @@ func TestGtsStore_ValidateInstanceWithXGtsRef_SchemaNotTypeSchema(t *testing.T) 
 	store.byID["gts.x.test.ns.fake.v1~"] = schemaEntity
 
 	instEntity := &JsonEntity{
-		GtsID:   &GtsID{ID: "gts.x.test.ns.fake.v1~x.test.ns.inst.v1"},
+		GtsID:   &gtsid.ID{ID: "gts.x.test.ns.fake.v1~x.test.ns.inst.v1"},
 		Content: map[string]any{"name": "test"},
 		TypeID:  "gts.x.test.ns.fake.v1~",
 	}

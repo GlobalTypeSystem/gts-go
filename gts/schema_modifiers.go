@@ -7,7 +7,6 @@ package gts
 
 import (
 	"fmt"
-	"strings"
 )
 
 const (
@@ -18,13 +17,13 @@ const (
 // ValidateSchemaModifiers checks that x-gts-final and x-gts-abstract are well-formed:
 // boolean type, not both true, and not placed inside allOf entries at any depth.
 func ValidateSchemaExtensions(content map[string]any) error {
-	allowed := map[string]bool{KeyXGtsFinal: true, KeyXGtsAbstract: true, KeyXGtsTraits: true, KeyXGtsTraitsSchema: true, "x-gts-ref": true}
+	allowed := map[string]bool{KeyXGtsFinal: true, KeyXGtsAbstract: true, KeyXGtsTraits: true, KeyXGtsTraitsSchema: true, KeyXGtsRef: true}
 	var walk func(any) error
 	walk = func(value any) error {
 		switch node := value.(type) {
 		case map[string]any:
 			for key, child := range node {
-				if strings.HasPrefix(key, "x-gts-") && !allowed[key] {
+				if IsXGtsExtension(key) && !allowed[key] {
 					return fmt.Errorf("unknown GTS extension keyword: %s", key)
 				}
 				if err := walk(child); err != nil {

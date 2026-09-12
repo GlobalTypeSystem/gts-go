@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 	"github.com/dlclark/regexp2"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"golang.org/x/text/message"
@@ -50,10 +51,10 @@ type gtsURLLoader struct {
 // This matches Python's resolve_gts_ref handler
 func (l *gtsURLLoader) Load(url string) (any, error) {
 	// Strip the gts:// URI prefix if present (JSON Schema $id may have it)
-	normalizedURL := strings.TrimPrefix(url, GtsURIPrefix)
+	normalizedURL := gtsid.NormalizeID(url)
 
 	// Check if this is a GTS ID reference
-	if IsValidGtsID(normalizedURL) {
+	if gtsid.IsValid(normalizedURL) {
 		entity := l.store.Get(normalizedURL)
 		if entity == nil {
 			return nil, fmt.Errorf("unresolvable GTS reference: %s", url)
@@ -82,8 +83,8 @@ func (s *GtsStore) ValidateInstance(instanceID string) *ValidationResult {
 	// Well-known GTS id first; fall back to a raw store lookup by the
 	// passed string so anonymous instances (keyed by UUID) resolve too.
 	lookupID := instanceID
-	if IsValidGtsID(instanceID) {
-		gid, err := NewGtsID(instanceID)
+	if gtsid.IsValid(instanceID) {
+		gid, err := gtsid.New(instanceID)
 		if err != nil {
 			return &ValidationResult{
 				ID:    instanceID,
@@ -201,7 +202,7 @@ func (e *xGtsRefExt) Validate(ctx *jsonschema.ValidatorContext, v any) {
 	}
 	// Relative pointer patterns (starting with "/") require the full root schema
 	// context for resolution — defer those entirely to XGtsRefValidator's separate pass.
-	if strings.HasPrefix(e.pattern, "/") {
+	if strings.HasPrefix(e.pattern, PointerPrefix) {
 		return
 	}
 	validator := NewXGtsRefValidator(e.store)
@@ -247,7 +248,7 @@ func normalizeSchemaForCompile(schema map[string]any) map[string]any {
 		normalized[k] = v
 	}
 	if id, ok := normalized["$id"].(string); ok {
-		normalized["$id"] = strings.TrimPrefix(id, GtsURIPrefix)
+		normalized["$id"] = gtsid.NormalizeID(id)
 	}
 	return normalized
 }
@@ -270,7 +271,7 @@ func (s *GtsStore) validateJSONSchema(schema map[string]any) error {
 		schemaID = "gts.validation.schema"
 		normalizedSchema["$id"] = schemaID
 	}
-	schemaID = strings.TrimPrefix(schemaID, GtsURIPrefix)
+	schemaID = gtsid.NormalizeID(schemaID)
 	normalizedSchema["$id"] = schemaID
 
 	compiler := jsonschema.NewCompiler()
@@ -304,13 +305,13 @@ func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) 
 		if entity.IsTypeSchema {
 			return fail("validate-json with an explicit type only accepts instance JSON")
 		}
-		if !strings.HasSuffix(typeID, "~") {
-			if strings.HasPrefix(typeID, GtsPrefix) {
+		if !gtsid.IsTypeID(typeID) {
+			if gtsid.HasPrefix(typeID) {
 				return fail("explicit type must be GTS Type schema")
 			}
 			return fail("Invalid GTS Type Schema ID")
 		}
-		if !IsValidGtsID(typeID) {
+		if !gtsid.IsValid(typeID) {
 			return fail("Invalid GTS Type Schema ID")
 		}
 		if entity.TypeID != "" && entity.TypeID != typeID {
@@ -398,7 +399,7 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 	}
 
 	// Normalize schema ID by stripping gts:// prefix if present
-	normalizedSchemaID := strings.TrimPrefix(schemaID, GtsURIPrefix)
+	normalizedSchemaID := gtsid.NormalizeID(schemaID)
 
 	// Update the $id in the normalized schema to use the normalized ID
 	normalizedSchema["$id"] = normalizedSchemaID
