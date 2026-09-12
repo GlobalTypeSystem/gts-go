@@ -24,9 +24,9 @@ type CastCompatResult struct {
 	AddedProperties        []string            `json:"added_properties"`
 	RemovedProperties      []string            `json:"removed_properties"`
 	ChangedProperties      []map[string]string `json:"changed_properties"`
-	IsFullyCompatible      bool                `json:"is_fully_compatible"`
-	IsBackwardCompatible   bool                `json:"is_backward_compatible"`
-	IsForwardCompatible    bool                `json:"is_forward_compatible"`
+	IsFullyCompatible      *bool               `json:"is_fully_compatible"`
+	IsBackwardCompatible   *bool               `json:"is_backward_compatible"`
+	IsForwardCompatible    *bool               `json:"is_forward_compatible"`
 	IncompatibilityReasons []string            `json:"incompatibility_reasons"`
 	BackwardErrors         []string            `json:"backward_errors"`
 	ForwardErrors          []string            `json:"forward_errors"`
@@ -89,6 +89,14 @@ func (s *GtsStore) Cast(instanceID, toTypeID string) (*CastResult, error) {
 	result.BackwardCompatibility = compatibility.BackwardCompatibility
 	result.ForwardCompatibility = compatibility.ForwardCompatibility
 	result.FullCompatibility = compatibility.FullCompatibility
+	// When the schemas declare distinct JSON Schema dialects the structural
+	// verdicts are undecidable; surface them as null alongside the unknown
+	// accepted-instance-set verdicts.
+	if dialectsDiffer(fromSchemaContent, toSchemaContent) {
+		result.IsBackwardCompatible = nil
+		result.IsForwardCompatible = nil
+		result.IsFullyCompatible = nil
+	}
 	return result, nil
 }
 
@@ -154,9 +162,9 @@ func castInstance(
 			AddedProperties:        deduplicate(added),
 			RemovedProperties:      deduplicate(removed),
 			ChangedProperties:      []map[string]string{},
-			IsFullyCompatible:      isFullyCompatible,
-			IsBackwardCompatible:   isBackward,
-			IsForwardCompatible:    isForward,
+			IsFullyCompatible:      boolPtr(isFullyCompatible),
+			IsBackwardCompatible:   boolPtr(isBackward),
+			IsForwardCompatible:    boolPtr(isForward),
 			IncompatibilityReasons: incompatibilityReasons,
 			BackwardErrors:         backwardErrors,
 			ForwardErrors:          forwardErrors,
@@ -246,14 +254,19 @@ func castInstanceToSchema(
 		}
 	}
 
-	// 3) Remove properties not in target schema when additionalProperties is false
+	// 3) Remove properties not in target schema when additionalProperties is false.
+	// Reserved GTS identity fields (id, type) are preserved at the instance root.
 	if !additional {
 		for prop := range result {
-			if _, inTarget := targetProps[prop]; !inTarget {
-				delete(result, prop)
-				path := buildPath(basePath, prop)
-				removed = append(removed, path)
+			if _, inTarget := targetProps[prop]; inTarget {
+				continue
 			}
+			if basePath == "" && (prop == "id" || prop == "type") {
+				continue
+			}
+			delete(result, prop)
+			path := buildPath(basePath, prop)
+			removed = append(removed, path)
 		}
 	}
 
