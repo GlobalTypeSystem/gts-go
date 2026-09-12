@@ -279,6 +279,8 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]any{
 			"ok":             true,
 			"gts_id":         responseID,
+			"id":             responseID,
+			"type_id":        entity.TypeID,
 			"is_type_schema": entity.IsTypeSchema,
 		})
 		return
@@ -297,6 +299,8 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
 		"gts_id":         responseID,
+		"id":             responseID,
+		"type_id":        entity.TypeID,
 		"is_type_schema": entity.IsTypeSchema,
 	})
 }
