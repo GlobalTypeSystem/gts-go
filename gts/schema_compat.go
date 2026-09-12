@@ -833,8 +833,7 @@ func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, er
 	if !entity.IsTypeSchema {
 		return nil, fmt.Errorf("entity '%s' is not a schema", schemaID)
 	}
-	normalized := normalizeDollarRefs(entity.Content)
-	return s.resolveRefs(normalized)
+	return s.resolveRefs(deepCopyMap(entity.Content))
 }
 
 // resolveRefs resolves all $ref references in a schema map, detecting cycles.
