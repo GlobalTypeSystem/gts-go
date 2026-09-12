@@ -18,6 +18,7 @@ package gts
 
 import (
 	"math"
+	"reflect"
 	"strings"
 	"unicode/utf8"
 )
@@ -67,8 +68,13 @@ func (s *GtsStore) CheckCompatibility(oldTypeID, newTypeID string) *Compatibilit
 		return unknownResult
 	}
 
-	oldResolved = lowerUnevaluatedProperties(oldResolved)
-	newResolved = lowerUnevaluatedProperties(newResolved)
+	oldLowered, oldOK := lowerUnevaluatedProperties(oldResolved)
+	newLowered, newOK := lowerUnevaluatedProperties(newResolved)
+	if !oldOK || !newOK {
+		return unknownResult
+	}
+	oldResolved = oldLowered
+	newResolved = newLowered
 
 	// backward: Valid(old) ⊆ Valid(new)
 	backward := verdict(isSubschema(oldResolved, newResolved))
@@ -97,17 +103,29 @@ func dialectsDiffer(oldSchema, newSchema map[string]any) bool {
 	return oldOK && newOK && canonical(oldDialect) != canonical(newDialect)
 }
 
-func lowerUnevaluatedProperties(schema map[string]any) map[string]any {
+// lowerUnevaluatedProperties rewrites a root unevaluatedProperties constraint to
+// additionalProperties when it is statically equivalent. It returns ok=false
+// (unknown) when the constraint interacts with dynamic keywords whose effect on
+// the accepted instance set cannot be decided structurally.
+func lowerUnevaluatedProperties(schema map[string]any) (map[string]any, bool) {
 	value, ok := schema["unevaluatedProperties"]
 	if !ok {
-		return schema
+		return schema, true
+	}
+	for _, key := range []string{"$ref", "$dynamicRef", "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas"} {
+		if _, present := schema[key]; present {
+			return nil, false
+		}
+	}
+	if existing, present := schema["additionalProperties"]; present && !reflect.DeepEqual(existing, value) {
+		return nil, false
 	}
 	result := deepCopyMap(schema)
 	delete(result, "unevaluatedProperties")
 	if _, exists := result["additionalProperties"]; !exists {
 		result["additionalProperties"] = value
 	}
-	return result
+	return result, true
 }
 
 func verdict(result *bool) string {
