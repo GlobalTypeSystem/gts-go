@@ -5,9 +5,7 @@ Released under Apache License 2.0
 
 package main
 
-import (
-	"github.com/GlobalTypeSystem/gts-go/gts"
-)
+import "github.com/GlobalTypeSystem/gts-go/gtsid"
 
 var cmdParseID = &Command{
 	UsageLine: "parse-id -id <gts-id>",
@@ -37,6 +35,6 @@ func runParseID(cmd *Command, args []string) {
 		cmd.Usage()
 	}
 
-	result := gts.ParseGtsID(parseIDFlag)
+	result := gtsid.Parse(parseIDFlag)
 	writeJSON(result)
 }

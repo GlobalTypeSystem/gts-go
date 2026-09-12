@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // QueryResult represents the result of a GTS query execution
@@ -47,7 +49,7 @@ func (s *GtsStore) Query(expr string, limit int) *QueryResult {
 	}
 
 	// Determine if pattern is wildcard
-	isWildcard := strings.Contains(basePattern, "*")
+	isWildcard := gtsid.HasWildcard(basePattern)
 
 	// Validate the pattern
 	if err := s.validateQueryPattern(basePattern, isWildcard); err != nil {
@@ -100,7 +102,7 @@ func (s *GtsStore) parseQueryExpression(expr string) (string, map[string]string,
 		filterStr = strings.TrimSuffix(filterStr, "]")
 
 		// Check if base pattern ends with ~ or ~* (type ID/pattern) - filters not allowed on type queries
-		if strings.HasSuffix(basePattern, "~") || strings.HasSuffix(basePattern, "~*") {
+		if gtsid.IsTypePattern(basePattern) {
 			return "", nil, errors.New("Invalid query: filters cannot be used with type patterns (ending with ~ or ~*)")
 		}
 
@@ -143,18 +145,18 @@ func (s *GtsStore) parseQueryFilters(filterStr string) map[string]string {
 func (s *GtsStore) validateQueryPattern(basePattern string, isWildcard bool) error {
 	if isWildcard {
 		// Wildcard pattern must end with .* or ~*
-		if !strings.HasSuffix(basePattern, ".*") && !strings.HasSuffix(basePattern, "~*") {
+		if !gtsid.EndsWithWildcardSuffix(basePattern) {
 			return errors.New("Invalid query: wildcard patterns must end with .* or ~*")
 		}
 
 		// Validate as wildcard pattern
-		_, err := validateWildcard(basePattern)
+		_, err := gtsid.ValidateWildcard(basePattern)
 		if err != nil {
 			return fmt.Errorf("Invalid query: %w", err)
 		}
 	} else {
 		// Non-wildcard pattern must be a complete valid GTS ID
-		gtsID, err := NewGtsID(basePattern)
+		gtsID, err := gtsid.New(basePattern)
 		if err != nil {
 			return fmt.Errorf("Invalid query: %w", err)
 		}
@@ -167,7 +169,7 @@ func (s *GtsStore) validateQueryPattern(basePattern string, isWildcard bool) err
 		// Check if pattern is incomplete (missing version or type)
 		// A complete GTS ID must end with a version (v1, v1.2) or ~ for types
 		lastSeg := gtsID.Segments[len(gtsID.Segments)-1]
-		if !lastSeg.IsType && lastSeg.VerMajor == 0 {
+		if !lastSeg.IsType && !lastSeg.HasVersion {
 			return errors.New("Invalid query: incomplete GTS ID pattern")
 		}
 	}
@@ -177,14 +179,33 @@ func (s *GtsStore) validateQueryPattern(basePattern string, isWildcard bool) err
 
 // matchesIDPattern checks if entity ID matches the query pattern
 // see gts-python store.py _matches_id_pattern method
-func (s *GtsStore) matchesIDPattern(entityID *GtsID, basePattern string, isWildcard bool) bool {
+func (s *GtsStore) matchesIDPattern(entityID *gtsid.ID, basePattern string, isWildcard bool) bool {
 	if entityID == nil {
 		return false
 	}
 
-	// Use the existing MatchIDPattern function
-	matchResult := MatchIDPattern(entityID.ID, basePattern)
-	return matchResult.Match
+	// Use the existing gtsid.Match function
+	matchResult := gtsid.Match(entityID.ID, basePattern)
+	if !matchResult.Match {
+		return false
+	}
+
+	// For ~* query patterns, exclude entities that are themselves base types
+	// (same segment count as the pattern minus the wildcard). The ~* query
+	// semantically finds derived/instance entities, not the type itself.
+	if strings.HasSuffix(basePattern, gtsid.TypeWildcardSuffix) {
+		patternID, err := gtsid.ValidateWildcard(basePattern)
+		if err == nil {
+			// The pattern has N segments where the last is the bare wildcard.
+			// Only include entities that have more segments than N-1 (the base type).
+			baseSegCount := len(patternID.Segments) - 1 // exclude the wildcard segment
+			if len(entityID.Segments) <= baseSegCount {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 // matchesFilters checks if entity content matches all filter criteria

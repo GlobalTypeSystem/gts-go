@@ -21,7 +21,7 @@ func setupQueryTestStore() *GtsStore {
 		"status":   "active",
 		"category": "order",
 	}, DefaultGtsConfig())
-	store.Register(entity1)
+	_ = store.Register(entity1)
 
 	// Entity 2
 	entity2 := NewJsonEntity(map[string]any{
@@ -31,7 +31,7 @@ func setupQueryTestStore() *GtsStore {
 		"status":   "inactive",
 		"category": "payment",
 	}, DefaultGtsConfig())
-	store.Register(entity2)
+	_ = store.Register(entity2)
 
 	// Entity 3
 	entity3 := NewJsonEntity(map[string]any{
@@ -41,7 +41,7 @@ func setupQueryTestStore() *GtsStore {
 		"status":   "active",
 		"category": "email",
 	}, DefaultGtsConfig())
-	store.Register(entity3)
+	_ = store.Register(entity3)
 
 	// Entity 4
 	entity4 := NewJsonEntity(map[string]any{
@@ -51,7 +51,7 @@ func setupQueryTestStore() *GtsStore {
 		"status":   "some",
 		"category": "email",
 	}, DefaultGtsConfig())
-	store.Register(entity4)
+	_ = store.Register(entity4)
 
 	// Entity 5
 	entity5 := NewJsonEntity(map[string]any{
@@ -61,7 +61,7 @@ func setupQueryTestStore() *GtsStore {
 		"status":   "active",
 		"category": "order",
 	}, DefaultGtsConfig())
-	store.Register(entity5)
+	_ = store.Register(entity5)
 
 	return store
 }
@@ -363,16 +363,16 @@ func setupWildcardUseCaseStore() *GtsStore {
 	// Base schema v1.0
 	entity1 := NewJsonEntity(map[string]any{
 		"$schema":     "http://json-schema.org/draft-07/schema#",
-		"$id":         "gts.x.test10_llm.chat.message.v1.0~",
+		"$id":         "gts://gts.x.test10_llm.chat.message.v1.0~",
 		"type":        "object",
 		"description": "Base chat message v1.0",
 	}, DefaultGtsConfig())
-	store.Register(entity1)
+	_ = store.Register(entity1)
 
 	// Derived schema from v1.0
 	entity2 := NewJsonEntity(map[string]any{
 		"$schema":     "http://json-schema.org/draft-07/schema#",
-		"$id":         "gts.x.test10_llm.chat.message.v1.0~x.test10_llm._.system_message.v1.0~",
+		"$id":         "gts://gts.x.test10_llm.chat.message.v1.0~x.test10_llm._.system_message.v1.0~",
 		"type":        "object",
 		"description": "System message derived from v1.0",
 		"allOf": []any{
@@ -381,21 +381,21 @@ func setupWildcardUseCaseStore() *GtsStore {
 			},
 		},
 	}, DefaultGtsConfig())
-	store.Register(entity2)
+	_ = store.Register(entity2)
 
 	// Base schema v1.1
 	entity3 := NewJsonEntity(map[string]any{
 		"$schema":     "http://json-schema.org/draft-07/schema#",
-		"$id":         "gts.x.test10_llm.chat.message.v1.1~",
+		"$id":         "gts://gts.x.test10_llm.chat.message.v1.1~",
 		"type":        "object",
 		"description": "Base chat message v1.1",
 	}, DefaultGtsConfig())
-	store.Register(entity3)
+	_ = store.Register(entity3)
 
 	// Derived schema from v1.1
 	entity4 := NewJsonEntity(map[string]any{
 		"$schema":     "http://json-schema.org/draft-07/schema#",
-		"$id":         "gts.x.test10_llm.chat.message.v1.1~x.test10_llm._.user_message.v1.1~",
+		"$id":         "gts://gts.x.test10_llm.chat.message.v1.1~x.test10_llm._.user_message.v1.1~",
 		"type":        "object",
 		"description": "User message derived from v1.1",
 		"allOf": []any{
@@ -404,7 +404,7 @@ func setupWildcardUseCaseStore() *GtsStore {
 			},
 		},
 	}, DefaultGtsConfig())
-	store.Register(entity4)
+	_ = store.Register(entity4)
 
 	return store
 }
@@ -466,6 +466,21 @@ func TestQuery_UseCase4_AllV1BaseAndDerived(t *testing.T) {
 
 	if result.Count != 4 {
 		t.Errorf("Expected count 4 (all v1.x base and derived), got: %d", result.Count)
+	}
+}
+
+func TestQuery_ExactMatchExplicitV0Instance(t *testing.T) {
+	store := NewGtsStore(nil)
+	entity := NewJsonEntity(map[string]any{
+		"id":   "gts.x.test10.zero.event.v0~x.test10._.instance.v0",
+		"type": "gts.x.test10.zero.event.v0~",
+	}, DefaultGtsConfig())
+	if err := store.Register(entity); err != nil {
+		t.Fatal(err)
+	}
+	result := store.Query("gts.x.test10.zero.event.v0~x.test10._.instance.v0", 100)
+	if result.Error != "" || result.Count != 1 {
+		t.Errorf("expected one explicit v0 result, got count=%d error=%q", result.Count, result.Error)
 	}
 }
 

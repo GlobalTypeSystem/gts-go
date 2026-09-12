@@ -27,6 +27,7 @@ The commands are:
 	match-id-pattern match a GTS ID against a pattern
 	uuid            generate UUID from a GTS ID
 	validate        validate an instance against its schema
+	validate-all    validate all JSON documents in a file or directory
 	validate-schema validate a derived schema against its chain
 	validate-entity validate any entity (schema or instance) including traits
 	relationships   resolve relationships for an entity
@@ -85,6 +86,7 @@ var commands = []*Command{
 	cmdMatchIDPattern,
 	cmdUUID,
 	cmdValidate,
+	cmdValidateJson,
 	cmdValidateSchema,
 	cmdValidateEntity,
 	cmdRelationships,
@@ -103,18 +105,22 @@ var (
 	verbose int
 	cfgPath string
 	path    string
+	exclude = "node_modules,dist,build,.git,target"
 )
 
 func init() {
 	// Environment variable defaults
 	if v := os.Getenv("GTS_VERBOSE"); v != "" {
-		fmt.Sscanf(v, "%d", &verbose)
+		_, _ = fmt.Sscanf(v, "%d", &verbose)
 	}
 	if p := os.Getenv("GTS_PATH"); p != "" {
 		path = p
 	}
 	if c := os.Getenv("GTS_CONFIG"); c != "" {
 		cfgPath = c
+	}
+	if e := os.Getenv("GTS_EXCLUDE"); e != "" {
+		exclude = e
 	}
 }
 
@@ -123,6 +129,7 @@ func main() {
 	flag.IntVar(&verbose, "v", verbose, "enable verbose logging")
 	flag.StringVar(&path, "path", path, "path to JSON and schema files or directories")
 	flag.StringVar(&cfgPath, "config", cfgPath, "path to GTS config JSON file")
+	flag.StringVar(&exclude, "exclude", exclude, "comma-separated directory names to exclude when scanning")
 
 	log.SetPrefix("gts: ")
 	log.SetFlags(0)
@@ -145,7 +152,9 @@ func main() {
 				continue
 			}
 			cmd.Flag.Usage = func() { cmd.Usage() }
-			cmd.Flag.Parse(args[1:])
+			if err := cmd.Flag.Parse(args[1:]); err != nil {
+				os.Exit(2)
+			}
 			cmd.Run(cmd, cmd.Flag.Args())
 			return
 		}

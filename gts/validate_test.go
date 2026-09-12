@@ -7,6 +7,7 @@ package gts
 
 import (
 	"testing"
+	"time"
 )
 
 func TestValidateInstance_ValidInstance(t *testing.T) {
@@ -14,7 +15,7 @@ func TestValidateInstance_ValidInstance(t *testing.T) {
 
 	// Register base event schema
 	baseSchema := map[string]any{
-		"$id":      "gts.x.core.events.type.v1~",
+		"$id":      "gts://gts.x.core.events.type.v1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"id", "type", "tenantId", "occurredAt"},
@@ -33,7 +34,7 @@ func TestValidateInstance_ValidInstance(t *testing.T) {
 
 	// Register derived event schema
 	derivedSchema := map[string]any{
-		"$id":     "gts.x.core.events.type.v1~x.commerce.orders.order_placed.v1.0~",
+		"$id":     "gts://gts.x.core.events.type.v1~x.commerce.orders.order_placed.v1.0~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"allOf": []any{
@@ -103,7 +104,7 @@ func TestValidateInstance_InvalidInstance_MissingRequiredField(t *testing.T) {
 
 	// Register base event schema
 	baseSchema := map[string]any{
-		"$id":      "gts.x.core.events.type.v1~",
+		"$id":      "gts://gts.x.core.events.type.v1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"id", "type", "tenantId", "occurredAt"},
@@ -122,7 +123,7 @@ func TestValidateInstance_InvalidInstance_MissingRequiredField(t *testing.T) {
 
 	// Register derived event schema with required field
 	derivedSchema := map[string]any{
-		"$id":     "gts.x.core.events.type.v1~x.test6.invalid.event.v1.0~",
+		"$id":     "gts://gts.x.core.events.type.v1~x.test6.invalid.event.v1.0~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"allOf": []any{
@@ -196,7 +197,7 @@ func TestValidateInstance_FormatValidation(t *testing.T) {
 
 	// Register schema with format constraints
 	schema := map[string]any{
-		"$id":      "gts.x.test6.formats.user.v1~",
+		"$id":      "gts://gts.x.test6.formats.user.v1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"userId", "email", "createdAt"},
@@ -237,7 +238,7 @@ func TestValidateInstance_NestedObjects(t *testing.T) {
 
 	// Register schema with nested objects
 	schema := map[string]any{
-		"$id":      "gts.x.test6.nested.order.v1~",
+		"$id":      "gts://gts.x.test6.nested.order.v1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"orderId", "customer", "items"},
@@ -319,7 +320,7 @@ func TestValidateInstance_EnumConstraints(t *testing.T) {
 
 	// Register schema with enum
 	schema := map[string]any{
-		"$id":      "gts.x.test6.enum.status.v1~",
+		"$id":      "gts://gts.x.test6.enum.status.v1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"statusId", "status"},
@@ -366,7 +367,7 @@ func TestValidateInstance_ArrayConstraints(t *testing.T) {
 
 	// Register schema with array constraints
 	schema := map[string]any{
-		"$id":      "gts.x.test6.array.tags.v1~",
+		"$id":      "gts://gts.x.test6.array.tags.v1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"itemId", "tags"},
@@ -426,5 +427,19 @@ func TestValidateInstance_NoSchemaID(t *testing.T) {
 	}
 	if result.Error == "" {
 		t.Errorf("Expected error message for instance without schema")
+	}
+}
+
+func TestECMARegexpEngine(t *testing.T) {
+	matcher, err := ecmaRegexpEngine("^(?!x).*$")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matcher.MatchString("valid") || matcher.MatchString("x-invalid") {
+		t.Error("ECMA lookahead matching failed")
+	}
+	regexp := matcher.(*regexp2RE)
+	if regexp.re.MatchTimeout != time.Second {
+		t.Errorf("expected one-second regexp timeout, got %s", regexp.re.MatchTimeout)
 	}
 }

@@ -3,7 +3,7 @@ Copyright © 2025 Global Type System
 Released under Apache License 2.0
 */
 
-package gts
+package gtsid
 
 import (
 	"fmt"
@@ -14,21 +14,13 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	// GtsPrefix is the required prefix for all GTS identifiers
-	GtsPrefix = "gts."
-	// GtsURIPrefix is the URI-compatible prefix for GTS identifiers in JSON Schema $id field
-	// (e.g., "gts://gts.x.y.z..."). This is ONLY used for JSON Schema serialization/deserialization,
-	// not for GTS ID parsing.
-	GtsURIPrefix = "gts://"
-	// MaxIDLength is the maximum allowed length for a GTS identifier
-	MaxIDLength = 1024
-)
+// Prefix, URIPrefix, MaxIDLength and the other grammar markers live in
+// markers.go, the single source of truth for the GTS identifier grammar.
 
 var (
-	// GtsNamespace is the UUID namespace for GTS identifiers
+	// Namespace is the UUID namespace for GTS identifiers
 	// Generated as uuid5(NAMESPACE_URL, "gts")
-	GtsNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("gts"))
+	Namespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("gts"))
 )
 
 var (
@@ -37,13 +29,13 @@ var (
 	segmentTokenRegex = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 )
 
-// InvalidGtsIDError represents an error when a GTS identifier is invalid
-type InvalidGtsIDError struct {
+// InvalidIDError represents an error when a GTS identifier is invalid
+type InvalidIDError struct {
 	GtsID string
 	Cause string
 }
 
-func (e *InvalidGtsIDError) Error() string {
+func (e *InvalidIDError) Error() string {
 	if e.Cause != "" {
 		return fmt.Sprintf("Invalid GTS identifier: %s: %s", e.GtsID, e.Cause)
 	}
@@ -65,8 +57,8 @@ func (e *InvalidSegmentError) Error() string {
 	return fmt.Sprintf("Invalid GTS segment #%d @ offset %d: '%s'", e.Num, e.Offset, e.Segment)
 }
 
-// GtsIDSegment represents a parsed segment of a GTS identifier
-type GtsIDSegment struct {
+// Segment represents a parsed segment of a GTS identifier
+type Segment struct {
 	Num        int
 	Offset     int
 	Segment    string
@@ -76,42 +68,63 @@ type GtsIDSegment struct {
 	Type       string
 	VerMajor   int
 	VerMinor   *int
+	HasVersion bool
 	IsType     bool
 	IsWildcard bool
 	IsUUID     bool
 }
 
-// GtsID represents a validated GTS identifier
-type GtsID struct {
+// ID represents a validated GTS identifier
+type ID struct {
 	ID       string
-	Segments []*GtsIDSegment
+	Segments []*Segment
 }
 
-// NewGtsID creates and validates a new GTS identifier
-func NewGtsID(id string) (*GtsID, error) {
+// ParseOptions tunes the shared identifier parser (parseGtsID) so the strict
+// (New) and relaxed (wildcard) callers can share one implementation
+// instead of maintaining several near-duplicate parsers.
+type ParseOptions struct {
+	// AllowSingleSegment lifts the "single-segment instances are prohibited"
+	// rule. Wildcard patterns need this because a pattern like "gts.x.core.*"
+	// legitimately has a single (wildcard) segment.
+	AllowSingleSegment bool
+	// DetectUUIDTail treats a trailing canonical-UUID part as a combined
+	// anonymous-instance segment (spec §3.7) rather than a normal segment.
+	DetectUUIDTail bool
+}
+
+// New creates and validates a new (concrete) GTS identifier.
+func New(id string) (*ID, error) {
+	return parseGtsID(id, ParseOptions{DetectUUIDTail: true})
+}
+
+// parseGtsID is the single, shared GTS identifier parser. All parsing paths
+// (strict ids and wildcard patterns) funnel through here; ParseOptions selects
+// the behavioral differences.
+func parseGtsID(id string, opts ParseOptions) (*ID, error) {
 	raw := strings.TrimSpace(id)
 
 	// Validate lowercase
 	if raw != strings.ToLower(raw) {
-		return nil, &InvalidGtsIDError{GtsID: id, Cause: "Must be lower case"}
+		return nil, &InvalidIDError{GtsID: id, Cause: "Must be lower case"}
 	}
 
 	// Validate prefix
-	if !strings.HasPrefix(raw, GtsPrefix) {
-		return nil, &InvalidGtsIDError{GtsID: id, Cause: fmt.Sprintf("Does not start with '%s'", GtsPrefix)}
+	if !HasPrefix(raw) {
+		return nil, &InvalidIDError{GtsID: id, Cause: fmt.Sprintf("Does not start with '%s'", Prefix)}
 	}
 
 	// Validate length
 	if len(raw) > MaxIDLength {
-		return nil, &InvalidGtsIDError{GtsID: id, Cause: "Too long"}
+		return nil, &InvalidIDError{GtsID: id, Cause: "Too long"}
 	}
 
 	// Split by ~ to get segments, preserving empties to detect trailing ~
-	remainder := raw[len(GtsPrefix):]
+	remainder := raw[len(Prefix):]
 	parts := splitPreservingTilde(remainder)
 
 	// Detect combined anonymous instance: last part is a UUID (no trailing ~)
-	hasUUIDTail := len(parts) >= 2 && isUUIDSegment(parts[len(parts)-1])
+	hasUUIDTail := opts.DetectUUIDTail && len(parts) >= 2 && isUUIDSegment(parts[len(parts)-1])
 
 	// Validate no hyphens in non-UUID portions (reuse already-split parts)
 	gtsPartsToCheck := parts
@@ -120,24 +133,24 @@ func NewGtsID(id string) (*GtsID, error) {
 	}
 	for _, p := range gtsPartsToCheck {
 		if strings.Contains(p, "-") {
-			return nil, &InvalidGtsIDError{GtsID: id, Cause: "Must not contain '-'"}
+			return nil, &InvalidIDError{GtsID: id, Cause: "Must not contain '-'"}
 		}
 	}
 
-	gtsID := &GtsID{
+	gtsID := &ID{
 		ID:       raw,
-		Segments: make([]*GtsIDSegment, 0),
+		Segments: make([]*Segment, 0),
 	}
 
-	offset := len(GtsPrefix)
+	offset := len(Prefix)
 	for i, part := range parts {
 		if part == "" {
-			return nil, &InvalidGtsIDError{GtsID: id, Cause: fmt.Sprintf("GTS segment #%d @ offset %d is empty", i+1, offset)}
+			return nil, &InvalidIDError{GtsID: id, Cause: fmt.Sprintf("GTS segment #%d @ offset %d is empty", i+1, offset)}
 		}
 
 		// Last part is a UUID tail — store as a special segment
 		if hasUUIDTail && i == len(parts)-1 {
-			gtsID.Segments = append(gtsID.Segments, &GtsIDSegment{
+			gtsID.Segments = append(gtsID.Segments, &Segment{
 				Num:     i + 1,
 				Offset:  offset,
 				Segment: part,
@@ -160,29 +173,29 @@ func NewGtsID(id string) (*GtsID, error) {
 	// Single-segment instances are prohibited
 	// Well-known instances must be chained with at least one type segment
 	// This check should only apply to non-wildcard, non-type single-segment IDs
-	if len(gtsID.Segments) == 1 && !gtsID.IsType() && !gtsID.Segments[0].IsWildcard {
-		return nil, &InvalidGtsIDError{GtsID: id, Cause: "Single-segment instances are prohibited. Well-known instances must be chained with a type segment"}
+	if !opts.AllowSingleSegment && len(gtsID.Segments) == 1 && !gtsID.IsType() && !gtsID.Segments[0].IsWildcard {
+		return nil, &InvalidIDError{GtsID: id, Cause: "Single-segment instances are prohibited. Well-known instances must be chained with a type segment"}
 	}
 
 	return gtsID, nil
 }
 
-// IsValidGtsID checks if a string is a valid GTS identifier
-func IsValidGtsID(s string) bool {
-	if !strings.HasPrefix(s, GtsPrefix) {
+// IsValid checks if a string is a valid GTS identifier
+func IsValid(s string) bool {
+	if !HasPrefix(s) {
 		return false
 	}
-	_, err := NewGtsID(s)
+	_, err := New(s)
 	return err == nil
 }
 
 // IsType returns true if this identifier represents a type (ends with ~)
-func (g *GtsID) IsType() bool {
-	return strings.HasSuffix(g.ID, "~")
+func (g *ID) IsType() bool {
+	return IsTypeID(g.ID)
 }
 
 // IsWildcard returns true if this identifier contains wildcard patterns
-func (g *GtsID) IsWildcard() bool {
+func (g *ID) IsWildcard() bool {
 	for _, segment := range g.Segments {
 		if segment.IsWildcard {
 			return true
@@ -193,18 +206,18 @@ func (g *GtsID) IsWildcard() bool {
 
 // ToUUID generates a deterministic UUID (v5) from the GTS identifier
 // The UUID is generated using uuid5(GTS_NAMESPACE, gts_id)
-func (g *GtsID) ToUUID() uuid.UUID {
-	return uuid.NewSHA1(GtsNamespace, []byte(g.ID))
+func (g *ID) ToUUID() uuid.UUID {
+	return uuid.NewSHA1(Namespace, []byte(g.ID))
 }
 
 // splitPreservingTilde splits a string by ~ while preserving the ~ at the end of each part
 func splitPreservingTilde(s string) []string {
-	_parts := strings.Split(s, "~")
+	_parts := strings.Split(s, SegmentSep)
 	parts := make([]string, 0, len(_parts))
 
 	for i := 0; i < len(_parts); i++ {
 		if i < len(_parts)-1 {
-			parts = append(parts, _parts[i]+"~")
+			parts = append(parts, _parts[i]+SegmentSep)
 			// If next part is empty and this is second to last, we're done
 			if i == len(_parts)-2 && _parts[i+1] == "" {
 				break
@@ -218,8 +231,8 @@ func splitPreservingTilde(s string) []string {
 }
 
 // parseSegment parses a single segment of a GTS identifier
-func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
-	seg := &GtsIDSegment{
+func parseSegment(num, offset int, segment string) (*Segment, error) {
+	seg := &Segment{
 		Num:        num,
 		Offset:     offset,
 		Segment:    strings.TrimSpace(segment),
@@ -232,8 +245,8 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 	workingSegment := seg.Segment
 
 	// Check for type marker (~)
-	if strings.Count(workingSegment, "~") > 0 {
-		if strings.Count(workingSegment, "~") > 1 {
+	if strings.Count(workingSegment, TypeMarker) > 0 {
+		if strings.Count(workingSegment, TypeMarker) > 1 {
 			return nil, &InvalidSegmentError{
 				Num:     num,
 				Offset:  offset,
@@ -241,7 +254,7 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 				Cause:   "Too many '~' characters",
 			}
 		}
-		if strings.HasSuffix(workingSegment, "~") {
+		if strings.HasSuffix(workingSegment, TypeMarker) {
 			seg.IsType = true
 			workingSegment = workingSegment[:len(workingSegment)-1]
 		} else {
@@ -255,7 +268,7 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 	}
 
 	// Split into tokens
-	tokens := strings.Split(workingSegment, ".")
+	tokens := strings.Split(workingSegment, TokenSep)
 
 	// Validate token count
 	if len(tokens) > 6 {
@@ -268,7 +281,7 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 	}
 
 	// If not ending with wildcard, must have at least 5 tokens
-	if !strings.HasSuffix(workingSegment, "*") {
+	if !strings.HasSuffix(workingSegment, WildcardMarker) {
 		if len(tokens) < 5 {
 			return nil, &InvalidSegmentError{
 				Num:     num,
@@ -293,7 +306,7 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 
 	// Parse tokens
 	if len(tokens) > 0 {
-		if tokens[0] == "*" {
+		if tokens[0] == WildcardMarker {
 			seg.IsWildcard = true
 			return seg, nil
 		}
@@ -301,7 +314,7 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 	}
 
 	if len(tokens) > 1 {
-		if tokens[1] == "*" {
+		if tokens[1] == WildcardMarker {
 			seg.IsWildcard = true
 			return seg, nil
 		}
@@ -309,7 +322,7 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 	}
 
 	if len(tokens) > 2 {
-		if tokens[2] == "*" {
+		if tokens[2] == WildcardMarker {
 			seg.IsWildcard = true
 			return seg, nil
 		}
@@ -317,7 +330,7 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 	}
 
 	if len(tokens) > 3 {
-		if tokens[3] == "*" {
+		if tokens[3] == WildcardMarker {
 			seg.IsWildcard = true
 			return seg, nil
 		}
@@ -326,7 +339,7 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 
 	// Parse major version
 	if len(tokens) > 4 {
-		if tokens[4] == "*" {
+		if tokens[4] == WildcardMarker {
 			seg.IsWildcard = true
 			return seg, nil
 		}
@@ -371,11 +384,12 @@ func parseSegment(num, offset int, segment string) (*GtsIDSegment, error) {
 		}
 
 		seg.VerMajor = major
+		seg.HasVersion = true
 	}
 
 	// Parse minor version
 	if len(tokens) > 5 {
-		if tokens[5] == "*" {
+		if tokens[5] == WildcardMarker {
 			seg.IsWildcard = true
 			return seg, nil
 		}

@@ -215,13 +215,13 @@ func TestValidateInstanceModifiers_NestedTraits(t *testing.T) {
 func TestFinal_RejectDerivedSchema(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":         "gts.x.testmod.final.base.v1~",
+		"$id":         "gts://gts.x.testmod.final.base.v1~",
 		"type":        "object",
 		"x-gts-final": true,
 		"properties":  map[string]any{"name": map[string]any{"type": "string"}},
 	})
 	mustRegisterMod(t, store, map[string]any{
-		"$id":  "gts.x.testmod.final.base.v1~x.testmod._.derived.v1~",
+		"$id":  "gts://gts.x.testmod.final.base.v1~x.testmod._.derived.v1~",
 		"type": "object",
 		"allOf": []any{
 			map[string]any{"$ref": "gts.x.testmod.final.base.v1~"},
@@ -240,7 +240,7 @@ func TestFinal_RejectDerivedSchema(t *testing.T) {
 func TestFinal_AllowWellKnownInstance(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":         "gts.x.testmod.final.inst.v1~",
+		"$id":         "gts://gts.x.testmod.final.inst.v1~",
 		"type":        "object",
 		"x-gts-final": true,
 		"required":    []any{"id", "description"},
@@ -262,12 +262,12 @@ func TestFinal_AllowWellKnownInstance(t *testing.T) {
 func TestFinal_MidChainFinal(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":        "gts.x.testmod.finalmid.base.v1~",
+		"$id":        "gts://gts.x.testmod.finalmid.base.v1~",
 		"type":       "object",
 		"properties": map[string]any{"name": map[string]any{"type": "string"}},
 	})
 	mustRegisterMod(t, store, map[string]any{
-		"$id":         "gts.x.testmod.finalmid.base.v1~x.testmod._.mid.v1~",
+		"$id":         "gts://gts.x.testmod.finalmid.base.v1~x.testmod._.mid.v1~",
 		"type":        "object",
 		"x-gts-final": true,
 		"allOf": []any{
@@ -276,7 +276,7 @@ func TestFinal_MidChainFinal(t *testing.T) {
 		},
 	})
 	mustRegisterMod(t, store, map[string]any{
-		"$id":  "gts.x.testmod.finalmid.base.v1~x.testmod._.mid.v1~x.testmod._.leaf.v1~",
+		"$id":  "gts://gts.x.testmod.finalmid.base.v1~x.testmod._.mid.v1~x.testmod._.leaf.v1~",
 		"type": "object",
 		"allOf": []any{
 			map[string]any{"$ref": "gts.x.testmod.finalmid.base.v1~x.testmod._.mid.v1~"},
@@ -292,12 +292,12 @@ func TestFinal_MidChainFinal(t *testing.T) {
 func TestFinal_SiblingUnaffected(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":        "gts.x.testmod.finalsib.base.v1~",
+		"$id":        "gts://gts.x.testmod.finalsib.base.v1~",
 		"type":       "object",
 		"properties": map[string]any{"name": map[string]any{"type": "string"}},
 	})
 	mustRegisterMod(t, store, map[string]any{
-		"$id":         "gts.x.testmod.finalsib.base.v1~x.testmod._.final_b.v1~",
+		"$id":         "gts://gts.x.testmod.finalsib.base.v1~x.testmod._.final_b.v1~",
 		"type":        "object",
 		"x-gts-final": true,
 		"allOf": []any{
@@ -306,7 +306,7 @@ func TestFinal_SiblingUnaffected(t *testing.T) {
 		},
 	})
 	mustRegisterMod(t, store, map[string]any{
-		"$id":  "gts.x.testmod.finalsib.base.v1~x.testmod._.sibling_c.v1~",
+		"$id":  "gts://gts.x.testmod.finalsib.base.v1~x.testmod._.sibling_c.v1~",
 		"type": "object",
 		"allOf": []any{
 			map[string]any{"$ref": "gts.x.testmod.finalsib.base.v1~"},
@@ -322,13 +322,13 @@ func TestFinal_SiblingUnaffected(t *testing.T) {
 func TestFinal_FalseIsNoop(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":         "gts.x.testmod.finalfalse.base.v1~",
+		"$id":         "gts://gts.x.testmod.finalfalse.base.v1~",
 		"type":        "object",
 		"x-gts-final": false,
 		"properties":  map[string]any{"name": map[string]any{"type": "string"}},
 	})
 	mustRegisterMod(t, store, map[string]any{
-		"$id":  "gts.x.testmod.finalfalse.base.v1~x.testmod._.derived.v1~",
+		"$id":  "gts://gts.x.testmod.finalfalse.base.v1~x.testmod._.derived.v1~",
 		"type": "object",
 		"allOf": []any{
 			map[string]any{"$ref": "gts.x.testmod.finalfalse.base.v1~"},
@@ -348,7 +348,7 @@ func TestFinal_FalseIsNoop(t *testing.T) {
 func TestAbstract_RejectDirectInstance(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":            "gts.x.testmod.abs.reject.v1~",
+		"$id":            "gts://gts.x.testmod.abs.reject.v1~",
 		"type":           "object",
 		"x-gts-abstract": true,
 		"required":       []any{"id", "name"},
@@ -373,13 +373,13 @@ func TestAbstract_RejectDirectInstance(t *testing.T) {
 func TestAbstract_AllowDerivedSchema(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":            "gts.x.testmod.abs.derive.v1~",
+		"$id":            "gts://gts.x.testmod.abs.derive.v1~",
 		"type":           "object",
 		"x-gts-abstract": true,
 		"properties":     map[string]any{"name": map[string]any{"type": "string"}},
 	})
 	mustRegisterMod(t, store, map[string]any{
-		"$id":  "gts.x.testmod.abs.derive.v1~x.testmod._.concrete.v1~",
+		"$id":  "gts://gts.x.testmod.abs.derive.v1~x.testmod._.concrete.v1~",
 		"type": "object",
 		"allOf": []any{
 			map[string]any{"$ref": "gts.x.testmod.abs.derive.v1~"},
@@ -395,7 +395,7 @@ func TestAbstract_AllowDerivedSchema(t *testing.T) {
 func TestAbstract_AllowInstanceOfConcreteDerived(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":            "gts.x.testmod.abs.concinst.v1~",
+		"$id":            "gts://gts.x.testmod.abs.concinst.v1~",
 		"type":           "object",
 		"x-gts-abstract": true,
 		"required":       []any{"id", "name"},
@@ -405,7 +405,7 @@ func TestAbstract_AllowInstanceOfConcreteDerived(t *testing.T) {
 		},
 	})
 	mustRegisterMod(t, store, map[string]any{
-		"$id":  "gts.x.testmod.abs.concinst.v1~x.testmod._.concrete.v1~",
+		"$id":  "gts://gts.x.testmod.abs.concinst.v1~x.testmod._.concrete.v1~",
 		"type": "object",
 		"allOf": []any{
 			map[string]any{"$ref": "gts.x.testmod.abs.concinst.v1~"},
@@ -425,14 +425,14 @@ func TestAbstract_AllowInstanceOfConcreteDerived(t *testing.T) {
 func TestAbstract_ChainOfAbstracts(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":            "gts.x.testmod.abs.chain.v1~",
+		"$id":            "gts://gts.x.testmod.abs.chain.v1~",
 		"type":           "object",
 		"x-gts-abstract": true,
 		"required":       []any{"id"},
 		"properties":     map[string]any{"id": map[string]any{"type": "string"}},
 	})
 	mustRegisterMod(t, store, map[string]any{
-		"$id":            "gts.x.testmod.abs.chain.v1~x.testmod._.mid.v1~",
+		"$id":            "gts://gts.x.testmod.abs.chain.v1~x.testmod._.mid.v1~",
 		"type":           "object",
 		"x-gts-abstract": true,
 		"allOf": []any{
@@ -441,7 +441,7 @@ func TestAbstract_ChainOfAbstracts(t *testing.T) {
 		},
 	})
 	mustRegisterMod(t, store, map[string]any{
-		"$id":  "gts.x.testmod.abs.chain.v1~x.testmod._.mid.v1~x.testmod._.leaf.v1~",
+		"$id":  "gts://gts.x.testmod.abs.chain.v1~x.testmod._.mid.v1~x.testmod._.leaf.v1~",
 		"type": "object",
 		"allOf": []any{
 			map[string]any{"$ref": "gts.x.testmod.abs.chain.v1~x.testmod._.mid.v1~"},
@@ -469,7 +469,7 @@ func TestAbstract_ChainOfAbstracts(t *testing.T) {
 func TestAbstract_FalseIsNoop(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":            "gts.x.testmod.absfalse.base.v1~",
+		"$id":            "gts://gts.x.testmod.absfalse.base.v1~",
 		"type":           "object",
 		"x-gts-abstract": false,
 		"required":       []any{"id"},
@@ -491,7 +491,7 @@ func TestAbstract_FalseIsNoop(t *testing.T) {
 func TestBothModifiers_Rejected(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":            "gts.x.testmod.both.invalid.v1~",
+		"$id":            "gts://gts.x.testmod.both.invalid.v1~",
 		"type":           "object",
 		"x-gts-final":    true,
 		"x-gts-abstract": true,
@@ -507,7 +507,7 @@ func TestAbstractBaseFinalDerived(t *testing.T) {
 	store := NewGtsStore(nil)
 	// Abstract base
 	mustRegisterMod(t, store, map[string]any{
-		"$id":            "gts.x.testmod.absfinal.base.v1~",
+		"$id":            "gts://gts.x.testmod.absfinal.base.v1~",
 		"type":           "object",
 		"x-gts-abstract": true,
 		"required":       []any{"id", "name"},
@@ -518,7 +518,7 @@ func TestAbstractBaseFinalDerived(t *testing.T) {
 	})
 	// Concrete + final derived
 	mustRegisterMod(t, store, map[string]any{
-		"$id":         "gts.x.testmod.absfinal.base.v1~x.testmod._.concrete.v1~",
+		"$id":         "gts://gts.x.testmod.absfinal.base.v1~x.testmod._.concrete.v1~",
 		"type":        "object",
 		"x-gts-final": true,
 		"allOf": []any{
@@ -543,7 +543,7 @@ func TestAbstractBaseFinalDerived(t *testing.T) {
 	}
 	// Derived from B — should fail (B is final)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":  "gts.x.testmod.absfinal.base.v1~x.testmod._.concrete.v1~x.testmod._.sub.v1~",
+		"$id":  "gts://gts.x.testmod.absfinal.base.v1~x.testmod._.concrete.v1~x.testmod._.sub.v1~",
 		"type": "object",
 		"allOf": []any{
 			map[string]any{"$ref": "gts.x.testmod.absfinal.base.v1~x.testmod._.concrete.v1~"},
@@ -568,7 +568,7 @@ func TestAbstractBaseFinalDerived(t *testing.T) {
 func TestSchemaKeywordsInInstance_FinalRejected(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":      "gts.x.testmod.kwininst.base.v1~",
+		"$id":      "gts://gts.x.testmod.kwininst.base.v1~",
 		"type":     "object",
 		"required": []any{"id"},
 		"properties": map[string]any{
@@ -591,7 +591,7 @@ func TestSchemaKeywordsInInstance_FinalRejected(t *testing.T) {
 func TestSchemaKeywordsInInstance_AbstractRejected(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":      "gts.x.testmod.kwininst2.base.v1~",
+		"$id":      "gts://gts.x.testmod.kwininst2.base.v1~",
 		"type":     "object",
 		"required": []any{"id"},
 		"properties": map[string]any{
@@ -615,7 +615,7 @@ func TestFinal_WithTraitsFullyResolved(t *testing.T) {
 	store := NewGtsStore(nil)
 	// Base with trait schema (required priority, no default)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":  "gts.x.testmod.finaltrait.base.v1~",
+		"$id":  "gts://gts.x.testmod.finaltrait.base.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type":                 "object",
@@ -629,7 +629,7 @@ func TestFinal_WithTraitsFullyResolved(t *testing.T) {
 	})
 	// Final derived that provides all traits
 	mustRegisterMod(t, store, map[string]any{
-		"$id":         "gts.x.testmod.finaltrait.base.v1~x.testmod._.leaf.v1~",
+		"$id":         "gts://gts.x.testmod.finaltrait.base.v1~x.testmod._.leaf.v1~",
 		"type":        "object",
 		"x-gts-final": true,
 		"allOf": []any{
@@ -652,7 +652,7 @@ func TestFinal_WithTraitsMissing(t *testing.T) {
 	store := NewGtsStore(nil)
 	// Base with required trait (no default)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":  "gts.x.testmod.finalmiss.base.v1~",
+		"$id":  "gts://gts.x.testmod.finalmiss.base.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type":                 "object",
@@ -666,7 +666,7 @@ func TestFinal_WithTraitsMissing(t *testing.T) {
 	})
 	// Final derived that does NOT provide the required trait
 	mustRegisterMod(t, store, map[string]any{
-		"$id":         "gts.x.testmod.finalmiss.base.v1~x.testmod._.leaf.v1~",
+		"$id":         "gts://gts.x.testmod.finalmiss.base.v1~x.testmod._.leaf.v1~",
 		"type":        "object",
 		"x-gts-final": true,
 		"allOf": []any{
@@ -687,7 +687,7 @@ func TestAbstract_WithIncompleteTraitsOk(t *testing.T) {
 	store := NewGtsStore(nil)
 	// Abstract base with required trait (no default) — should pass because abstract
 	mustRegisterMod(t, store, map[string]any{
-		"$id":            "gts.x.testmod.abstrait.base.v1~",
+		"$id":            "gts://gts.x.testmod.abstrait.base.v1~",
 		"type":           "object",
 		"x-gts-abstract": true,
 		"x-gts-traits-schema": map[string]any{
@@ -709,7 +709,7 @@ func TestAbstract_WithIncompleteTraitsOk(t *testing.T) {
 func TestFinal_NonBooleanRejected(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":         "gts.x.testmod.finalbadval.base.v1~",
+		"$id":         "gts://gts.x.testmod.finalbadval.base.v1~",
 		"type":        "object",
 		"x-gts-final": "yes",
 		"properties":  map[string]any{"name": map[string]any{"type": "string"}},
@@ -723,7 +723,7 @@ func TestFinal_NonBooleanRejected(t *testing.T) {
 func TestAbstract_NonBooleanRejected(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterMod(t, store, map[string]any{
-		"$id":            "gts.x.testmod.absbadval.base.v1~",
+		"$id":            "gts://gts.x.testmod.absbadval.base.v1~",
 		"type":           "object",
 		"x-gts-abstract": 1.0,
 		"properties":     map[string]any{"name": map[string]any{"type": "string"}},

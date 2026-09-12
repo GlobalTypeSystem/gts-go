@@ -3,13 +3,13 @@ Copyright © 2025 Global Type System
 Released under Apache License 2.0
 */
 
-package gts
+package gtsid
 
 import "testing"
 
 // TestParseID_TypeOnly tests parsing a type-only identifier
 func TestParseID_TypeOnly(t *testing.T) {
-	result := ParseID("gts.x.test3.events.type.v1~")
+	result := Parse("gts.x.test3.events.type.v1~")
 
 	if !result.OK {
 		t.Fatalf("Expected OK=true, got OK=false with error: %s", result.Error)
@@ -56,7 +56,7 @@ func TestParseID_TypeOnly(t *testing.T) {
 
 // TestParseID_ChainToInstance tests parsing a chained identifier ending in an instance
 func TestParseID_ChainToInstance(t *testing.T) {
-	result := ParseID("gts.x.test3.events.type.v1~abc.app._.custom_event.v1.2")
+	result := Parse("gts.x.test3.events.type.v1~abc.app._.custom_event.v1.2")
 
 	if !result.OK {
 		t.Fatalf("Expected OK=true, got OK=false with error: %s", result.Error)
@@ -103,7 +103,7 @@ func TestParseID_ChainToInstance(t *testing.T) {
 
 // TestParseID_LongChainToInstance tests parsing a long chain ending in an instance
 func TestParseID_LongChainToInstance(t *testing.T) {
-	result := ParseID("gts.x.test3.events.type.v1~a.b.c.d.v1~e.f.g.h.v1~i.j.k.l.v1.0")
+	result := Parse("gts.x.test3.events.type.v1~a.b.c.d.v1~e.f.g.h.v1~i.j.k.l.v1.0")
 
 	if !result.OK {
 		t.Fatalf("Expected OK=true, got OK=false with error: %s", result.Error)
@@ -132,7 +132,7 @@ func TestParseID_LongChainToInstance(t *testing.T) {
 
 // TestParseID_ChainedTypes tests parsing chained type identifiers
 func TestParseID_ChainedTypes(t *testing.T) {
-	result := ParseID("gts.x.test3.events.type.v1~abc.app._.custom.v1~")
+	result := Parse("gts.x.test3.events.type.v1~abc.app._.custom.v1~")
 
 	if !result.OK {
 		t.Fatalf("Expected OK=true, got OK=false with error: %s", result.Error)
@@ -161,7 +161,7 @@ func TestParseID_ChainedTypes(t *testing.T) {
 
 // TestParseID_ChainedWithInstance tests parsing chained types with final instance
 func TestParseID_ChainedWithInstance(t *testing.T) {
-	result := ParseID("gts.x.test3.events.type.v1~abc.app._.custom.v1~abc.app._.instance.v1.0")
+	result := Parse("gts.x.test3.events.type.v1~abc.app._.custom.v1~abc.app._.instance.v1.0")
 
 	if !result.OK {
 		t.Fatalf("Expected OK=true, got OK=false with error: %s", result.Error)
@@ -248,7 +248,7 @@ func TestParseID_VersionComponents(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ParseID(tt.id)
+			result := Parse(tt.id)
 
 			if !result.OK {
 				t.Fatalf("Expected OK=true, got OK=false with error: %s", result.Error)
@@ -311,7 +311,7 @@ func TestParseID_NamespaceExtraction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ParseID(tt.id)
+			result := Parse(tt.id)
 
 			if !result.OK {
 				t.Fatalf("Expected OK=true, got OK=false with error: %s", result.Error)
@@ -364,7 +364,7 @@ func TestParseID_InvalidIDs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ParseID(tt.id)
+			result := Parse(tt.id)
 
 			if result.OK {
 				t.Errorf("Expected OK=false for invalid ID '%s', but got OK=true", tt.id)
@@ -383,7 +383,7 @@ func TestParseID_InvalidIDs(t *testing.T) {
 
 // TestParseID_AllComponents tests that all component fields are extracted
 func TestParseID_AllComponents(t *testing.T) {
-	result := ParseID("gts.myvendor.mypackage.mynamespace.mytype.v3.7~a.b.c.d.v1.0")
+	result := Parse("gts.myvendor.mypackage.mynamespace.mytype.v3.7~a.b.c.d.v1.0")
 
 	if !result.OK {
 		t.Fatalf("Expected OK=true, got OK=false with error: %s", result.Error)

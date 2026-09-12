@@ -8,6 +8,8 @@ package gts
 import (
 	"fmt"
 	"strings"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // JsonFile represents a JSON file containing one or more entities
@@ -19,7 +21,7 @@ type JsonFile struct {
 
 // JsonEntity represents a JSON object with extracted GTS identifiers
 type JsonEntity struct {
-	GtsID               *GtsID
+	GtsID               *gtsid.ID
 	TypeID              string
 	SelectedEntityField string
 	SelectedTypeIDField string
@@ -66,27 +68,35 @@ func NewJsonEntityWithFile(content map[string]any, cfg *GtsConfig, file *JsonFil
 
 	// ID extraction logic based on entity type
 	if entity.IsTypeSchema {
-		// For type-schemas: use entity ID (should be from $id field)
-		if entityIDValue != "" && IsValidGtsID(entityIDValue) {
-			gtsID, _ := NewGtsID(entityIDValue)
+		// Validate that schema $id uses the gts:// URI form, not the bare gts.
+		// prefix. Per gts-spec, schemas must place the identifier in $id as a
+		// gts:// URI. Leaving GtsID nil here causes downstream registration to
+		// fail with a "malformed or non-GTS $id" diagnostic (mirrors Rust
+		// entities.rs). This lives in the core library so every client (server,
+		// batch validator, direct callers) enforces it uniformly.
+		validPrefix := true
+		if rawID, ok := content["$id"].(string); ok {
+			// A bare "gts." $id (as opposed to the required "gts://" URI form)
+			// is not a valid schema identifier.
+			if ClassifyRef(strings.TrimSpace(rawID)) == RefBareGtsID {
+				validPrefix = false
+			}
+		}
+		if validPrefix && entityIDValue != "" && gtsid.IsValid(entityIDValue) {
+			gtsID, _ := gtsid.New(entityIDValue)
 			entity.GtsID = gtsID
 		}
-	} else {
-		// For instances: different logic based on well-known vs anonymous
-		if entityIDValue != "" && IsValidGtsID(entityIDValue) {
-			// Well-known instance: GTS ID in id field
-			gtsID, _ := NewGtsID(entityIDValue)
-			entity.GtsID = gtsID
-			// Type ID should be derived from the chain if not explicitly set
-			if entity.TypeID == "" && entity.SelectedEntityField != "" {
-				entity.TypeID = entity.calcJSONTypeID(cfg, entityIDValue)
-			}
-		} else {
-			// Anonymous instance: non-GTS ID in id field, GTS type in type field
-			// GtsID remains nil for anonymous instances
-			// entity.TypeID should be set from type field
+	} else if entityIDValue != "" && gtsid.IsValid(entityIDValue) {
+		// Well-known instance: GTS ID in id field
+		gtsID, _ := gtsid.New(entityIDValue)
+		entity.GtsID = gtsID
+		// Type ID should be derived from the chain if not explicitly set
+		if entity.TypeID == "" && entity.SelectedEntityField != "" {
+			entity.TypeID = entity.calcJSONTypeID(cfg, entityIDValue)
 		}
 	}
+	// Anonymous instance (non-schema, non-GTS id): GtsID stays nil and
+	// entity.TypeID is taken from the type field — nothing more to do here.
 
 	// Extract GTS references from content
 	entity.GtsRefs = extractGtsReferences(content)
@@ -147,13 +157,10 @@ func isJSONSchema(content map[string]any) bool {
 		return false
 	}
 
-	// Schema Detection: a JSON document is a schema if and only if it has a $schema field
+	// Schema Detection: only canonical $schema is recognized.
+	// The doubled-dollar $$schema form is an HttpRunner escaping artifact,
+	// not a JSON Schema keyword.
 	_, hasSchema := content["$schema"]
-	if !hasSchema {
-		// Try alternative field name
-		_, hasSchema = content["$$schema"]
-	}
-
 	return hasSchema
 }
 
@@ -182,7 +189,7 @@ func (e *JsonEntity) getFieldValue(field string) string {
 	// Strip the "gts://" URI prefix ONLY for $id field (JSON Schema compatibility)
 	// The gts:// prefix is ONLY valid in the $id field of JSON Schema
 	if field == "$id" {
-		trimmed = strings.TrimPrefix(trimmed, GtsURIPrefix)
+		trimmed = gtsid.NormalizeID(trimmed)
 	}
 
 	return trimmed
@@ -193,7 +200,7 @@ func (e *JsonEntity) firstNonEmptyField(fields []string) (string, string) {
 	// First pass: look for valid GTS IDs
 	for _, field := range fields {
 		val := e.getFieldValue(field)
-		if val != "" && IsValidGtsID(val) {
+		if val != "" && gtsid.IsValid(val) {
 			return field, val
 		}
 	}
@@ -220,10 +227,10 @@ func (e *JsonEntity) calcJSONEntityID(cfg *GtsConfig) string {
 func (e *JsonEntity) calcJSONTypeID(cfg *GtsConfig, entityIDValue string) string {
 	if e.IsTypeSchema {
 		// For derived type-schemas, derive parent type from chain
-		if entityIDValue != "" && IsValidGtsID(entityIDValue) && strings.HasSuffix(entityIDValue, "~") {
-			firstTilde := strings.Index(entityIDValue, "~")
+		if entityIDValue != "" && gtsid.IsValid(entityIDValue) && gtsid.IsTypeID(entityIDValue) {
+			firstTilde := strings.Index(entityIDValue, gtsid.TypeMarker)
 			if firstTilde > 0 {
-				secondTilde := strings.Index(entityIDValue[firstTilde+1:], "~")
+				secondTilde := strings.Index(entityIDValue[firstTilde+1:], gtsid.TypeMarker)
 				if secondTilde > 0 {
 					// This is a derived type-schema, derive parent from chain
 					e.SelectedTypeIDField = e.SelectedEntityField
@@ -239,7 +246,7 @@ func (e *JsonEntity) calcJSONTypeID(cfg *GtsConfig, entityIDValue string) string
 		// callers can see we did inspect $schema.
 		if schemaValue := e.getFieldValue("$schema"); schemaValue != "" {
 			e.SelectedTypeIDField = "$schema"
-			if strings.HasSuffix(schemaValue, "~") && IsValidGtsID(schemaValue) {
+			if gtsid.IsTypeID(schemaValue) && gtsid.IsValid(schemaValue) {
 				return schemaValue
 			}
 		}
@@ -247,11 +254,11 @@ func (e *JsonEntity) calcJSONTypeID(cfg *GtsConfig, entityIDValue string) string
 	}
 
 	// For instances: try entity ID chain first, then TypeIDFields
-	if entityIDValue != "" && IsValidGtsID(entityIDValue) {
+	if entityIDValue != "" && gtsid.IsValid(entityIDValue) {
 		// For instances, find last ~ and return everything up to and including it
 		// But skip if entity ID ends with ~ (that would be a type, not an instance)
-		if !strings.HasSuffix(entityIDValue, "~") {
-			lastTilde := strings.LastIndex(entityIDValue, "~")
+		if !gtsid.IsTypeID(entityIDValue) {
+			lastTilde := strings.LastIndex(entityIDValue, gtsid.TypeMarker)
 			if lastTilde > 0 {
 				e.SelectedTypeIDField = e.SelectedEntityField
 				return entityIDValue[:lastTilde+1]

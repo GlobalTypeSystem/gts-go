@@ -21,9 +21,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // ValidateSchemaChainResult is the result of OP#12 schema chain validation.
@@ -35,7 +36,7 @@ type ValidateSchemaChainResult struct {
 
 // ValidateSchemaChain validates each derived schema against its base across the chain (OP#12).
 func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResult {
-	gid, err := NewGtsID(schemaID)
+	gid, err := gtsid.New(schemaID)
 	if err != nil {
 		return &ValidateSchemaChainResult{
 			TypeID: schemaID,
@@ -104,9 +105,9 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 }
 
 // buildIDFromSegments reconstructs a GTS ID string from a slice of segments.
-func buildIDFromSegments(segments []*GtsIDSegment) string {
+func buildIDFromSegments(segments []*gtsid.Segment) string {
 	sb := strings.Builder{}
-	sb.WriteString(GtsPrefix)
+	sb.WriteString(gtsid.Prefix)
 	for _, seg := range segments {
 		sb.WriteString(seg.Segment)
 	}
@@ -233,24 +234,38 @@ func validateSchemaCompatibility(base, derived *effectiveSchema, baseID, derived
 					propName, derivedID, baseID,
 				))
 			}
-		} else if !nested {
-			// Only flag omission when derived is explicitly closed (has a properties key or AP:false).
-			// An open-model derived schema implicitly accepts all properties.
-			derivedIsClosed := derived.propertiesSet
+		} else {
+			derivedAPFalse := false
 			if ap, ok := derived.additionalProperties.(bool); ok && !ap {
-				derivedIsClosed = true
+				derivedAPFalse = true
 			}
-			if !exists && derivedIsClosed {
+
+			// Flag omission when derived is explicitly closed.
+			// At top level: when derived has a properties key or AP:false.
+			// Nested: when derived has AP:false (orphans ancestor property under allOf).
+			shouldCheckOmission := false
+			if !nested {
+				shouldCheckOmission = derived.propertiesSet || derivedAPFalse
+			} else {
+				shouldCheckOmission = derivedAPFalse
+			}
+
+			if !exists && shouldCheckOmission {
 				errors = append(errors, fmt.Sprintf(
 					"property '%s': derived schema '%s' omits property defined in base '%s'",
 					propName, derivedID, baseID,
 				))
-			} else if _, baseIsObj := baseProp.(map[string]any); baseIsObj && exists {
-				if _, derivedIsObj := derivedProp.(map[string]any); !derivedIsObj {
-					errors = append(errors, fmt.Sprintf(
-						"property '%s': derived schema '%s' replaces object schema with a non-object value, loosening base '%s' constraints",
-						propName, derivedID, baseID,
-					))
+			}
+
+			// Check replacement (top-level only)
+			if !nested && exists {
+				if _, baseIsObj := baseProp.(map[string]any); baseIsObj {
+					if _, derivedIsObj := derivedProp.(map[string]any); !derivedIsObj {
+						errors = append(errors, fmt.Sprintf(
+							"property '%s': derived schema '%s' replaces object schema with a non-object value, loosening base '%s' constraints",
+							propName, derivedID, baseID,
+						))
+					}
 				}
 			}
 		}
@@ -436,7 +451,7 @@ func checkConstCompatibility(baseProp, derivedProp map[string]any, propName stri
 	// Per §4.4.3: GTS-ID discriminator consts (strings containing '~') may differ across versions.
 	if baseStr, ok := baseConst.(string); ok {
 		if derivedStr, ok := derivedConst.(string); ok {
-			if strings.Contains(baseStr, "~") && strings.Contains(derivedStr, "~") {
+			if strings.Contains(baseStr, gtsid.TypeMarker) && strings.Contains(derivedStr, gtsid.TypeMarker) {
 				return nil
 			}
 		}
@@ -634,6 +649,13 @@ func checkLooseningKeywords(baseProp, derivedProp map[string]any, propName strin
 
 // ── Enumerated value helpers ─────────────────────────────────────────────────
 
+// maxEnumeratedPatternChecks bounds how many const/enum string values are matched
+// against a base "pattern". Each ECMA regexp match may run up to the configured
+// MatchTimeout (see ecmaRegexpEngine), so an unbounded enum would allow aggregate
+// ReDoS work (CWE-1333) via an attacker-supplied schema. Schemas whose enum
+// cardinality exceeds this limit are rejected instead of validated.
+const maxEnumeratedPatternChecks = 100
+
 // collectDerivedEnumeratedValues returns (values, true) when derived uses const or enum.
 func collectDerivedEnumeratedValues(derivedProp map[string]any) ([]any, bool) {
 	if c, ok := derivedProp["const"]; ok {
@@ -704,11 +726,24 @@ func checkEnumeratedValuesAgainstBase(baseProp map[string]any, values []any, pro
 	}
 
 	if basePat, ok := baseProp["pattern"].(string); ok && basePat != "" {
-		re, err := regexp.Compile(basePat)
+		re, err := ecmaRegexpEngine(basePat)
 		if err == nil {
+			// Bound aggregate regexp work: cap how many string values are matched
+			// against the base pattern to avoid unbounded ReDoS (CWE-1333).
+			stringValues := 0
 			for _, val := range values {
-				if s, ok := val.(string); ok {
-					if !re.MatchString(s) {
+				if _, ok := val.(string); ok {
+					stringValues++
+				}
+			}
+			if stringValues > maxEnumeratedPatternChecks {
+				errors = append(errors, fmt.Sprintf(
+					"property '%s': derived const/enum has %d values to match against base pattern %q, exceeding the limit of %d",
+					propName, stringValues, basePat, maxEnumeratedPatternChecks,
+				))
+			} else {
+				for _, val := range values {
+					if s, ok := val.(string); ok && !re.MatchString(s) {
 						errors = append(errors, fmt.Sprintf(
 							"property '%s': derived const/enum value %q does not match base pattern %q",
 							propName, s, basePat,
@@ -812,6 +847,8 @@ func jsonEqual(a, b any) bool {
 // ── Ref resolution ────────────────────────────────────────────────────────────
 
 // resolveSchemaRefsChecked resolves $ref references in a named schema, detecting cycles.
+// Content is deep-copied and $$ref keys are normalized to $ref before resolution
+// (the $$ prefix is the httprunner convention for escaping $ in JSON keys).
 func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, error) {
 	entity := s.Get(schemaID)
 	if entity == nil {
@@ -820,7 +857,7 @@ func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, er
 	if !entity.IsTypeSchema {
 		return nil, fmt.Errorf("entity '%s' is not a schema", schemaID)
 	}
-	return s.resolveRefs(entity.Content)
+	return s.resolveRefs(deepCopyMap(entity.Content))
 }
 
 // resolveRefs resolves all $ref references in a schema map, detecting cycles.
@@ -851,7 +888,7 @@ func (s *GtsStore) resolveRefs(schema map[string]any) (map[string]any, error) {
 func findUnresolvedRef(schema any) string {
 	switch v := schema.(type) {
 	case map[string]any:
-		if ref, ok := v["$ref"].(string); ok && !strings.HasPrefix(ref, "#") {
+		if ref, ok := v["$ref"].(string); ok && !strings.HasPrefix(ref, LocalRefPrefix) {
 			return ref
 		}
 		for _, val := range v {
@@ -874,7 +911,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 	case map[string]any:
 		// Handle $ref
 		if refVal, ok := v["$ref"].(string); ok {
-			if strings.HasPrefix(refVal, "#") { // local refs kept as-is
+			if strings.HasPrefix(refVal, LocalRefPrefix) { // local refs kept as-is
 				result := make(map[string]any)
 				for k, val := range v {
 					result[k] = s.resolveRefsInner(val, visited, cycleFound)
@@ -882,7 +919,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				return result
 			}
 
-			canonical := strings.TrimPrefix(refVal, GtsURIPrefix)
+			canonical := gtsid.NormalizeID(refVal)
 			if visited[canonical] {
 				*cycleFound = true
 				result := make(map[string]any)

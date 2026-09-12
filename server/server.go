@@ -63,6 +63,8 @@ func (s *Server) registerRoutes() {
 
 	// OP#6 - Validate Instance
 	s.mux.HandleFunc("POST /validate-instance", s.handleValidateInstance)
+	s.mux.HandleFunc("POST /validate-json", s.handleValidateJSON)
+	s.mux.HandleFunc("POST /validate-json/{typeID}", s.handleValidateJSON)
 
 	// OP#7 - Resolve Relationships
 	s.mux.HandleFunc("GET /resolve-relationships", s.handleResolveRelationships)
@@ -98,6 +100,7 @@ func (s *Server) Start() error {
 // Helper methods
 
 func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Connection", "close")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {

@@ -14,14 +14,16 @@ import (
 )
 
 var (
-	// ExcludeList contains directory names to exclude during file scanning
-	ExcludeList = []string{"node_modules", "dist", "build"}
+	// ExcludeList is the default set of directory names to exclude during file
+	// scanning. The CLI --exclude option overrides it per invocation.
+	ExcludeList = []string{"node_modules", "dist", "build", ".git", "target"}
 )
 
 // GtsFileReader reads JSON entities from files and directories
 type GtsFileReader struct {
 	paths               []string
 	cfg                 *GtsConfig
+	exclude             []string
 	files               []string
 	currentIndex        int
 	currentFileEntities []*JsonEntity
@@ -48,9 +50,19 @@ func NewGtsFileReader(paths []string, cfg *GtsConfig) *GtsFileReader {
 	}
 
 	return &GtsFileReader{
-		paths: expandedPaths,
-		cfg:   cfg,
+		paths:   expandedPaths,
+		cfg:     cfg,
+		exclude: append([]string(nil), ExcludeList...),
 	}
+}
+
+// WithExclude overrides the directory names skipped during scanning. An empty
+// list is ignored so callers keep the default exclusions.
+func (r *GtsFileReader) WithExclude(exclude []string) *GtsFileReader {
+	if len(exclude) > 0 {
+		r.exclude = exclude
+	}
+	return r
 }
 
 // NewGtsFileReaderFromPath creates a new file reader from a single path
@@ -90,7 +102,7 @@ func (r *GtsFileReader) collectFiles() {
 
 				// Skip excluded directories
 				if info.IsDir() {
-					if slices.Contains(ExcludeList, info.Name()) {
+					if slices.Contains(r.exclude, info.Name()) {
 						return filepath.SkipDir
 					}
 					return nil

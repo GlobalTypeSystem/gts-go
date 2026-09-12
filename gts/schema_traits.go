@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -314,20 +315,8 @@ func validateTraitsAgainstSchema(traitSchema map[string]any, effectiveTraits map
 
 	// Use jsonschema library for standard JSON Schema validation
 	compiler := jsonschema.NewCompiler()
-
-	// Register lenient format validators
-	lenientValidator := func(v any) error { return nil }
-	formats := []string{
-		"uuid", "date-time", "date", "time", "email", "hostname",
-		"ipv4", "ipv6", "uri", "uri-reference", "iri", "iri-reference",
-		"uri-template", "json-pointer", "relative-json-pointer", "regex",
-	}
-	for _, fmt := range formats {
-		compiler.RegisterFormat(&jsonschema.Format{
-			Name:     fmt,
-			Validate: lenientValidator,
-		})
-	}
+	compiler.UseRegexpEngine(ecmaRegexpEngine)
+	compiler.AssertFormat()
 
 	// Remove x-gts-ref and x-gts-traits from schema before validation
 	cleanSchema := removeXGtsFields(traitSchema)
@@ -390,7 +379,7 @@ func checkUnresolvedProps(schema map[string]any, traits map[string]any) []string
 // removeXGtsFields removes x-gts-* extension fields from a schema recursively.
 func removeXGtsFields(schema map[string]any) map[string]any {
 	return walkSchema(schema, nil, func(k string) bool {
-		return strings.HasPrefix(k, "x-gts-")
+		return IsXGtsExtension(k)
 	})
 }
 
@@ -405,7 +394,7 @@ type ValidateSchemaTraitsResult struct {
 // Walks the chain from base to leaf, collects x-gts-traits-schema and x-gts-traits
 // from each level's raw content, then validates.
 func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsResult {
-	gid, err := NewGtsID(schemaID)
+	gid, err := gtsid.New(schemaID)
 	if err != nil {
 		return &ValidateSchemaTraitsResult{
 			TypeID: schemaID,
@@ -465,17 +454,6 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		traitSchemas[i] = resolved
 	}
 
-	// Abstract types are "incomplete waiting for descendants" (ADR-0003): the
-	// trait completeness check is skipped for them. As in gts-rust, abstract
-	// leaves skip trait validation entirely — concrete descendants still run the
-	// full check on their own effective state. Keyed on the validated type's own
-	// x-gts-abstract, never on a registry-state-dependent "leaf" notion.
-	if leafEntity := s.Get(schemaID); leafEntity != nil {
-		if ab, isBool := leafEntity.Content[KeyXGtsAbstract].(bool); isBool && ab {
-			return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
-		}
-	}
-
 	hasTraitValues := len(mergedTraits) > 0
 
 	// No x-gts-traits-schema anywhere in the chain: trait values are meaningless.
@@ -506,6 +484,28 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		}
 	}
 
+	// Pairwise trait-schema compatibility: each descendant trait-schema must be
+	// a valid narrowing of its ancestor. This catches type changes, AP:false
+	// orphaning, and incompatible extensions — even for abstract types that skip
+	// value completeness.
+	for i := 1; i < len(traitSchemas); i++ {
+		baseTS, baseIsMap := traitSchemas[i-1].(map[string]any)
+		derivedTS, derivedIsMap := traitSchemas[i].(map[string]any)
+		if !baseIsMap || !derivedIsMap {
+			continue
+		}
+		baseEff := extractEffectiveSchema(removeXGtsFields(baseTS))
+		derivedEff := extractEffectiveSchema(removeXGtsFields(derivedTS))
+		compErrs := validateTraitSchemaCompatibility(baseEff, derivedEff)
+		if len(compErrs) > 0 {
+			return &ValidateSchemaTraitsResult{
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("Schema '%s' trait-schema compatibility failed: %s", schemaID, strings.Join(compErrs, "; ")),
+			}
+		}
+	}
+
 	// Build the effective trait schema by composing the chain via allOf.
 	effAny := buildEffectiveTraitSchema(traitSchemas)
 
@@ -523,6 +523,15 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
 	}
 
+	// Abstract types are "incomplete waiting for descendants" (ADR-0003): the
+	// trait completeness and value validation is skipped for them, but
+	// trait-schema structural compatibility has already been checked above.
+	if leafEntity := s.Get(schemaID); leafEntity != nil {
+		if ab, isBool := leafEntity.Content[KeyXGtsAbstract].(bool); isBool && ab {
+			return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
+		}
+	}
+
 	effectiveTraitSchema, _ := effAny.(map[string]any)
 
 	// Materialize: apply defaults from the effective trait schema for any
@@ -533,6 +542,9 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	// schema, including the required-trait completeness check (this type is
 	// non-abstract — abstract types returned OK above).
 	errs := validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)
+	for _, err := range NewXGtsRefValidator(s).ValidateInstance(effectiveTraits, effectiveTraitSchema, "") {
+		errs = append(errs, err.Error())
+	}
 	if len(errs) > 0 {
 		return &ValidateSchemaTraitsResult{
 			TypeID: schemaID,
@@ -600,7 +612,7 @@ func normalizeDollarRefs(m map[string]any) map[string]any {
 // not subject to the closedness check. This mirrors the type-schema-validation
 // relaxations (ADR-0002/0003) while preserving the stricter entity contract.
 func (s *GtsStore) validateEntityLevelTraits(schemaID string) error {
-	gid, err := NewGtsID(schemaID)
+	gid, err := gtsid.New(schemaID)
 	if err != nil {
 		return fmt.Errorf("invalid GTS ID: %v", err)
 	}
@@ -772,4 +784,21 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 	}
 
 	return &ValidateEntityResult{EntityID: entityID, EntityType: "instance", OK: true}
+}
+
+// validateTraitSchemaCompatibility checks structural compatibility between an
+// ancestor and descendant trait-schema. It delegates to the core
+// validateSchemaCompatibility but filters out required-removal errors because
+// trait schemas compose via allOf where required is additive (union semantics).
+// A descendant only declares its OWN new required fields; ancestor required
+// fields are preserved automatically through allOf composition.
+func validateTraitSchemaCompatibility(base, derived *effectiveSchema) []string {
+	all := validateSchemaCompatibility(base, derived, "ancestor trait-schema", "descendant trait-schema", true)
+	var filtered []string
+	for _, e := range all {
+		if !strings.Contains(e, "removes required field") {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered
 }

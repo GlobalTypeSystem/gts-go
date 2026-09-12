@@ -29,7 +29,7 @@ func TestExtractID_BasicEntityID(t *testing.T) {
 		{
 			name: "Extract from $id field",
 			content: map[string]any{
-				"$id":  "gts.vendor.package.namespace.type.v1~a.b.c.d.v1",
+				"$id":  "gts://gts.vendor.package.namespace.type.v1~a.b.c.d.v1",
 				"name": "Test Entity",
 			},
 			expectedID:    "gts.vendor.package.namespace.type.v1~a.b.c.d.v1",
@@ -265,7 +265,7 @@ func TestExtractID_InvalidIDInField(t *testing.T) {
 // in $schema is no longer carried through to the type_id (it's rejected).
 func TestExtractID_SchemaIDFallback(t *testing.T) {
 	content := map[string]any{
-		"$id":     "gts.vendor.package.namespace.type.v0~",
+		"$id":     "gts://gts.vendor.package.namespace.type.v0~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 	}
 
@@ -292,7 +292,7 @@ func TestExtractID_SchemaIDFallback(t *testing.T) {
 // TestExtractID_DollarSchema_GtsTypeID accepts a GTS Type Identifier as type_id.
 func TestExtractID_DollarSchema_GtsTypeID(t *testing.T) {
 	content := map[string]any{
-		"$id":     "gts.vendor.pkg.ns.type.v1~",
+		"$id":     "gts://gts.vendor.pkg.ns.type.v1~",
 		"$schema": "gts.vendor.pkg.ns.type.v0~",
 	}
 
@@ -310,7 +310,7 @@ func TestExtractID_DollarSchema_GtsTypeID(t *testing.T) {
 // TestExtractID_DollarSchema_NonGtsValueRejected rejects non-GTS strings.
 func TestExtractID_DollarSchema_NonGtsValueRejected(t *testing.T) {
 	content := map[string]any{
-		"$id":     "gts.vendor.pkg.ns.type.v1~",
+		"$id":     "gts://gts.vendor.pkg.ns.type.v1~",
 		"$schema": "gts.but.not.a.type.identifier", // valid-looking but missing trailing ~
 	}
 
@@ -385,7 +385,7 @@ func TestExtractID_GtsColonPrefix_NotValid(t *testing.T) {
 func TestExtractID_GtsURIPrefix_WithoutPrefix(t *testing.T) {
 	// IDs without gts:// prefix should work as before
 	content := map[string]any{
-		"$id":     "gts.vendor.package.namespace.type.v1.0~",
+		"$id":     "gts://gts.vendor.package.namespace.type.v1.0~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 	}
 

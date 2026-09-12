@@ -606,7 +606,7 @@ func TestValidateSchemaTraits_MissingSchema(t *testing.T) {
 func TestValidateSchemaTraits_NoTraitsAnywhere_OK(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traits.ns.plain.v1~",
+		"$id":  "gts://gts.x.traits.ns.plain.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"id": map[string]any{"type": "string"},
@@ -621,7 +621,7 @@ func TestValidateSchemaTraits_NoTraitsAnywhere_OK(t *testing.T) {
 func TestValidateSchemaTraits_TraitValuesWithoutSchema_Fails(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":          "gts.x.traits.ns.noschema.v1~",
+		"$id":          "gts://gts.x.traits.ns.noschema.v1~",
 		"type":         "object",
 		"x-gts-traits": map[string]any{"color": "red"},
 	})
@@ -634,7 +634,7 @@ func TestValidateSchemaTraits_TraitValuesWithoutSchema_Fails(t *testing.T) {
 func TestValidateSchemaTraits_NonObjectTraitSchema_Fails(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":                 "gts.x.traits.ns.badschema.v1~",
+		"$id":                 "gts://gts.x.traits.ns.badschema.v1~",
 		"type":                "object",
 		"x-gts-traits-schema": "not-an-object",
 		"x-gts-traits":        map[string]any{"k": "v"},
@@ -648,7 +648,7 @@ func TestValidateSchemaTraits_NonObjectTraitSchema_Fails(t *testing.T) {
 func TestValidateSchemaTraits_ValidTraits_SingleLevel(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traits.ns.typed.v1~",
+		"$id":  "gts://gts.x.traits.ns.typed.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type": "object",
@@ -670,7 +670,7 @@ func TestValidateSchemaTraits_ValidTraits_SingleLevel(t *testing.T) {
 func TestValidateSchemaTraits_MissingRequiredTrait_Fails(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traits.ns.missingreq.v1~",
+		"$id":  "gts://gts.x.traits.ns.missingreq.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type": "object",
@@ -691,7 +691,7 @@ func TestValidateSchemaTraits_MissingRequiredTrait_Fails(t *testing.T) {
 func TestValidateSchemaTraits_DefaultFillsMissingTrait(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traits.ns.defaults.v1~",
+		"$id":  "gts://gts.x.traits.ns.defaults.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type": "object",
@@ -712,7 +712,7 @@ func TestValidateSchemaTraits_DefaultFillsMissingTrait(t *testing.T) {
 func TestValidateSchemaTraits_WrongTraitType_Fails(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traits.ns.wrongtype.v1~",
+		"$id":  "gts://gts.x.traits.ns.wrongtype.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type": "object",
@@ -733,7 +733,7 @@ func TestValidateSchemaTraits_InheritedTraitSchema_TwoLevel(t *testing.T) {
 	store := NewGtsStore(nil)
 	// Base defines trait schema
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traits2.ns.base.v1~",
+		"$id":  "gts://gts.x.traits2.ns.base.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type": "object",
@@ -745,7 +745,7 @@ func TestValidateSchemaTraits_InheritedTraitSchema_TwoLevel(t *testing.T) {
 	})
 	// Derived provides the trait value
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":          "gts.x.traits2.ns.base.v1~x.traits2.ns.child.v1~",
+		"$id":          "gts://gts.x.traits2.ns.base.v1~x.traits2.ns.child.v1~",
 		"type":         "object",
 		"x-gts-traits": map[string]any{"color": "green"},
 	})
@@ -763,7 +763,7 @@ func TestValidateSchemaTraits_XGtsKeysInsideTraitSchema_Tolerated(t *testing.T) 
 	// optional property and the chain supplies a matching value.
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traits.ns.selfcontained.v1~",
+		"$id":  "gts://gts.x.traits.ns.selfcontained.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type":                "object",
@@ -786,7 +786,7 @@ func TestValidateSchemaTraits_DescendantOverride_LastWins(t *testing.T) {
 	// trait value when the trait-schema does not lock it via `const`.
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traits3.ns.base.v1~",
+		"$id":  "gts://gts.x.traits3.ns.base.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type": "object",
@@ -797,7 +797,7 @@ func TestValidateSchemaTraits_DescendantOverride_LastWins(t *testing.T) {
 		"x-gts-traits": map[string]any{"color": "red"},
 	})
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":          "gts.x.traits3.ns.base.v1~x.traits3.ns.child.v1~",
+		"$id":          "gts://gts.x.traits3.ns.base.v1~x.traits3.ns.child.v1~",
 		"type":         "object",
 		"x-gts-traits": map[string]any{"color": "blue"},
 	})
@@ -813,7 +813,7 @@ func TestValidateSchemaTraits_ConstLock_OverrideFails(t *testing.T) {
 	// standard validation against the effective trait-schema.
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traits3c.ns.base.v1~",
+		"$id":  "gts://gts.x.traits3c.ns.base.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type": "object",
@@ -824,7 +824,7 @@ func TestValidateSchemaTraits_ConstLock_OverrideFails(t *testing.T) {
 		"x-gts-traits": map[string]any{"indexed": true},
 	})
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":          "gts.x.traits3c.ns.base.v1~x.traits3c.ns.child.v1~",
+		"$id":          "gts://gts.x.traits3c.ns.base.v1~x.traits3c.ns.child.v1~",
 		"type":         "object",
 		"x-gts-traits": map[string]any{"indexed": false},
 	})
@@ -841,7 +841,7 @@ func TestValidateSchemaTraits_RedeclaredDefaultAcrossChain_Allowed(t *testing.T)
 	// aggregated allOf retains both declarations.
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traits4.ns.base.v1~",
+		"$id":  "gts://gts.x.traits4.ns.base.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type": "object",
@@ -851,7 +851,7 @@ func TestValidateSchemaTraits_RedeclaredDefaultAcrossChain_Allowed(t *testing.T)
 		},
 	})
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traits4.ns.base.v1~x.traits4.ns.child.v1~",
+		"$id":  "gts://gts.x.traits4.ns.base.v1~x.traits4.ns.child.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type": "object",
@@ -871,7 +871,7 @@ func TestValidateSchemaTraits_BooleanFalse_ProhibitsTraits(t *testing.T) {
 	// subtree (ADR-0002). A trait-less type still validates; any trait fails.
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":                 "gts.x.traitsf.ns.notraits.v1~",
+		"$id":                 "gts://gts.x.traitsf.ns.notraits.v1~",
 		"type":                "object",
 		"x-gts-traits-schema": false,
 	})
@@ -880,7 +880,7 @@ func TestValidateSchemaTraits_BooleanFalse_ProhibitsTraits(t *testing.T) {
 	}
 
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":                 "gts.x.traitsf.ns.withtraits.v1~",
+		"$id":                 "gts://gts.x.traitsf.ns.withtraits.v1~",
 		"type":                "object",
 		"x-gts-traits-schema": false,
 		"x-gts-traits":        map[string]any{"anything": "x"},
@@ -896,7 +896,7 @@ func TestValidateSchemaTraits_NestedFalseInAllOf_ProhibitsTraits(t *testing.T) {
 	// when the `false` is not a bare top-level subschema (ADR-0002).
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.traitsnf.ns.withtraits.v1~",
+		"$id":  "gts://gts.x.traitsnf.ns.withtraits.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"allOf": []any{false},
@@ -912,7 +912,7 @@ func TestValidateSchemaTraits_BooleanTrue_AllowsAnyTraits(t *testing.T) {
 	// x-gts-traits-schema: true permits arbitrary trait values (ADR-0002).
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":                 "gts.x.traitst.ns.anytraits.v1~",
+		"$id":                 "gts://gts.x.traitst.ns.anytraits.v1~",
 		"type":                "object",
 		"x-gts-traits-schema": true,
 		"x-gts-traits":        map[string]any{"retention": "P90D", "anything": 7.0},
@@ -926,7 +926,7 @@ func TestValidateSchemaTraits_AbstractSkipsCompleteness(t *testing.T) {
 	// Abstract types skip the required-trait completeness check (ADR-0003).
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":            "gts.x.traitsa.ns.base.v1~",
+		"$id":            "gts://gts.x.traitsa.ns.base.v1~",
 		"type":           "object",
 		"x-gts-abstract": true,
 		"x-gts-traits-schema": map[string]any{
@@ -957,7 +957,7 @@ func TestValidateEntity_Schema_Valid(t *testing.T) {
 	store := NewGtsStore(nil)
 	// Single-segment schema with a closed trait schema and a matching trait value
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.entity.ns.valid.v1~",
+		"$id":  "gts://gts.x.entity.ns.valid.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"id": map[string]any{"type": "string"},
@@ -983,7 +983,7 @@ func TestValidateEntity_Schema_Valid(t *testing.T) {
 func TestValidateEntity_Schema_ChainIncompatible(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.entity.ns.typea.v1~",
+		"$id":  "gts://gts.x.entity.ns.typea.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"val": map[string]any{"type": "string"},
@@ -991,7 +991,7 @@ func TestValidateEntity_Schema_ChainIncompatible(t *testing.T) {
 	})
 	// Derived changes val to integer — incompatible
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.entity.ns.typea.v1~x.entity.ns.typeb.v1~",
+		"$id":  "gts://gts.x.entity.ns.typea.v1~x.entity.ns.typeb.v1~",
 		"type": "object",
 		"properties": map[string]any{
 			"val": map[string]any{"type": "integer"},
@@ -1012,7 +1012,7 @@ func TestValidateEntity_Schema_TraitSchemaWithoutValues_Fails(t *testing.T) {
 	// trait values somewhere in the chain.
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.entity.ns.novals.v1~",
+		"$id":  "gts://gts.x.entity.ns.novals.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type":                 "object",
@@ -1032,7 +1032,7 @@ func TestValidateEntity_Schema_TraitSchemaNotClosed_Fails(t *testing.T) {
 	// closed (additionalProperties:false) to be a deployable standalone entity.
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
-		"$id":  "gts.x.entity.ns.notclosed.v1~",
+		"$id":  "gts://gts.x.entity.ns.notclosed.v1~",
 		"type": "object",
 		"x-gts-traits-schema": map[string]any{
 			"type":       "object",
