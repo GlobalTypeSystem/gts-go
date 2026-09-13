@@ -6,12 +6,14 @@ Released under Apache License 2.0
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/GlobalTypeSystem/gts-go/gts"
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // Entity Management Handlers
@@ -38,7 +40,10 @@ func (s *Server) handleGetEntity(w http.ResponseWriter, r *http.Request) {
 
 	entity := s.store.Get(id)
 	if entity == nil {
-		s.writeError(w, http.StatusNotFound, fmt.Sprintf("Entity not found: %s", id))
+		s.writeJSON(w, http.StatusOK, map[string]any{
+			"ok":    false,
+			"error": fmt.Sprintf("Entity not found: %s", id),
+		})
 		return
 	}
 
@@ -60,71 +65,71 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		validationParam = r.URL.Query().Get("validation")
 	}
 
+	// Only the canonical JSON Schema keywords $schema/$id are recognized.
 	hasSchemaField := false
 	if schemaVal, ok := content["$schema"]; ok && schemaVal != nil {
 		hasSchemaField = true
-	} else if schemaVal, ok := content["$$schema"]; ok && schemaVal != nil {
-		content["$schema"] = schemaVal
-		hasSchemaField = true
-	}
-	if _, exists := content["$id"]; !exists {
-		if idVal, ok := content["$$id"]; ok {
-			content["$id"] = idVal
-		}
 	}
 
 	if hasSchemaField {
 		idField, exists := content["$id"]
 		if !exists || idField == nil {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id field is required when $schema is present",
+				"ok":             false,
+				"error":          "Unable to detect GTS ID in schema",
+				"is_type_schema": true,
 			})
 			return
 		}
 		idStr, ok := idField.(string)
 		if !ok {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id field must be a string",
+				"ok":             false,
+				"error":          "JSON Schema $id field must be a string",
+				"is_type_schema": true,
 			})
 			return
 		}
 		idStr = strings.TrimSpace(idStr)
 		if idStr == "" {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id field cannot be empty",
+				"ok":             false,
+				"error":          "JSON Schema $id field cannot be empty",
+				"is_type_schema": true,
 			})
 			return
 		}
-		if !strings.HasPrefix(idStr, gts.GtsURIPrefix) && !strings.HasPrefix(idStr, gts.GtsPrefix) {
+		if !gtsid.HasURIPrefix(idStr) && !gtsid.HasPrefix(idStr) {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id must be a valid GTS identifier (optionally using gts:// prefix)",
+				"ok":             false,
+				"error":          "JSON Schema $id must be a valid GTS identifier (optionally using gts:// prefix)",
+				"is_type_schema": true,
 			})
 			return
 		}
-		normalizedID := strings.TrimPrefix(idStr, gts.GtsURIPrefix)
-		if strings.Contains(normalizedID, "*") {
+		normalizedID := gtsid.NormalizeID(idStr)
+		if gtsid.HasWildcard(normalizedID) {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "Wildcards are not allowed in schema IDs, only in patterns for access control",
+				"ok":             false,
+				"error":          "Wildcards are not allowed in schema IDs, only in patterns for access control",
+				"is_type_schema": true,
 			})
 			return
 		}
-		isBaseSchemaID := strings.Count(normalizedID, "~") == 1 && strings.HasSuffix(normalizedID, "~")
-		if isBaseSchemaID && !strings.HasPrefix(idStr, gts.GtsURIPrefix) {
+		isBaseSchemaID := strings.Count(normalizedID, gtsid.TypeMarker) == 1 && gtsid.IsTypeID(normalizedID)
+		if isBaseSchemaID && !gtsid.HasURIPrefix(idStr) {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id field must use gts:// URI prefix for base schemas",
+				"ok":             false,
+				"error":          "JSON Schema $id field must use gts:// URI prefix for base schemas",
+				"is_type_schema": true,
 			})
 			return
 		}
-		if !gts.IsValidGtsID(normalizedID) {
+		if !gtsid.IsValid(normalizedID) {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": "JSON Schema $id must be a well-formed GTS identifier",
+				"ok":             false,
+				"error":          "JSON Schema $id must be a well-formed GTS identifier",
+				"is_type_schema": true,
 			})
 			return
 		}
@@ -142,8 +147,9 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusUnprocessableEntity
 		}
 		s.writeJSON(w, status, map[string]any{
-			"ok":    false,
-			"error": "Unable to extract GTS ID from entity",
+			"ok":             false,
+			"error":          "Unable to detect GTS ID in instance entity",
+			"is_type_schema": entity.IsTypeSchema,
 		})
 		return
 	}
@@ -155,23 +161,25 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 			if idStr, ok := idField.(string); ok {
 				// Reject plain gts. prefix only for base schemas (single segment ending with ~)
 				// Derived schemas (multiple ~ segments) are allowed to use plain gts. format
-				if strings.HasPrefix(idStr, "gts.") && !strings.HasPrefix(idStr, "gts://") {
+				if gts.ClassifyRef(idStr) == gts.RefBareGtsID {
 					// Count ~ segments to determine if it's a base or derived schema
-					tildeParts := strings.Split(idStr, "~")
+					tildeParts := strings.Split(idStr, gtsid.TypeMarker)
 					// If it's a base schema (only 2 parts: prefix and empty after ~), require gts://
 					if len(tildeParts) == 2 && tildeParts[1] == "" {
 						s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-							"ok":    false,
-							"error": "JSON Schema $id field must use gts:// URI prefix for GTS identifiers, not plain gts. prefix",
+							"ok":             false,
+							"error":          "JSON Schema $id field must use gts:// URI prefix for GTS identifiers, not plain gts. prefix",
+							"is_type_schema": true,
 						})
 						return
 					}
 				}
 				// Check for wildcards in any GTS schema IDs
-				if (strings.HasPrefix(idStr, "gts://") || strings.HasPrefix(idStr, "gts.")) && strings.Contains(idStr, "*") {
+				if (gtsid.HasURIPrefix(idStr) || gtsid.HasPrefix(idStr)) && gtsid.HasWildcard(idStr) {
 					s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-						"ok":    false,
-						"error": "Wildcards are not allowed in schema IDs, only in patterns for access control",
+						"ok":             false,
+						"error":          "Wildcards are not allowed in schema IDs, only in patterns for access control",
+						"is_type_schema": true,
 					})
 					return
 				}
@@ -187,8 +195,9 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 				errorMsgs = append(errorMsgs, err.Error())
 			}
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": fmt.Sprintf("$ref validation failed: %s", strings.Join(errorMsgs, "; ")),
+				"ok":             false,
+				"error":          fmt.Sprintf("$ref validation failed: %s", strings.Join(errorMsgs, "; ")),
+				"is_type_schema": true,
 			})
 			return
 		}
@@ -202,8 +211,9 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 				errorMsgs = append(errorMsgs, err.Error())
 			}
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": fmt.Sprintf("x-gts-ref validation failed: %s", strings.Join(errorMsgs, "; ")),
+				"ok":             false,
+				"error":          fmt.Sprintf("x-gts-ref validation failed: %s", strings.Join(errorMsgs, "; ")),
+				"is_type_schema": true,
 			})
 			return
 		}
@@ -214,17 +224,25 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 	// type-level keywords and MUST appear only at the schema top level
 	// (gts-spec §9.7.1/§9.11).
 	if entity.IsTypeSchema {
+		if err := gts.ValidateSchemaExtensions(entity.Content); err != nil {
+			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"ok": false, "error": err.Error(), "is_type_schema": true,
+			})
+			return
+		}
 		if err := gts.ValidateSchemaModifiers(entity.Content); err != nil {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": err.Error(),
+				"ok":             false,
+				"error":          err.Error(),
+				"is_type_schema": true,
 			})
 			return
 		}
 		if err := gts.ValidateTraitPlacement(entity.Content); err != nil {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": err.Error(),
+				"ok":             false,
+				"error":          err.Error(),
+				"is_type_schema": true,
 			})
 			return
 		}
@@ -253,14 +271,18 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"ok":    false,
-				"error": err.Error(),
+				"ok":             false,
+				"error":          err.Error(),
+				"is_type_schema": entity.IsTypeSchema,
 			})
 			return
 		}
 		s.writeJSON(w, http.StatusOK, map[string]any{
-			"ok":     true,
-			"gts_id": responseID,
+			"ok":             true,
+			"gts_id":         responseID,
+			"id":             responseID,
+			"type_id":        entity.TypeID,
+			"is_type_schema": entity.IsTypeSchema,
 		})
 		return
 	}
@@ -268,15 +290,19 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 	err := s.store.Register(entity)
 	if err != nil {
 		s.writeJSON(w, http.StatusOK, map[string]any{
-			"ok":    false,
-			"error": err.Error(),
+			"ok":             false,
+			"error":          err.Error(),
+			"is_type_schema": entity.IsTypeSchema,
 		})
 		return
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":     true,
-		"gts_id": responseID,
+		"ok":             true,
+		"gts_id":         responseID,
+		"id":             responseID,
+		"type_id":        entity.TypeID,
+		"is_type_schema": entity.IsTypeSchema,
 	})
 }
 
@@ -295,8 +321,9 @@ func (s *Server) handleAddEntities(w http.ResponseWriter, r *http.Request) {
 		responseID := entity.EffectiveID()
 		if responseID == "" {
 			result[i] = map[string]any{
-				"ok":    false,
-				"error": "Unable to extract GTS ID from entity",
+				"ok":             false,
+				"error":          "Unable to extract GTS ID from entity",
+				"is_type_schema": entity.IsTypeSchema,
 			}
 			continue
 		}
@@ -304,15 +331,17 @@ func (s *Server) handleAddEntities(w http.ResponseWriter, r *http.Request) {
 		err := s.store.Register(entity)
 		if err != nil {
 			result[i] = map[string]any{
-				"ok":    false,
-				"error": err.Error(),
+				"ok":             false,
+				"error":          err.Error(),
+				"is_type_schema": entity.IsTypeSchema,
 			}
 			continue
 		}
 
 		result[i] = map[string]any{
-			"ok":     true,
-			"gts_id": responseID,
+			"ok":             true,
+			"gts_id":         responseID,
+			"is_type_schema": entity.IsTypeSchema,
 		}
 		successCount++
 	}
@@ -327,14 +356,18 @@ func (s *Server) handleAddEntities(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAddSchema(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TypeID string         `json:"type_id"`
-		Schema map[string]any `json:"schema"`
+		TypeID     string         `json:"type_id"`
+		Schema     map[string]any `json:"schema"`
+		TypeSchema map[string]any `json:"type_schema"`
 	}
 	if err := s.readJSON(r, &req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid JSON")
 		return
 	}
 
+	if req.Schema == nil {
+		req.Schema = req.TypeSchema
+	}
 	err := s.store.RegisterSchema(req.TypeID, req.Schema)
 	if err != nil {
 		s.writeJSON(w, http.StatusOK, map[string]any{
@@ -361,7 +394,7 @@ func (s *Server) handleValidateID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := gts.ValidateGtsID(gtsID)
+	result := gtsid.Validate(gtsID)
 	s.writeJSON(w, http.StatusOK, result)
 }
 
@@ -385,7 +418,7 @@ func (s *Server) handleParseID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := gts.ParseGtsID(gtsID)
+	result := gtsid.Parse(gtsID)
 	s.writeJSON(w, http.StatusOK, result)
 }
 
@@ -399,7 +432,7 @@ func (s *Server) handleMatchIDPattern(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := gts.MatchIDPattern(candidate, pattern)
+	result := gtsid.Match(candidate, pattern)
 	s.writeJSON(w, http.StatusOK, result)
 }
 
@@ -411,7 +444,7 @@ func (s *Server) handleUUID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := gts.IDToUUID(gtsID)
+	result := gtsid.IDToUUID(gtsID)
 	s.writeJSON(w, http.StatusOK, result)
 }
 
@@ -427,6 +460,20 @@ func (s *Server) handleValidateInstance(w http.ResponseWriter, r *http.Request) 
 
 	result := s.store.ValidateInstance(req.InstanceID)
 	s.writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleValidateJSON(w http.ResponseWriter, r *http.Request) {
+	var value any
+	if err := json.NewDecoder(r.Body).Decode(&value); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid JSON")
+		return
+	}
+	content, ok := value.(map[string]any)
+	if !ok {
+		s.writeError(w, http.StatusUnprocessableEntity, "JSON validation body must be an object")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.store.ValidateTransientJSON(content, r.PathValue("typeID")))
 }
 
 // OP#7 - Resolve Relationships

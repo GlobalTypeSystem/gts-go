@@ -8,6 +8,8 @@ package gts
 import (
 	"fmt"
 	"strings"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // RefValidationError represents a validation error for $ref values
@@ -98,18 +100,22 @@ func (v *RefValidator) validateRef(refValue interface{}, fieldPath string) *RefV
 		}
 	}
 
-	// $ref must use gts:// URI format for GTS references
-
-	// Case 1: Local refs (JSON Pointer) - must start with #
-	if strings.HasPrefix(refStr, "#") {
-		return nil // Valid local reference
+	// $ref must be a same-document JSON Pointer ("#...") or a GTS URI
+	// ("gts://<valid gts id>"). Every other form is rejected with the same
+	// guidance message.
+	invalid := &RefValidationError{
+		FieldPath: fieldPath,
+		RefValue:  refStr,
+		Reason:    "must be a local ref (starting with '#') or a GTS URI (starting with 'gts://')",
 	}
 
-	// Case 2: GTS refs - must use gts:// prefix with valid GTS ID
-	if strings.HasPrefix(refStr, "gts://") {
+	switch ClassifyRef(refStr) {
+	case RefLocalPointer:
+		return nil // Valid local reference
+	case RefGtsURI:
 		// Strip prefix and validate the GTS ID
-		gtsID := strings.TrimPrefix(refStr, GtsURIPrefix)
-		if !IsValidGtsID(gtsID) {
+		gtsID := gtsid.NormalizeID(refStr)
+		if !gtsid.IsValid(gtsID) {
 			return &RefValidationError{
 				FieldPath: fieldPath,
 				RefValue:  refStr,
@@ -117,32 +123,8 @@ func (v *RefValidator) validateRef(refValue interface{}, fieldPath string) *RefV
 			}
 		}
 		return nil // Valid GTS URI reference
-	}
-
-	// Case 3: Invalid formats
-
-	// Bare GTS ID (missing gts:// prefix)
-	if strings.HasPrefix(refStr, "gts.") && IsValidGtsID(refStr) {
-		return &RefValidationError{
-			FieldPath: fieldPath,
-			RefValue:  refStr,
-			Reason:    "must be a local ref (starting with '#') or a GTS URI (starting with 'gts://')",
-		}
-	}
-
-	// HTTP/HTTPS URIs
-	if strings.HasPrefix(refStr, "http://") || strings.HasPrefix(refStr, "https://") {
-		return &RefValidationError{
-			FieldPath: fieldPath,
-			RefValue:  refStr,
-			Reason:    "must be a local ref (starting with '#') or a GTS URI (starting with 'gts://')",
-		}
-	}
-
-	// Any other format
-	return &RefValidationError{
-		FieldPath: fieldPath,
-		RefValue:  refStr,
-		Reason:    "must be a local ref (starting with '#') or a GTS URI (starting with 'gts://')",
+	default:
+		// Bare GTS IDs, HTTP(S) URIs and anything else are invalid $ref forms.
+		return invalid
 	}
 }

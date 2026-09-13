@@ -3,12 +3,10 @@ Copyright © 2025 Global Type System
 Released under Apache License 2.0
 */
 
-package gts
+package gtsid
 
-import "strings"
-
-// ParseIDSegment represents a parsed segment component from a GTS identifier
-type ParseIDSegment struct {
+// ParseSegment represents a parsed segment component from a GTS identifier
+type ParseSegment struct {
 	Vendor    string `json:"vendor"`
 	Package   string `json:"package"`
 	Namespace string `json:"namespace"`
@@ -19,27 +17,27 @@ type ParseIDSegment struct {
 	IsUUID    bool   `json:"is_uuid"`
 }
 
-// ParseIDResult represents the result of parsing a GTS identifier
-type ParseIDResult struct {
-	ID         string           `json:"id"`
-	OK         bool             `json:"ok"`
-	IsWildcard bool             `json:"is_wildcard"`
-	IsType     bool             `json:"is_type"`
-	Segments   []ParseIDSegment `json:"segments"`
-	Error      string           `json:"error,omitempty"`
+// ParseResult represents the result of parsing a GTS identifier
+type ParseResult struct {
+	ID         string         `json:"id"`
+	OK         bool           `json:"ok"`
+	IsWildcard bool           `json:"is_wildcard"`
+	IsType     bool           `json:"is_type"`
+	Segments   []ParseSegment `json:"segments"`
+	Error      string         `json:"error,omitempty"`
 }
 
-// ParseID decomposes a GTS identifier into its constituent parts
-// Returns a ParseIDResult with OK=true and populated Segments on success,
+// Parse decomposes a GTS identifier into its constituent parts
+// Returns a ParseResult with OK=true and populated Segments on success,
 // or OK=false with an Error message on failure
-func ParseID(gtsID string) ParseIDResult {
-	isWildcard := strings.Contains(gtsID, "*")
+func Parse(gtsID string) ParseResult {
+	isWildcard := HasWildcard(gtsID)
 
 	if isWildcard {
 		// Handle wildcard patterns separately
-		id, err := validateWildcard(gtsID)
+		id, err := ValidateWildcard(gtsID)
 		if err != nil {
-			return ParseIDResult{
+			return ParseResult{
 				ID:         gtsID,
 				OK:         false,
 				IsWildcard: true,
@@ -49,9 +47,9 @@ func ParseID(gtsID string) ParseIDResult {
 			}
 		}
 
-		segments := make([]ParseIDSegment, len(id.Segments))
+		segments := make([]ParseSegment, len(id.Segments))
 		for i, seg := range id.Segments {
-			segments[i] = ParseIDSegment{
+			segments[i] = ParseSegment{
 				Vendor:    seg.Vendor,
 				Package:   seg.Package,
 				Namespace: seg.Namespace,
@@ -64,9 +62,9 @@ func ParseID(gtsID string) ParseIDResult {
 		}
 
 		// Wildcard patterns ending with .* or ~* are type patterns
-		isType := strings.HasSuffix(gtsID, ".*") || strings.HasSuffix(gtsID, "~*")
+		isType := EndsWithWildcardSuffix(gtsID)
 
-		return ParseIDResult{
+		return ParseResult{
 			ID:         gtsID,
 			OK:         true,
 			IsWildcard: true,
@@ -77,9 +75,9 @@ func ParseID(gtsID string) ParseIDResult {
 	}
 
 	// Handle regular GTS IDs
-	id, err := NewGtsID(gtsID)
+	id, err := New(gtsID)
 	if err != nil {
-		return ParseIDResult{
+		return ParseResult{
 			ID:         gtsID,
 			OK:         false,
 			IsWildcard: false,
@@ -89,9 +87,9 @@ func ParseID(gtsID string) ParseIDResult {
 		}
 	}
 
-	segments := make([]ParseIDSegment, len(id.Segments))
+	segments := make([]ParseSegment, len(id.Segments))
 	for i, seg := range id.Segments {
-		segments[i] = ParseIDSegment{
+		segments[i] = ParseSegment{
 			Vendor:    seg.Vendor,
 			Package:   seg.Package,
 			Namespace: seg.Namespace,
@@ -103,7 +101,7 @@ func ParseID(gtsID string) ParseIDResult {
 		}
 	}
 
-	return ParseIDResult{
+	return ParseResult{
 		ID:         gtsID,
 		OK:         true,
 		IsWildcard: false,

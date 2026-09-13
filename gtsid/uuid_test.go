@@ -3,7 +3,7 @@ Copyright © 2025 Global Type System
 Released under Apache License 2.0
 */
 
-package gts
+package gtsid
 
 import (
 	"testing"
@@ -32,7 +32,7 @@ func TestToUUID_Types(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gts, err := NewGtsID(tt.gtsID)
+			gts, err := New(tt.gtsID)
 			if err != nil {
 				t.Fatalf("Failed to parse GTS ID: %v", err)
 			}
@@ -66,7 +66,7 @@ func TestToUUID_Instances(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gts, err := NewGtsID(tt.gtsID)
+			gts, err := New(tt.gtsID)
 			if err != nil {
 				t.Fatalf("Failed to parse GTS ID: %v", err)
 			}
@@ -83,12 +83,12 @@ func TestToUUID_Instances(t *testing.T) {
 func TestToUUID_Deterministic(t *testing.T) {
 	gtsID := "gts.x.test5.events.type.v1~"
 
-	gts1, err := NewGtsID(gtsID)
+	gts1, err := New(gtsID)
 	if err != nil {
 		t.Fatalf("Failed to parse GTS ID: %v", err)
 	}
 
-	gts2, err := NewGtsID(gtsID)
+	gts2, err := New(gtsID)
 	if err != nil {
 		t.Fatalf("Failed to parse GTS ID: %v", err)
 	}
@@ -103,8 +103,8 @@ func TestToUUID_Deterministic(t *testing.T) {
 
 // TestToUUID_DifferentIDs tests that different IDs produce different UUIDs
 func TestToUUID_DifferentIDs(t *testing.T) {
-	gts1, _ := NewGtsID("gts.x.test5.events.type.v1~")
-	gts2, _ := NewGtsID("gts.x.test5.events.type.v1.1~")
+	gts1, _ := New("gts.x.test5.events.type.v1~")
+	gts2, _ := New("gts.x.test5.events.type.v1.1~")
 
 	uuid1 := gts1.ToUUID()
 	uuid2 := gts2.ToUUID()
@@ -119,8 +119,8 @@ func TestGtsNamespace(t *testing.T) {
 	// The GTS namespace should be uuid5(NAMESPACE_URL, "gts")
 	expected := uuid.NewSHA1(uuid.NameSpaceURL, []byte("gts"))
 
-	if GtsNamespace != expected {
-		t.Errorf("GtsNamespace mismatch: expected %s, got %s", expected, GtsNamespace)
+	if Namespace != expected {
+		t.Errorf("Namespace mismatch: expected %s, got %s", expected, Namespace)
 	}
 }
 
@@ -146,7 +146,7 @@ func TestToUUID_MoreExamples(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gts, err := NewGtsID(tt.gtsID)
+			gts, err := New(tt.gtsID)
 			if err != nil {
 				t.Fatalf("Failed to parse GTS ID: %v", err)
 			}

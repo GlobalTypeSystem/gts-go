@@ -9,13 +9,37 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
+// CastCompatResult holds the structural-diff compatibility info returned by OP#9 (Cast).
+// This is separate from OP#8's CompatibilityResult, which uses accepted-instance-set
+// inclusion and tri-state verdicts (v0.13).
+type CastCompatResult struct {
+	FromID                 string              `json:"from"`
+	ToID                   string              `json:"to"`
+	OldID                  string              `json:"old"`
+	NewID                  string              `json:"new"`
+	Direction              string              `json:"direction"`
+	AddedProperties        []string            `json:"added_properties"`
+	RemovedProperties      []string            `json:"removed_properties"`
+	ChangedProperties      []map[string]string `json:"changed_properties"`
+	IsFullyCompatible      *bool               `json:"is_fully_compatible"`
+	IsBackwardCompatible   *bool               `json:"is_backward_compatible"`
+	IsForwardCompatible    *bool               `json:"is_forward_compatible"`
+	IncompatibilityReasons []string            `json:"incompatibility_reasons"`
+	BackwardErrors         []string            `json:"backward_errors"`
+	ForwardErrors          []string            `json:"forward_errors"`
+	BackwardCompatibility  string              `json:"backward_compatibility"`
+	ForwardCompatibility   string              `json:"forward_compatibility"`
+	FullCompatibility      string              `json:"full_compatibility"`
+	Error                  string              `json:"error,omitempty"`
+}
+
 // CastResult represents the result of casting an instance to a new schema version
-// It extends CompatibilityResult with the casted entity
 type CastResult struct {
-	*CompatibilityResult
+	*CastCompatResult
 	CastedEntity map[string]any `json:"casted_entity,omitempty"`
 }
 
@@ -58,7 +82,23 @@ func (s *GtsStore) Cast(instanceID, toTypeID string) (*CastResult, error) {
 	toSchemaContent := toSchema.Content
 
 	// Perform the cast
-	return castInstance(instanceID, toTypeID, instanceContent, fromSchemaContent, toSchemaContent, s)
+	result, err := castInstance(instanceID, toTypeID, instanceContent, fromSchemaContent, toSchemaContent, s)
+	if err != nil {
+		return nil, err
+	}
+	compatibility := s.CheckCompatibility(fromTypeID, toTypeID)
+	result.BackwardCompatibility = compatibility.BackwardCompatibility
+	result.ForwardCompatibility = compatibility.ForwardCompatibility
+	result.FullCompatibility = compatibility.FullCompatibility
+	// When the schemas declare distinct JSON Schema dialects the structural
+	// verdicts are undecidable; surface them as null alongside the unknown
+	// accepted-instance-set verdicts.
+	if dialectsDiffer(fromSchemaContent, toSchemaContent) {
+		result.IsBackwardCompatible = nil
+		result.IsForwardCompatible = nil
+		result.IsFullyCompatible = nil
+	}
+	return result, nil
 }
 
 // castInstance performs the actual casting logic
@@ -114,7 +154,7 @@ func castInstance(
 	}
 
 	return &CastResult{
-		CompatibilityResult: &CompatibilityResult{
+		CastCompatResult: &CastCompatResult{
 			FromID:                 fromInstanceID,
 			ToID:                   toTypeID,
 			OldID:                  fromInstanceID,
@@ -123,9 +163,9 @@ func castInstance(
 			AddedProperties:        deduplicate(added),
 			RemovedProperties:      deduplicate(removed),
 			ChangedProperties:      []map[string]string{},
-			IsFullyCompatible:      isFullyCompatible,
-			IsBackwardCompatible:   isBackward,
-			IsForwardCompatible:    isForward,
+			IsFullyCompatible:      boolPtr(isFullyCompatible),
+			IsBackwardCompatible:   boolPtr(isBackward),
+			IsForwardCompatible:    boolPtr(isForward),
 			IncompatibilityReasons: incompatibilityReasons,
 			BackwardErrors:         backwardErrors,
 			ForwardErrors:          forwardErrors,
@@ -205,7 +245,7 @@ func castInstanceToSchema(
 				existingStr, existingIsStr := existingVal.(string)
 				if constIsStr && existingIsStr {
 					// Only update if both are GTS IDs and they differ
-					if IsValidGtsID(constStr) && IsValidGtsID(existingStr) {
+					if gtsid.IsValid(constStr) && gtsid.IsValid(existingStr) {
 						if existingStr != constStr {
 							result[prop] = constStr
 						}
@@ -215,14 +255,19 @@ func castInstanceToSchema(
 		}
 	}
 
-	// 3) Remove properties not in target schema when additionalProperties is false
+	// 3) Remove properties not in target schema when additionalProperties is false.
+	// Reserved GTS identity fields (id, type) are preserved at the instance root.
 	if !additional {
 		for prop := range result {
-			if _, inTarget := targetProps[prop]; !inTarget {
-				delete(result, prop)
-				path := buildPath(basePath, prop)
-				removed = append(removed, path)
+			if _, inTarget := targetProps[prop]; inTarget {
+				continue
 			}
+			if basePath == "" && (prop == "id" || prop == "type") {
+				continue
+			}
+			delete(result, prop)
+			path := buildPath(basePath, prop)
+			removed = append(removed, path)
 		}
 	}
 
@@ -327,6 +372,7 @@ func validateWithGtsIDTolerance(instance, schema map[string]any, store *GtsStore
 
 	// Compile and validate
 	compiler := jsonschema.NewCompiler()
+	compiler.UseRegexpEngine(ecmaRegexpEngine)
 
 	// Set up custom loader for GTS ID references
 	compiler.UseLoader(&gtsURLLoader{store: store})
@@ -334,13 +380,13 @@ func validateWithGtsIDTolerance(instance, schema map[string]any, store *GtsStore
 	// Pre-load all schemas from the store
 	for id, entity := range store.byID {
 		if entity.IsTypeSchema {
-			compiler.AddResource(id, entity.Content)
+			_ = compiler.AddResource(id, entity.Content)
 		}
 	}
 
 	// Add the modified schema as a resource
 	schemaID := "_cast_validation"
-	compiler.AddResource(schemaID, modifiedSchema)
+	_ = compiler.AddResource(schemaID, modifiedSchema)
 
 	// Compile the modified schema
 	schemaObj, err := compiler.Compile(schemaID)
@@ -365,7 +411,7 @@ func removeGtsConstConstraints(schema any) any {
 		result := make(map[string]any)
 		for key, value := range v {
 			if key == "const" {
-				if strVal, ok := value.(string); ok && IsValidGtsID(strVal) {
+				if strVal, ok := value.(string); ok && gtsid.IsValid(strVal) {
 					// Replace const with type constraint instead
 					result["type"] = "string"
 					continue

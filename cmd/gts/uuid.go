@@ -5,9 +5,7 @@ Released under Apache License 2.0
 
 package main
 
-import (
-	"github.com/GlobalTypeSystem/gts-go/gts"
-)
+import "github.com/GlobalTypeSystem/gts-go/gtsid"
 
 var cmdUUID = &Command{
 	UsageLine: "uuid -id <gts-id>",
@@ -37,6 +35,6 @@ func runUUID(cmd *Command, args []string) {
 		cmd.Usage()
 	}
 
-	result := gts.IDToUUID(uuidIDFlag)
+	result := gtsid.IDToUUID(uuidIDFlag)
 	writeJSON(result)
 }

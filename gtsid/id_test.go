@@ -3,7 +3,7 @@ Copyright © 2025 Global Type System
 Released under Apache License 2.0
 */
 
-package gts
+package gtsid
 
 import (
 	"testing"
@@ -24,7 +24,7 @@ func TestGtsID_Valid(t *testing.T) {
 
 	for _, id := range validIDs {
 		t.Run(id, func(t *testing.T) {
-			gtsID, err := NewGtsID(id)
+			gtsID, err := New(id)
 			if err != nil {
 				t.Errorf("Expected valid ID %q, but got error: %v", id, err)
 			}
@@ -51,9 +51,9 @@ func TestGtsID_IsValid(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			result := IsValidGtsID(tt.id)
+			result := IsValid(tt.id)
 			if result != tt.expected {
-				t.Errorf("IsValidGtsID(%q) = %v, want %v", tt.id, result, tt.expected)
+				t.Errorf("IsValid(%q) = %v, want %v", tt.id, result, tt.expected)
 			}
 		})
 	}
@@ -70,14 +70,14 @@ func TestGtsID_InvalidPrefix(t *testing.T) {
 
 	for _, id := range invalidIDs {
 		t.Run(id, func(t *testing.T) {
-			_, err := NewGtsID(id)
+			_, err := New(id)
 			if err == nil {
 				t.Errorf("Expected error for ID without 'gts.' prefix: %q", id)
 			}
 			if err != nil {
-				gtsErr, ok := err.(*InvalidGtsIDError)
+				gtsErr, ok := err.(*InvalidIDError)
 				if !ok {
-					t.Errorf("Expected InvalidGtsIDError, got %T", err)
+					t.Errorf("Expected InvalidIDError, got %T", err)
 				}
 				if gtsErr != nil && gtsErr.GtsID != id {
 					t.Errorf("Error GtsID = %q, want %q", gtsErr.GtsID, id)
@@ -97,7 +97,7 @@ func TestGtsID_NotLowerCase(t *testing.T) {
 
 	for _, id := range invalidIDs {
 		t.Run(id, func(t *testing.T) {
-			_, err := NewGtsID(id)
+			_, err := New(id)
 			if err == nil {
 				t.Errorf("Expected error for non-lowercase ID: %q", id)
 			}
@@ -114,7 +114,7 @@ func TestGtsID_ContainsHyphen(t *testing.T) {
 
 	for _, id := range invalidIDs {
 		t.Run(id, func(t *testing.T) {
-			_, err := NewGtsID(id)
+			_, err := New(id)
 			if err == nil {
 				t.Errorf("Expected error for ID containing hyphen: %q", id)
 			}
@@ -127,7 +127,7 @@ func TestGtsID_TooLong(t *testing.T) {
 	// Create an ID longer than 1024 characters
 	longID := "gts." + string(make([]byte, 1025))
 
-	_, err := NewGtsID(longID)
+	_, err := New(longID)
 	if err == nil {
 		t.Errorf("Expected error for ID longer than 1024 characters")
 	}
@@ -144,7 +144,7 @@ func TestGtsID_TooFewTokens(t *testing.T) {
 
 	for _, id := range invalidIDs {
 		t.Run(id, func(t *testing.T) {
-			_, err := NewGtsID(id)
+			_, err := New(id)
 			if err == nil {
 				t.Errorf("Expected error for ID with too few tokens: %q", id)
 			}
@@ -162,7 +162,7 @@ func TestGtsID_InvalidTokens(t *testing.T) {
 
 	for _, id := range invalidIDs {
 		t.Run(id, func(t *testing.T) {
-			_, err := NewGtsID(id)
+			_, err := New(id)
 			if err == nil {
 				t.Errorf("Expected error for ID with invalid token: %q", id)
 			}
@@ -182,7 +182,7 @@ func TestGtsID_InvalidVersion(t *testing.T) {
 
 	for _, id := range invalidIDs {
 		t.Run(id, func(t *testing.T) {
-			_, err := NewGtsID(id)
+			_, err := New(id)
 			if err == nil {
 				t.Errorf("Expected error for ID with invalid version: %q", id)
 			}
@@ -204,7 +204,7 @@ func TestGtsID_IsType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {
-			gtsID, err := NewGtsID(tt.id)
+			gtsID, err := New(tt.id)
 			if err != nil {
 				t.Fatalf("Unexpected error for valid ID %q: %v", tt.id, err)
 			}
@@ -224,7 +224,7 @@ func TestGtsID_EmptySegment(t *testing.T) {
 
 	for _, id := range invalidIDs {
 		t.Run(id, func(t *testing.T) {
-			_, err := NewGtsID(id)
+			_, err := New(id)
 			if err == nil {
 				t.Errorf("Expected error for ID with empty segment: %q", id)
 			}
@@ -236,7 +236,7 @@ func TestGtsID_EmptySegment(t *testing.T) {
 func TestGtsID_MultipleTildeInSegment(t *testing.T) {
 	invalidID := "gts.vendor.package.namespace.ty~~pe.v0"
 
-	_, err := NewGtsID(invalidID)
+	_, err := New(invalidID)
 	if err == nil {
 		t.Errorf("Expected error for segment with multiple tildes: %q", invalidID)
 	}
@@ -246,7 +246,7 @@ func TestGtsID_MultipleTildeInSegment(t *testing.T) {
 func TestGtsID_TildeNotAtEnd(t *testing.T) {
 	invalidID := "gts.vendor.package.namespace.ty~pe.v0"
 
-	_, err := NewGtsID(invalidID)
+	_, err := New(invalidID)
 	if err == nil {
 		t.Errorf("Expected error for tilde not at end: %q", invalidID)
 	}
@@ -261,7 +261,7 @@ func TestGtsID_CombinedAnonymousInstance(t *testing.T) {
 
 	for _, id := range validIDs {
 		t.Run(id, func(t *testing.T) {
-			gtsID, err := NewGtsID(id)
+			gtsID, err := New(id)
 			if err != nil {
 				t.Fatalf("Expected valid combined anonymous instance ID %q, got error: %v", id, err)
 			}
@@ -297,7 +297,7 @@ func TestGtsID_CombinedAnonymousInstance_Invalid(t *testing.T) {
 
 	for _, tt := range invalidIDs {
 		t.Run(tt.desc, func(t *testing.T) {
-			_, err := NewGtsID(tt.id)
+			_, err := New(tt.id)
 			if err == nil {
 				t.Errorf("Expected error for %s: %q", tt.desc, tt.id)
 			}

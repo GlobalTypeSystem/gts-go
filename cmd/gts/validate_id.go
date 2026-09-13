@@ -5,9 +5,7 @@ Released under Apache License 2.0
 
 package main
 
-import (
-	"github.com/GlobalTypeSystem/gts-go/gts"
-)
+import "github.com/GlobalTypeSystem/gts-go/gtsid"
 
 var cmdValidateID = &Command{
 	UsageLine: "validate-id -id <gts-id>",
@@ -37,6 +35,6 @@ func runValidateID(cmd *Command, args []string) {
 		cmd.Usage()
 	}
 
-	result := gts.ValidateGtsID(validateIDFlag)
+	result := gtsid.Validate(validateIDFlag)
 	writeJSON(result)
 }

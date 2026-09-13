@@ -34,7 +34,7 @@ func TestCast_MinorVersionUpcast(t *testing.T) {
 
 	// Register v1.0 schema
 	v10Schema := map[string]any{
-		"$id":     "gts.x.core.events.type.v1~x.commerce.orders.order_placed.v1.0~",
+		"$id":     "gts://gts.x.core.events.type.v1~x.commerce.orders.order_placed.v1.0~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"allOf": []any{
@@ -70,7 +70,7 @@ func TestCast_MinorVersionUpcast(t *testing.T) {
 
 	// Register v1.1 schema (adds optional field with default)
 	v11Schema := map[string]any{
-		"$id":     "gts.x.core.events.type.v1~x.commerce.orders.order_placed.v1.1~",
+		"$id":     "gts://gts.x.core.events.type.v1~x.commerce.orders.order_placed.v1.1~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"allOf": []any{
@@ -180,7 +180,7 @@ func TestCast_MinorVersionDowncast(t *testing.T) {
 
 	// Register base event schema
 	baseSchema := map[string]any{
-		"$id":      "gts.x.core.events.type.v1~",
+		"$id":      "gts://gts.x.core.events.type.v1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"id", "type", "tenantId", "occurredAt"},
@@ -200,7 +200,7 @@ func TestCast_MinorVersionDowncast(t *testing.T) {
 
 	// Register v1.0 schema
 	v10Schema := map[string]any{
-		"$id":     "gts.x.core.events.type.v1~x.test9.cast.event.v1.0~",
+		"$id":     "gts://gts.x.core.events.type.v1~x.test9.cast.event.v1.0~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"allOf": []any{
@@ -231,7 +231,7 @@ func TestCast_MinorVersionDowncast(t *testing.T) {
 
 	// Register v1.1 schema
 	v11Schema := map[string]any{
-		"$id":     "gts.x.core.events.type.v1~x.test9.cast.event.v1.1~",
+		"$id":     "gts://gts.x.core.events.type.v1~x.test9.cast.event.v1.1~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"allOf": []any{
@@ -327,7 +327,7 @@ func TestCast_NestedObjects(t *testing.T) {
 
 	// Register v1.0 schema with nested objects
 	v10Schema := map[string]any{
-		"$id":      "gts.x.core.nested.type.v1.0~",
+		"$id":      "gts://gts.x.core.nested.type.v1.0~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"id", "details"},
@@ -349,7 +349,7 @@ func TestCast_NestedObjects(t *testing.T) {
 
 	// Register v1.1 schema with additional nested field
 	v11Schema := map[string]any{
-		"$id":      "gts.x.core.nested.type.v1.1~",
+		"$id":      "gts://gts.x.core.nested.type.v1.1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"id", "details"},
@@ -427,7 +427,7 @@ func TestCast_ArrayOfObjects(t *testing.T) {
 
 	// Register v1.0 schema with array of objects
 	v10Schema := map[string]any{
-		"$id":      "gts.x.core.array.type.v1.0~",
+		"$id":      "gts://gts.x.core.array.type.v1.0~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"items"},
@@ -451,7 +451,7 @@ func TestCast_ArrayOfObjects(t *testing.T) {
 
 	// Register v1.1 schema with additional field in array items
 	v11Schema := map[string]any{
-		"$id":      "gts.x.core.array.type.v1.1~",
+		"$id":      "gts://gts.x.core.array.type.v1.1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"items"},

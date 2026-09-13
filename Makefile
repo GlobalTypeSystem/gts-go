@@ -36,12 +36,11 @@ vet:
 
 # Run golangci-lint (skipped if Go version is unsupported)
 lint:
-	@if [ ! -f "$$(go env GOPATH)/bin/golangci-lint" ]; then \
-		echo "Installing golangci-lint..."; \
-		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
+	@if ! "$$(go env GOPATH)/bin/golangci-lint" version 2>/dev/null | grep -qE 'version v?2\.'; then \
+		echo "Installing golangci-lint v2..."; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest; \
 	fi
-	@$$(go env GOPATH)/bin/golangci-lint run --timeout=5m || \
-		(echo "Warning: golangci-lint failed (may not support your Go version yet). Skipping..." && true)
+	$$(go env GOPATH)/bin/golangci-lint run --timeout=5m
 
 # Run all tests
 test:

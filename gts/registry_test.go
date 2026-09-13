@@ -101,7 +101,7 @@ func TestGtsReferenceValidation(t *testing.T) {
 
 		// First register a schema
 		schema := NewJsonEntity(map[string]any{
-			"$id":     "gts.test.pkg.ns.user.v1~",
+			"$id":     "gts://gts.test.pkg.ns.user.v1~",
 			"$schema": "https://json-schema.org/draft/2020-12/schema",
 			"type":    "object",
 			"properties": map[string]any{
@@ -177,7 +177,7 @@ func TestGtsReferenceValidation(t *testing.T) {
 
 		// Register a schema that references itself (should be allowed)
 		schema := NewJsonEntity(map[string]any{
-			"$id":     "gts.test.pkg.ns.recursive.v1~",
+			"$id":     "gts://gts.test.pkg.ns.recursive.v1~",
 			"$schema": "https://json-schema.org/draft/2020-12/schema",
 			"type":    "object",
 			"properties": map[string]any{
@@ -201,7 +201,7 @@ func TestGtsReferenceValidation(t *testing.T) {
 
 		// Register a schema that references JSON Schema meta-schema (should be allowed)
 		schema := NewJsonEntity(map[string]any{
-			"$id":     "gts.test.pkg.ns.schema.v1~",
+			"$id":     "gts://gts.test.pkg.ns.schema.v1~",
 			"$schema": "https://json-schema.org/draft/2020-12/schema",
 			"type":    "object",
 		}, DefaultGtsConfig())
@@ -219,7 +219,7 @@ func TestValidateSchema(t *testing.T) {
 
 		// Register a valid schema
 		schema := NewJsonEntity(map[string]any{
-			"$id":     "gts.test.pkg.ns.valid.v1~",
+			"$id":     "gts://gts.test.pkg.ns.valid.v1~",
 			"$schema": "https://json-schema.org/draft/2020-12/schema",
 			"type":    "object",
 			"properties": map[string]any{
@@ -298,7 +298,7 @@ func TestRegistryIntegration(t *testing.T) {
 
 		// 1. Register base schemas first
 		userSchema := NewJsonEntity(map[string]any{
-			"$id":     "gts.test.pkg.ns.user.v1~",
+			"$id":     "gts://gts.test.pkg.ns.user.v1~",
 			"$schema": "https://json-schema.org/draft/2020-12/schema",
 			"type":    "object",
 			"properties": map[string]any{
@@ -314,7 +314,7 @@ func TestRegistryIntegration(t *testing.T) {
 
 		// 2. Register a schema that extends the base schema
 		extendedSchema := NewJsonEntity(map[string]any{
-			"$id":     "gts.test.pkg.ns.admin.v1~",
+			"$id":     "gts://gts.test.pkg.ns.admin.v1~",
 			"$schema": "https://json-schema.org/draft/2020-12/schema",
 			"allOf": []any{
 				map[string]any{"$ref": "gts://gts.test.pkg.ns.user.v1~"},

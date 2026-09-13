@@ -4,6 +4,8 @@
 
 A minimal, idiomatic Go library for working with **GTS** ([Global Type System](https://github.com/gts-spec/gts-spec)) identifiers and JSON/JSON Schema artifacts.
 
+Supported GTS spec version: `0.13.1`
+
 ## Roadmap
 
 Featureset:

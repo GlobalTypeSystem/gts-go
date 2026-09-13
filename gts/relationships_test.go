@@ -14,7 +14,7 @@ func TestBuildSchemaGraph_ValidChain(t *testing.T) {
 
 	// Register base event schema
 	baseSchema := map[string]any{
-		"$id":      "gts.x.core.events.type.v1~",
+		"$id":      "gts://gts.x.core.events.type.v1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"id", "type", "tenantId", "occurredAt"},
@@ -34,7 +34,7 @@ func TestBuildSchemaGraph_ValidChain(t *testing.T) {
 
 	// Register derived event schema
 	derivedSchema := map[string]any{
-		"$id":     "gts.x.core.events.type.v1~x.test7.graph.event.v1.0~",
+		"$id":     "gts://gts.x.core.events.type.v1~x.test7.graph.event.v1.0~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"allOf": []any{
@@ -82,7 +82,7 @@ func TestBuildSchemaGraph_BrokenReference(t *testing.T) {
 
 	// Register schema with broken reference
 	schema := map[string]any{
-		"$id":     "gts.x.core.broken.schema.v1.0~",
+		"$id":     "gts://gts.x.core.broken.schema.v1.0~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"allOf": []any{
@@ -131,7 +131,7 @@ func TestBuildSchemaGraph_ComplexChain(t *testing.T) {
 
 	// Register base schema
 	baseSchema := map[string]any{
-		"$id":      "gts.x.core.base.type.v1~",
+		"$id":      "gts://gts.x.core.base.type.v1~",
 		"$schema":  "http://json-schema.org/draft-07/schema#",
 		"type":     "object",
 		"required": []any{"id"},
@@ -146,7 +146,7 @@ func TestBuildSchemaGraph_ComplexChain(t *testing.T) {
 
 	// Register level 1 derived schema
 	derived1Schema := map[string]any{
-		"$id":     "gts.x.core.base.type.v1~x.test7.derived1.type.v1~",
+		"$id":     "gts://gts.x.core.base.type.v1~x.test7.derived1.type.v1~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"allOf": []any{
@@ -167,7 +167,7 @@ func TestBuildSchemaGraph_ComplexChain(t *testing.T) {
 
 	// Register level 2 derived schema
 	derived2Schema := map[string]any{
-		"$id":     "gts.x.core.base.type.v1~x.test7.derived1.type.v1~x.test7.derived2.type.v1~",
+		"$id":     "gts://gts.x.core.base.type.v1~x.test7.derived1.type.v1~x.test7.derived2.type.v1~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"allOf": []any{
@@ -237,7 +237,7 @@ func TestBuildSchemaGraph_CycleDetection(t *testing.T) {
 
 	// Create a schema that references another which references back (cycle)
 	schema1 := map[string]any{
-		"$id":     "gts.x.core.cycle.a.v1~",
+		"$id":     "gts://gts.x.core.cycle.a.v1~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"properties": map[string]any{
@@ -252,7 +252,7 @@ func TestBuildSchemaGraph_CycleDetection(t *testing.T) {
 	}
 
 	schema2 := map[string]any{
-		"$id":     "gts.x.core.cycle.b.v1~",
+		"$id":     "gts://gts.x.core.cycle.b.v1~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type":    "object",
 		"properties": map[string]any{
@@ -290,7 +290,7 @@ func TestBuildSchemaGraph_CycleDetection(t *testing.T) {
 
 func TestExtractGtsReferences(t *testing.T) {
 	content := map[string]any{
-		"$id":  "gts.x.test.core.schema.v1~",
+		"$id":  "gts://gts.x.test.core.schema.v1~",
 		"$ref": "gts.x.test.core.base.v1~",
 		"properties": map[string]any{
 			"field1": map[string]any{
