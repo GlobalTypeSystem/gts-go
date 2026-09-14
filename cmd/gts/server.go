@@ -12,13 +12,17 @@ import (
 )
 
 var cmdServer = &Command{
-	UsageLine: "server [-host address] [-port number]",
+	UsageLine: "server [-host address] [-port number] [-allow-entity-updates]",
 	Short:     "start the GTS HTTP server",
 	Long: `
 Server starts the GTS HTTP server for REST API access.
 
 The -host flag specifies the host address (default: 127.0.0.1).
 The -port flag specifies the port number (default: 8000).
+The -allow-entity-updates flag permits re-registering an entity with different
+content. When it is not set (default), changing the content of an
+already-registered entity is rejected with HTTP 409 while identical
+re-submissions remain idempotent.
 
 Example:
 
@@ -35,6 +39,7 @@ func init() {
 	cmdServer.Run = runServer
 	cmdServer.Flag.StringVar(&serverHost, "host", "127.0.0.1", "host address")
 	cmdServer.Flag.IntVar(&serverPort, "port", 8000, "port number")
+	cmdServer.Flag.BoolVar(&allowEntityUpdates, "allow-entity-updates", false, "allow re-registering entities with different content")
 }
 
 func runServer(cmd *Command, args []string) {

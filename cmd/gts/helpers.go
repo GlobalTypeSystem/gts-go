@@ -32,7 +32,10 @@ func newStore() *gts.GtsStore {
 		}
 	}
 
-	store := gts.NewGtsStoreWithConfig(reader, &gts.RegistryConfig{Verbose: verbose > 0})
+	store := gts.NewGtsStoreWithConfig(reader, &gts.RegistryConfig{
+		Verbose:            verbose > 0,
+		AllowEntityUpdates: allowEntityUpdates,
+	})
 	if verbose > 0 && path != "" {
 		log.Printf("entity count: %d", store.Count())
 	}
