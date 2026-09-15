@@ -29,6 +29,18 @@ const (
 	// use NormalizeID to strip it before parsing.
 	URIPrefix = "gts://"
 
+	// CompileURIPrefix is the absolute-URI form used for schema $id / $ref
+	// values handed to a JSON Schema compiler, e.g.
+	// "gts:///gts.x.example._.user.v1~". The empty authority (three slashes)
+	// keeps the URI absolute — so a compiler never resolves a bare id against
+	// the process working directory into a "file://<cwd>/id" URL, which would
+	// leak the local filesystem layout into validation errors — while the
+	// path-based form still lets relative $ref values resolve correctly (unlike
+	// the authority form URIPrefix, which mis-merges "a~" + "b~" into "a~/b~").
+	// Like URIPrefix it is never part of a parsed GTS ID; use NormalizeID to
+	// strip it, or ToCompileURI to produce it.
+	CompileURIPrefix = URIPrefix + "/"
+
 	// TypeMarker terminates a GTS *type* identifier (as opposed to an instance).
 	TypeMarker = "~"
 
@@ -55,11 +67,24 @@ const (
 )
 
 // NormalizeID returns the bare GTS-identifier form of s: it trims surrounding
-// whitespace and strips the gts:// URI prefix if present. It is the single
-// canonicalization step every caller should use before parsing or storing an
-// id sourced from a JSON Schema $id / $ref.
+// whitespace and strips any GTS URI prefix (the "gts://" serialization form or
+// the "gts:///" compile form) if present. It is the single canonicalization
+// step every caller should use before parsing or storing an id sourced from a
+// JSON Schema $id / $ref, and is idempotent.
 func NormalizeID(s string) string {
-	return strings.TrimPrefix(strings.TrimSpace(s), URIPrefix)
+	s = strings.TrimSpace(s)
+	// CompileURIPrefix extends URIPrefix, so try the longer prefix first.
+	if stripped, ok := strings.CutPrefix(s, CompileURIPrefix); ok {
+		return stripped
+	}
+	return strings.TrimPrefix(s, URIPrefix)
+}
+
+// ToCompileURI returns s in the absolute compile-URI form (see CompileURIPrefix).
+// It first normalizes s to its bare form, so it accepts bare, "gts://" and
+// "gts:///" inputs alike and is idempotent.
+func ToCompileURI(s string) string {
+	return CompileURIPrefix + NormalizeID(s)
 }
 
 // HasPrefix reports whether s is written in the bare "gts." identifier form.

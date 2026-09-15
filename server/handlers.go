@@ -16,6 +16,13 @@ import (
 	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
+// isConflict reports whether err represents an entity content conflict, which is
+// surfaced to clients as HTTP 409.
+func isConflict(err error) bool {
+	var conflict *gts.EntityConflictError
+	return errors.As(err, &conflict)
+}
+
 // Entity Management Handlers
 
 func (s *Server) handleGetEntities(w http.ResponseWriter, r *http.Request) {
@@ -270,7 +277,11 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 			return nil
 		})
 		if err != nil {
-			s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			status := http.StatusUnprocessableEntity
+			if isConflict(err) {
+				status = http.StatusConflict
+			}
+			s.writeJSON(w, status, map[string]any{
 				"ok":             false,
 				"error":          err.Error(),
 				"is_type_schema": entity.IsTypeSchema,
@@ -289,7 +300,11 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 
 	err := s.store.Register(entity)
 	if err != nil {
-		s.writeJSON(w, http.StatusOK, map[string]any{
+		status := http.StatusOK
+		if isConflict(err) {
+			status = http.StatusConflict
+		}
+		s.writeJSON(w, status, map[string]any{
 			"ok":             false,
 			"error":          err.Error(),
 			"is_type_schema": entity.IsTypeSchema,
@@ -370,7 +385,11 @@ func (s *Server) handleAddSchema(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.store.RegisterSchema(req.TypeID, req.Schema)
 	if err != nil {
-		s.writeJSON(w, http.StatusOK, map[string]any{
+		status := http.StatusOK
+		if isConflict(err) {
+			status = http.StatusConflict
+		}
+		s.writeJSON(w, status, map[string]any{
 			"ok":      false,
 			"type_id": req.TypeID,
 			"error":   err.Error(),

@@ -6,6 +6,9 @@ Released under Apache License 2.0
 package gts
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -50,12 +53,44 @@ func (e *StoreGtsCastFromSchemaNotAllowedError) Error() string {
 	return fmt.Sprintf("Cannot cast from schema ID '%s'. The from_id must be an instance (not ending with '~').", e.FromID)
 }
 
+// EntityConflictError is returned when an entity is already registered with
+// different content and entity updates are not allowed. Callers can surface this
+// as an HTTP 409 Conflict.
+type EntityConflictError struct {
+	EntityID string
+}
+
+func (e *EntityConflictError) Error() string {
+	return fmt.Sprintf("Entity '%s' is already registered with different content", e.EntityID)
+}
+
+// contentHash returns a stable SHA-256 hash of an entity's content. encoding/json
+// marshals map keys in sorted order (recursively), so the serialization is
+// canonical and two entities with equal content hash to the same value. This is
+// used to distinguish an idempotent re-submission from a conflicting update
+// without a deep structural comparison.
+func contentHash(content map[string]any) string {
+	b, err := json.Marshal(content)
+	if err != nil {
+		// Non-serializable content should never occur for JSON-sourced entities;
+		// treat it as unique so the registration is conservatively rejected.
+		return fmt.Sprintf("unserializable:%v", content)
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
 // RegistryConfig configures the GtsStore behavior
 type RegistryConfig struct {
 	// ValidateGtsReferences enables validation of GTS references on entity registration
 	ValidateGtsReferences bool
 	// Verbose enables debug logging of store operations. Off by default.
 	Verbose bool
+	// AllowEntityUpdates permits re-registering an entity with different content.
+	// When false (default), changing the content of an already-registered entity
+	// is rejected with an EntityConflictError while identical re-submissions stay
+	// idempotent.
+	AllowEntityUpdates bool
 }
 
 // DefaultRegistryConfig returns the default registry configuration
@@ -63,6 +98,7 @@ func DefaultRegistryConfig() *RegistryConfig {
 	return &RegistryConfig{
 		ValidateGtsReferences: false,
 		Verbose:               false,
+		AllowEntityUpdates:    false,
 	}
 }
 
@@ -139,6 +175,11 @@ func (s *GtsStore) registerLocked(entity *JsonEntity) error {
 		return fmt.Errorf("entity must have a gts_id or a non-empty id field")
 	}
 
+	if previous, ok := s.byID[key]; ok && !s.config.AllowEntityUpdates &&
+		contentHash(previous.Content) != contentHash(entity.Content) {
+		return &EntityConflictError{EntityID: key}
+	}
+
 	if s.config.ValidateGtsReferences {
 		if err := s.validateEntityGtsReferences(entity); err != nil {
 			return fmt.Errorf("GTS reference validation failed for entity %s: %w", key, err)
@@ -201,6 +242,10 @@ func (s *GtsStore) RegisterSchema(typeID string, schema map[string]any) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if previous, ok := s.byID[typeID]; ok && !s.config.AllowEntityUpdates &&
+		contentHash(previous.Content) != contentHash(schema) {
+		return &EntityConflictError{EntityID: typeID}
+	}
 	s.byID[typeID] = entity
 	return nil
 }

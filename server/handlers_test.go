@@ -41,6 +41,64 @@ func TestValidateJSON(t *testing.T) {
 	}
 }
 
+const (
+	testSchema        = `{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://gts.x.test._.foo.v1~","type":"object","properties":{"name":{"type":"string"}}}`
+	testSchemaChanged = `{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://gts.x.test._.foo.v1~","type":"object","properties":{"name":{"type":"integer"}}}`
+)
+
+func postEntity(t *testing.T, s *Server, body string) int {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/entities", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, r)
+	return w.Code
+}
+
+func TestAddEntityConflict(t *testing.T) {
+	s := NewServer(gts.NewGtsStore(nil), "", 0, 0)
+
+	if code := postEntity(t, s, testSchema); code != http.StatusOK {
+		t.Fatalf("initial register status = %d, want 200", code)
+	}
+	// Identical re-submission stays idempotent.
+	if code := postEntity(t, s, testSchema); code != http.StatusOK {
+		t.Fatalf("idempotent register status = %d, want 200", code)
+	}
+	// Changed content is rejected with 409.
+	if code := postEntity(t, s, testSchemaChanged); code != http.StatusConflict {
+		t.Fatalf("changed register status = %d, want 409", code)
+	}
+}
+
+func TestAddEntityAllowUpdates(t *testing.T) {
+	store := gts.NewGtsStoreWithConfig(nil, &gts.RegistryConfig{AllowEntityUpdates: true})
+	s := NewServer(store, "", 0, 0)
+
+	if code := postEntity(t, s, testSchema); code != http.StatusOK {
+		t.Fatalf("initial register status = %d, want 200", code)
+	}
+	if code := postEntity(t, s, testSchemaChanged); code != http.StatusOK {
+		t.Fatalf("changed register status = %d, want 200 with updates allowed", code)
+	}
+}
+
+func TestAddSchemaConflict(t *testing.T) {
+	s := NewServer(gts.NewGtsStore(nil), "", 0, 0)
+	post := func(schema string) int {
+		r := httptest.NewRequest(http.MethodPost, "/type-schemas", bytes.NewBufferString(schema))
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, r)
+		return w.Code
+	}
+
+	if code := post(`{"type_id":"gts.x.test._.bar.v1~","schema":{"type":"object"}}`); code != http.StatusOK {
+		t.Fatalf("initial add-schema status = %d, want 200", code)
+	}
+	if code := post(`{"type_id":"gts.x.test._.bar.v1~","schema":{"type":"string"}}`); code != http.StatusConflict {
+		t.Fatalf("changed add-schema status = %d, want 409", code)
+	}
+}
+
 func TestServerClosesConnections(t *testing.T) {
 	s := NewServer(nil, "", 0, 0)
 	testServer := httptest.NewServer(s.mux)

@@ -102,10 +102,11 @@ var commands = []*Command{
 
 // Global flags
 var (
-	verbose int
-	cfgPath string
-	path    string
-	exclude = "node_modules,dist,build,.git,target"
+	verbose            int
+	cfgPath            string
+	path               string
+	exclude            = "node_modules,dist,build,.git,target"
+	allowEntityUpdates bool
 )
 
 func init() {
