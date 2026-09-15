@@ -50,7 +50,7 @@ type gtsURLLoader struct {
 // Load resolves GTS ID references to their schema content
 // This matches Python's resolve_gts_ref handler
 func (l *gtsURLLoader) Load(url string) (any, error) {
-	// Strip the gts:// URI prefix if present (JSON Schema $id may have it)
+	// Reduce any URI form (gts://, gts:///) to the bare GTS identifier.
 	normalizedURL := gtsid.NormalizeID(url)
 
 	// Check if this is a GTS ID reference
@@ -238,17 +238,18 @@ func newXGtsRefVocabulary(store *GtsStore) *jsonschema.Vocabulary {
 	}
 }
 
-// normalizeSchemaForCompile returns a shallow copy of a schema with the gts://
-// URI prefix stripped from $id. This ensures the embedded $id agrees with the
-// (already normalized) resource URL used by the JSON Schema compiler, so
-// relative $ref values resolve correctly.
+// normalizeSchemaForCompile returns a shallow copy of a schema with $id rewritten
+// to the absolute compile-URI form (see gtsid.CompileURIPrefix). This ensures the
+// embedded $id agrees with the resource URL used by the JSON Schema compiler, so
+// relative $ref values resolve correctly and error messages reference a portable
+// GTS URI instead of a local file:// path.
 func normalizeSchemaForCompile(schema map[string]any) map[string]any {
 	normalized := make(map[string]any, len(schema))
 	for k, v := range schema {
 		normalized[k] = v
 	}
 	if id, ok := normalized["$id"].(string); ok {
-		normalized["$id"] = gtsid.NormalizeID(id)
+		normalized["$id"] = gtsid.ToCompileURI(id)
 	}
 	return normalized
 }
@@ -268,11 +269,9 @@ func (s *GtsStore) validateJSONSchema(schema map[string]any) error {
 	normalizedSchema := normalizeSchemaForCompile(schema)
 	schemaID, ok := normalizedSchema["$id"].(string)
 	if !ok || schemaID == "" {
-		schemaID = "gts.validation.schema"
+		schemaID = gtsid.ToCompileURI("gts.validation.schema")
 		normalizedSchema["$id"] = schemaID
 	}
-	schemaID = gtsid.NormalizeID(schemaID)
-	normalizedSchema["$id"] = schemaID
 
 	compiler := jsonschema.NewCompiler()
 	compiler.UseRegexpEngine(ecmaRegexpEngine)
@@ -281,8 +280,8 @@ func (s *GtsStore) validateJSONSchema(schema map[string]any) error {
 		return fmt.Errorf("JSON Schema validation failed: %v", err)
 	}
 	for id, entity := range s.byID {
-		if entity.IsTypeSchema && id != schemaID {
-			_ = compiler.AddResource(id, normalizeSchemaForCompile(entity.Content))
+		if resourceID := gtsid.ToCompileURI(id); entity.IsTypeSchema && resourceID != schemaID {
+			_ = compiler.AddResource(resourceID, normalizeSchemaForCompile(entity.Content))
 		}
 	}
 	if _, err := compiler.Compile(schemaID); err != nil {
@@ -369,7 +368,7 @@ func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) 
 
 // validateWithSchema performs the actual JSON Schema validation
 func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string]any) error {
-	// Normalize schema by stripping the gts:// prefix from $id for JSON Schema validation
+	// Rewrite $id to the absolute compile-URI form for JSON Schema validation
 	normalizedSchema := normalizeSchemaForCompile(schema)
 
 	// Create a custom compiler with GTS reference resolution
@@ -392,41 +391,33 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 	// Set up custom loader for GTS ID references (matches Python's resolve_gts_ref handler)
 	compiler.UseLoader(&gtsURLLoader{store: s})
 
-	// Get schema ID for compilation (now from normalized schema)
+	// Get schema ID for compilation (already in compile-URI form from normalization)
 	schemaID, ok := normalizedSchema["$id"].(string)
 	if !ok || schemaID == "" {
 		return fmt.Errorf("schema must have a valid $id field")
 	}
 
-	// Normalize schema ID by stripping gts:// prefix if present
-	normalizedSchemaID := gtsid.NormalizeID(schemaID)
-
-	// Update the $id in the normalized schema to use the normalized ID
-	normalizedSchema["$id"] = normalizedSchemaID
-
-	// Add the main schema to the compiler (use normalized schema with normalized ID)
-	if err := compiler.AddResource(normalizedSchemaID, normalizedSchema); err != nil {
+	// Add the main schema to the compiler under its compile-URI id
+	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
 		return fmt.Errorf("add schema resource: %v", err)
 	}
 
-	// Pre-load all schemas from the store (matches Python's store dict pre-population)
-	// Note: Store IDs are already normalized (without gts:// prefix). The schema
-	// content, however, may still carry a gts:// $id which would override the
-	// resource URL and make relative $ref resolution produce malformed URLs
-	// (e.g. "gts://base/ref"). Normalize each pre-loaded schema's $id so the
-	// resource URL and embedded $id agree.
+	// Pre-load all schemas from the store (matches Python's store dict pre-population).
+	// Store IDs are bare (canonical) GTS ids; register each under its compile-URI form
+	// so the resource URL and embedded $id agree and relative $ref values resolve.
 	for id, entity := range s.byID {
-		if entity.IsTypeSchema && id != normalizedSchemaID {
+		resourceID := gtsid.ToCompileURI(id)
+		if entity.IsTypeSchema && resourceID != schemaID {
 			resource := normalizeSchemaForCompile(entity.Content)
-			if err := compiler.AddResource(id, resource); err != nil {
+			if err := compiler.AddResource(resourceID, resource); err != nil {
 				// Ignore errors - gtsURLLoader will handle dynamic resolution
 				continue
 			}
 		}
 	}
 
-	// Compile the schema using the normalized ID
-	compiledSchema, err := compiler.Compile(normalizedSchemaID)
+	// Compile the schema using its compile-URI id
+	compiledSchema, err := compiler.Compile(schemaID)
 	if err != nil {
 		return fmt.Errorf("compile schema: %v", err)
 	}
