@@ -27,12 +27,20 @@ func (e *XGtsRefValidationError) Error() string {
 // XGtsRefValidator validates x-gts-ref constraints in GTS schemas
 type XGtsRefValidator struct {
 	store *GtsStore
+	// enforceExistence, when true and a store is provided, requires an
+	// x-gts-ref value to resolve to a registered entity or validation fails.
+	// Existence is enforced uniformly for all constraint forms, including the
+	// bare "gts.*" wildcard (gts-spec §9.6). When false, only well-formedness
+	// and pattern matching are checked. It defaults to true.
+	enforceExistence bool
 }
 
-// NewXGtsRefValidator creates a new x-gts-ref validator
+// NewXGtsRefValidator creates a new x-gts-ref validator with reference-existence
+// enforcement enabled (the reference-implementation default, gts-spec §9.6).
 func NewXGtsRefValidator(store *GtsStore) *XGtsRefValidator {
 	return &XGtsRefValidator{
-		store: store,
+		store:            store,
+		enforceExistence: true,
 	}
 }
 
@@ -308,7 +316,11 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 		}
 	}
 
-	if v.store != nil && gtsid.IsTypeID(pattern) && v.store.Get(pattern) != nil && v.store.Get(value) == nil {
+	// The referenced value must resolve to a registered entity when a store is
+	// available and existence enforcement is enabled. Existence is enforced
+	// uniformly for all constraint forms, including the bare "gts.*" wildcard
+	// (gts-spec §9.6).
+	if v.store != nil && v.enforceExistence && v.store.Get(value) == nil {
 		return &XGtsRefValidationError{
 			FieldPath:  fieldPath,
 			Value:      value,
