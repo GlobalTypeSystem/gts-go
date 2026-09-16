@@ -693,6 +693,23 @@ func TestValidateSchemaChain_SingleSegment(t *testing.T) {
 	}
 }
 
+func TestValidateSchemaChain_SingleSegmentMissingRef(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id": "gts://gts.x.chain.ns.missingref.v1~",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.chain.ns.missing.v1~"},
+		},
+	})
+	result := store.ValidateSchemaChain("gts.x.chain.ns.missingref.v1~")
+	if result.OK {
+		t.Fatal("expected failure for unresolved $ref")
+	}
+	if !strings.Contains(result.Error, "unresolved $ref") {
+		t.Errorf("expected unresolved $ref error, got: %s", result.Error)
+	}
+}
+
 func TestValidateSchemaChain_InvalidGtsID(t *testing.T) {
 	store := NewGtsStore(nil)
 	result := store.ValidateSchemaChain("not-a-valid-id")
