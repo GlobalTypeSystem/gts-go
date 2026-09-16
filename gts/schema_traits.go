@@ -613,68 +613,6 @@ func normalizeDollarRefs(m map[string]any) map[string]any {
 	}, nil)
 }
 
-// validateEntityLevelTraits is the OP#13 entity-level check applied on the
-// /validate-entity path (NOT on /validate-type-schema). For a schema to be a
-// valid standalone *entity*:
-//   - if any x-gts-traits-schema is declared along the chain, x-gts-traits
-//     values must be provided somewhere in the chain (an open trait surface
-//     with no values is an incomplete entity); and
-//   - every object-form x-gts-traits-schema must be closed
-//     (additionalProperties: false) — an open trait schema signals a type
-//     designed to be extended, not a deployable entity.
-//
-// Boolean trait subschemas (true/false) carry no additionalProperties and are
-// not subject to the closedness check. This mirrors the type-schema-validation
-// relaxations (ADR-0002/0003) while preserving the stricter entity contract.
-func (s *GtsStore) validateEntityLevelTraits(schemaID string) error {
-	gid, err := gtsid.New(schemaID)
-	if err != nil {
-		return fmt.Errorf("invalid GTS ID: %v", err)
-	}
-
-	segments := gid.Segments
-	var traitSchemas []any
-	hasTraitValues := false
-
-	for i := range segments {
-		segSchemaID := buildIDFromSegments(segments[:i+1])
-		entity := s.Get(segSchemaID)
-		if entity == nil {
-			return fmt.Errorf("schema '%s' not found", segSchemaID)
-		}
-		content := entity.Content
-		collectTraitSchemaFromValue(content, &traitSchemas, 0)
-		levelTraits := make(map[string]any)
-		collectTraitsFromValue(content, levelTraits, 0)
-		if len(levelTraits) > 0 {
-			hasTraitValues = true
-		}
-	}
-
-	if len(traitSchemas) == 0 {
-		return nil
-	}
-
-	if !hasTraitValues {
-		return fmt.Errorf("Entity defines x-gts-traits-schema but no x-gts-traits values are provided")
-	}
-
-	for _, ts := range traitSchemas {
-		obj, ok := ts.(map[string]any)
-		if !ok {
-			// Boolean subschema — no additionalProperties to check.
-			continue
-		}
-		if ap, hasAP := obj["additionalProperties"]; !hasAP {
-			return fmt.Errorf("Entity trait schema must set additionalProperties: false to be a valid standalone entity")
-		} else if b, isBool := ap.(bool); !isBool || b {
-			return fmt.Errorf("Entity trait schema must set additionalProperties: false to be a valid standalone entity")
-		}
-	}
-
-	return nil
-}
-
 // ValidateEntityResult is the result of OP#13 entity-level validation.
 type ValidateEntityResult struct {
 	EntityID   string `json:"entity_id"`
@@ -736,18 +674,6 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 				EntityType: "schema",
 				OK:         false,
 				Error:      traitsResult.Error,
-			}
-		}
-
-		// Entity-level trait check (stricter than type-schema validation): a
-		// deployable standalone entity must provide trait values when a trait
-		// schema is declared, and its trait schemas must be closed.
-		if err := s.validateEntityLevelTraits(entityID); err != nil {
-			return &ValidateEntityResult{
-				EntityID:   entityID,
-				EntityType: "schema",
-				OK:         false,
-				Error:      err.Error(),
 			}
 		}
 
