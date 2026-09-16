@@ -523,12 +523,15 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
 	}
 
-	// Abstract types are "incomplete waiting for descendants" (ADR-0003): the
-	// trait completeness and value validation is skipped for them, but
-	// trait-schema structural compatibility has already been checked above.
+	// Abstract types are "incomplete waiting for descendants" (ADR-0003 / §9.7.5):
+	// the completeness check — standard JSON Schema validation of the materialized
+	// effective traits against the effective trait schema — is skipped for them.
+	// x-gts-ref reference resolution is a SEPARATE §9.7.5 rule that does NOT
+	// exempt abstract types, so it still runs below.
+	isAbstract := false
 	if leafEntity := s.Get(schemaID); leafEntity != nil {
 		if ab, isBool := leafEntity.Content[KeyXGtsAbstract].(bool); isBool && ab {
-			return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
+			isAbstract = true
 		}
 	}
 
@@ -538,11 +541,23 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	// properties not present after the chain merge.
 	effectiveTraits := applyDefaults(effectiveTraitSchema, mergedTraits, 0)
 
-	// Validate the materialized effective traits against the effective trait
-	// schema, including the required-trait completeness check (this type is
-	// non-abstract — abstract types returned OK above).
-	errs := validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)
-	for _, err := range NewXGtsRefValidator(s).ValidateInstance(effectiveTraits, effectiveTraitSchema, "") {
+	// Completeness (standard JSON Schema validation of the materialized traits,
+	// including required/const/type) runs only for non-abstract types.
+	var errs []string
+	if !isAbstract {
+		errs = validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)
+	}
+
+	// x-gts-ref reference resolution runs for ALL types, including abstract
+	// (§9.7.5): concrete x-gts-ref targets declared in the effective trait schema
+	// must name a registered constraint type, and any supplied trait value must
+	// resolve to a registered entity — regardless of whether a descendant may
+	// later override the value.
+	xGtsRefValidator := NewXGtsRefValidator(s)
+	for _, err := range xGtsRefValidator.ValidateSchemaRefExistence(effectiveTraitSchema, "") {
+		errs = append(errs, err.Error())
+	}
+	for _, err := range xGtsRefValidator.ValidateInstance(effectiveTraits, effectiveTraitSchema, "") {
 		errs = append(errs, err.Error())
 	}
 	if len(errs) > 0 {

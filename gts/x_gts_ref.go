@@ -282,6 +282,68 @@ func (v *XGtsRefValidator) validateGtsIDOrPattern(pattern, fieldPath string) *XG
 	return nil
 }
 
+// ValidateSchemaRefExistence walks a schema and verifies that every concrete
+// (non-wildcard, non-relative) x-gts-ref names a constraint type that is
+// registered. This enforces the reference-implementation rule that an x-gts-ref
+// must point at an existing constraint type even when no value is supplied:
+// gts-spec §9.6 leaves reference-existence checking to the implementation, and
+// the reference implementation treats a dangling x-gts-ref target like a
+// dangling $ref. Wildcard patterns (which name a family, not a single type) and
+// relative pointer references (validated elsewhere) are skipped. Existence is
+// only checked when a store is available and enforcement is enabled.
+func (v *XGtsRefValidator) ValidateSchemaRefExistence(schema map[string]interface{}, schemaPath string) []*XGtsRefValidationError {
+	var errors []*XGtsRefValidationError
+	if v.store == nil || !v.enforceExistence {
+		return errors
+	}
+	v.visitSchemaRefExistence(schema, schemaPath, &errors)
+	return errors
+}
+
+// visitSchemaRefExistence recursively checks concrete x-gts-ref targets exist.
+func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]interface{}, path string, errors *[]*XGtsRefValidationError) {
+	if schema == nil {
+		return
+	}
+
+	if xGtsRef, hasRef := schema["x-gts-ref"]; hasRef {
+		if refStr, ok := xGtsRef.(string); ok && gtsid.HasPrefix(refStr) && !gtsid.HasWildcard(refStr) {
+			refPath := "x-gts-ref"
+			if path != "" {
+				refPath = path + "/x-gts-ref"
+			}
+			if v.store.Get(refStr) == nil {
+				*errors = append(*errors, &XGtsRefValidationError{
+					FieldPath:  refPath,
+					Value:      refStr,
+					RefPattern: refStr,
+					Reason:     fmt.Sprintf("x-gts-ref constraint type '%s' is not registered", refStr),
+				})
+			}
+		}
+	}
+
+	for key, value := range schema {
+		if key == "x-gts-ref" {
+			continue
+		}
+		nestedPath := key
+		if path != "" {
+			nestedPath = path + "/" + key
+		}
+		switch val := value.(type) {
+		case map[string]interface{}:
+			v.visitSchemaRefExistence(val, nestedPath, errors)
+		case []interface{}:
+			for idx, item := range val {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					v.visitSchemaRefExistence(itemMap, fmt.Sprintf("%s[%d]", nestedPath, idx), errors)
+				}
+			}
+		}
+	}
+}
+
 // validateGtsPattern validates value matches a GTS pattern
 func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) *XGtsRefValidationError {
 	// Validate it's a valid GTS ID
