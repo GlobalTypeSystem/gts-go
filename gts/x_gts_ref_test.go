@@ -139,6 +139,21 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 	}
 }
 
+func TestXGtsRefValidator_ValidateSchemaRefExistenceResolvesRelativeTarget(t *testing.T) {
+	store := NewGtsStore(nil)
+	schema := map[string]any{
+		"constraintType": "gts.x.testref.ns.relative.v1~",
+		"properties": map[string]any{
+			"target": map[string]any{"x-gts-ref": "/constraintType"},
+		},
+	}
+
+	errors := NewXGtsRefValidator(store).ValidateSchemaRefExistence(schema, "")
+	if len(errors) != 1 || !strings.Contains(errors[0].Error(), "gts.x.testref.ns.relative.v1~") {
+		t.Fatalf("errors = %v", errors)
+	}
+}
+
 func TestXGtsRefValidator_ValidateSchemaRefExistenceRejectsInstanceTarget(t *testing.T) {
 	store := NewGtsStore(nil)
 	constraintID := "gts.x.testref.ns.constraint.v1~"

@@ -142,7 +142,7 @@ func visitSchemaChildren(schema map[string]interface{}, path string, visit func(
 					}
 				}
 			}
-		case "not", "if", "then", "else", "items", "contains", "additionalProperties", "additionalItems", "propertyNames", "unevaluatedProperties", "unevaluatedItems", KeyXGtsTraitsSchema:
+		case "not", "if", "then", "else", "items", "contains", "additionalProperties", "additionalItems", "propertyNames", "unevaluatedProperties", "unevaluatedItems":
 			if childSchema, ok := value.(map[string]interface{}); ok {
 				visit(childSchema, nestedPath)
 			}
@@ -318,38 +318,44 @@ func (v *XGtsRefValidator) ValidateSchemaRefExistence(schema map[string]interfac
 	if v.store == nil || !v.enforceExistence {
 		return errors
 	}
-	v.visitSchemaRefExistence(schema, schemaPath, &errors)
+	v.visitSchemaRefExistence(schema, schemaPath, schema, &errors)
 	return errors
 }
 
 // visitSchemaRefExistence recursively checks concrete x-gts-ref targets exist.
-func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]interface{}, path string, errors *[]*XGtsRefValidationError) {
+func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]interface{}, path string, rootSchema map[string]interface{}, errors *[]*XGtsRefValidationError) {
 	if schema == nil {
 		return
 	}
 
 	if xGtsRef, hasRef := schema["x-gts-ref"]; hasRef {
-		if refStr, ok := xGtsRef.(string); ok && gtsid.HasPrefix(refStr) && !gtsid.HasWildcard(refStr) {
-			refPath := "x-gts-ref"
-			if path != "" {
-				refPath = path + "/x-gts-ref"
+		if refStr, ok := xGtsRef.(string); ok {
+			targetID := refStr
+			if strings.HasPrefix(refStr, PointerPrefix) {
+				targetID = v.resolvePointer(rootSchema, refStr)
 			}
-			entity := v.store.Get(refStr)
-			if entity == nil || !entity.IsTypeSchema {
-				*errors = append(*errors, &XGtsRefValidationError{
-					FieldPath:  refPath,
-					Value:      refStr,
-					RefPattern: refStr,
-					Reason:     fmt.Sprintf("x-gts-ref constraint type '%s' is not registered as a type schema", refStr),
-				})
-			} else {
-				v.referencedIDs[refStr] = struct{}{}
+			if gtsid.HasPrefix(targetID) && !gtsid.HasWildcard(targetID) {
+				refPath := "x-gts-ref"
+				if path != "" {
+					refPath = path + "/x-gts-ref"
+				}
+				entity := v.store.Get(targetID)
+				if entity == nil || !entity.IsTypeSchema {
+					*errors = append(*errors, &XGtsRefValidationError{
+						FieldPath:  refPath,
+						Value:      refStr,
+						RefPattern: refStr,
+						Reason:     fmt.Sprintf("x-gts-ref constraint type '%s' is not registered as a type schema", targetID),
+					})
+				} else {
+					v.referencedIDs[targetID] = struct{}{}
+				}
 			}
 		}
 	}
 
 	visitSchemaChildren(schema, path, func(child map[string]interface{}, childPath string) {
-		v.visitSchemaRefExistence(child, childPath, errors)
+		v.visitSchemaRefExistence(child, childPath, rootSchema, errors)
 	})
 }
 
