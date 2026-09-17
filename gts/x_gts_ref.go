@@ -342,6 +342,8 @@ func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]interface{}
 					RefPattern: refStr,
 					Reason:     fmt.Sprintf("x-gts-ref constraint type '%s' is not registered as a type schema", refStr),
 				})
+			} else {
+				v.referencedIDs[refStr] = struct{}{}
 			}
 		}
 	}

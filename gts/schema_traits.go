@@ -763,7 +763,7 @@ func (v *dependencyValidationState) validateType(schemaID string) (err error) {
 		if ref.ID == schemaID || gtsid.HasWildcard(ref.ID) || isJSONSchemaURL(ref.ID) {
 			continue
 		}
-		if strings.Contains(ref.SourcePath, "$ref") || strings.Contains(ref.SourcePath, "x-gts-ref") {
+		if strings.Contains(ref.SourcePath, "$ref") {
 			if dependencyErr := v.validateType(ref.ID); dependencyErr != nil {
 				return fmt.Errorf("referenced type '%s' is invalid: %w", ref.ID, dependencyErr)
 			}
@@ -776,6 +776,11 @@ func (v *dependencyValidationState) validateType(schemaID string) (err error) {
 	}
 	if refErrors := xGtsRefValidator.ValidateSchemaRefExistence(entity.Content, ""); len(refErrors) > 0 {
 		return fmt.Errorf("x-gts-ref validation failed: %s", refErrors[0].Error())
+	}
+	for _, dependencyID := range xGtsRefValidator.ReferencedIDs() {
+		if dependencyErr := v.validateType(dependencyID); dependencyErr != nil {
+			return fmt.Errorf("referenced constraint type '%s' is invalid: %w", dependencyID, dependencyErr)
+		}
 	}
 	if modifierErr := ValidateSchemaModifiers(entity.Content); modifierErr != nil {
 		return modifierErr
