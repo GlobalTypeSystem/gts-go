@@ -139,6 +139,19 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 	}
 }
 
+func TestXGtsRefValidator_ValidateSchemaRefExistenceRejectsInstanceTarget(t *testing.T) {
+	store := NewGtsStore(nil)
+	constraintID := "gts.x.testref.ns.constraint.v1~"
+	store.byID[constraintID] = &JsonEntity{IsTypeSchema: false}
+
+	errors := NewXGtsRefValidator(store).ValidateSchemaRefExistence(map[string]any{
+		"x-gts-ref": constraintID,
+	}, "")
+	if len(errors) != 1 || !strings.Contains(errors[0].Error(), "not registered as a type schema") {
+		t.Fatalf("errors = %v", errors)
+	}
+}
+
 func TestXGtsRefValidator_ValidateInstance_PrefixValidation(t *testing.T) {
 	store := NewGtsStore(nil)
 	validator := NewXGtsRefValidator(store)

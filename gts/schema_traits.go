@@ -21,6 +21,7 @@ package gts
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/GlobalTypeSystem/gts-go/gtsid"
@@ -376,6 +377,111 @@ func checkUnresolvedProps(schema map[string]any, traits map[string]any) []string
 	return errors
 }
 
+func removeRequiredKeywords(schema map[string]any) map[string]any {
+	return removeRequiredKeywordsAtDepth(schema, 0)
+}
+
+func removeRequiredKeywordsAtDepth(schema map[string]any, depth int) map[string]any {
+	if depth >= maxTraitsRecursionDepth {
+		return schema
+	}
+	result := make(map[string]any, len(schema))
+	for key, value := range schema {
+		if key == "required" {
+			continue
+		}
+		switch key {
+		case "allOf", "anyOf", "oneOf":
+			if schemas, ok := value.([]any); ok {
+				result[key] = removeRequiredFromSchemas(schemas, depth+1)
+				continue
+			}
+		case "not", "if", "then", "else", "items", "contains", "additionalProperties", "additionalItems", "propertyNames":
+			if nested, ok := value.(map[string]any); ok {
+				result[key] = removeRequiredKeywordsAtDepth(nested, depth+1)
+				continue
+			}
+		case "properties", "patternProperties", "dependentSchemas", "dependencies":
+			if schemas, ok := value.(map[string]any); ok {
+				result[key] = removeRequiredFromNamedSchemas(schemas, depth+1)
+				continue
+			}
+		}
+		result[key] = value
+	}
+	return result
+}
+
+func removeRequiredFromSchemas(schemas []any, depth int) []any {
+	result := make([]any, len(schemas))
+	for i, value := range schemas {
+		if schema, ok := value.(map[string]any); ok {
+			result[i] = removeRequiredKeywordsAtDepth(schema, depth)
+		} else {
+			result[i] = value
+		}
+	}
+	return result
+}
+
+func removeRequiredFromNamedSchemas(schemas map[string]any, depth int) map[string]any {
+	result := make(map[string]any, len(schemas))
+	for name, value := range schemas {
+		if schema, ok := value.(map[string]any); ok {
+			result[name] = removeRequiredKeywordsAtDepth(schema, depth)
+		} else {
+			result[name] = value
+		}
+	}
+	return result
+}
+
+func hasContainerCycle(value any) bool {
+	return hasContainerCycleAtPath(value, make(map[uintptr]bool), make(map[uintptr]bool))
+}
+
+func hasContainerCycleAtPath(value any, visiting, visited map[uintptr]bool) bool {
+	var pointer uintptr
+	switch container := value.(type) {
+	case map[string]any:
+		pointer = reflect.ValueOf(container).Pointer()
+		if visiting[pointer] {
+			return true
+		}
+		if visited[pointer] {
+			return false
+		}
+		visiting[pointer] = true
+		for _, nested := range container {
+			if hasContainerCycleAtPath(nested, visiting, visited) {
+				return true
+			}
+		}
+	case []any:
+		pointer = reflect.ValueOf(container).Pointer()
+		if pointer == 0 {
+			return false
+		}
+		if visiting[pointer] {
+			return true
+		}
+		if visited[pointer] {
+			return false
+		}
+		visiting[pointer] = true
+		for _, nested := range container {
+			if hasContainerCycleAtPath(nested, visiting, visited) {
+				return true
+			}
+		}
+	default:
+		return false
+	}
+	delete(visiting, pointer)
+	visited[pointer] = true
+	return false
+}
+
 // removeXGtsFields removes x-gts-* extension fields from a schema recursively.
 func removeXGtsFields(schema map[string]any) map[string]any {
 	return walkSchema(schema, nil, func(k string) bool {
@@ -427,6 +533,13 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		}
 
 		content := entity.Content
+		if hasContainerCycle(content) {
+			return &ValidateSchemaTraitsResult{
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("Schema '%s' contains cyclic content", segSchemaID),
+			}
+		}
 
 		collectTraitSchemaFromValue(content, &traitSchemas, 0)
 
@@ -553,9 +666,7 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	// including required/const/type) runs only for non-abstract types.
 	var errs []string
 	if isAbstract {
-		abstractTraitSchema := walkSchema(effectiveTraitSchema, nil, func(k string) bool {
-			return k == "required"
-		})
+		abstractTraitSchema := removeRequiredKeywords(effectiveTraitSchema)
 		errs = validateTraitsAgainstSchema(abstractTraitSchema, effectiveTraits, false)
 	} else {
 		errs = validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)

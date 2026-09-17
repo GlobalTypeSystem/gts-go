@@ -578,14 +578,19 @@ func (s *Server) handleValidateSchema(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := s.store.ValidateEntity(req.TypeID)
-	if result.OK {
+	if result.OK && result.EntityType == "schema" {
 		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	} else {
-		s.writeJSON(w, http.StatusOK, map[string]any{
-			"ok":    false,
-			"error": result.Error,
-		})
+		return
 	}
+
+	errorMessage := result.Error
+	if result.OK {
+		errorMessage = "type_id does not identify a type schema"
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":    false,
+		"error": errorMessage,
+	})
 }
 
 // OP#13 - Validate Entity (schema chain + traits validation)

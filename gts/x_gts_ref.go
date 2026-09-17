@@ -322,12 +322,13 @@ func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]interface{}
 			if path != "" {
 				refPath = path + "/x-gts-ref"
 			}
-			if v.store.Get(refStr) == nil {
+			entity := v.store.Get(refStr)
+			if entity == nil || !entity.IsTypeSchema {
 				*errors = append(*errors, &XGtsRefValidationError{
 					FieldPath:  refPath,
 					Value:      refStr,
 					RefPattern: refStr,
-					Reason:     fmt.Sprintf("x-gts-ref constraint type '%s' is not registered", refStr),
+					Reason:     fmt.Sprintf("x-gts-ref constraint type '%s' is not registered as a type schema", refStr),
 				})
 			}
 		}

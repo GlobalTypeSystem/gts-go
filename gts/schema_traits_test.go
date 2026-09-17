@@ -7,6 +7,8 @@ package gts
 
 import (
 	"testing"
+
+	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
 // =============================================================================
@@ -1083,5 +1085,44 @@ func TestValidateEntity_GTSLookingTraitStringWithoutRefIsNotDependency(t *testin
 	result := store.ValidateEntity("gts.x.entity.ns.traitbase.v1~x.entity._.leaf.v1~")
 	if !result.OK {
 		t.Errorf("ordinary trait strings must not be treated as references, got: %s", result.Error)
+	}
+}
+
+func TestValidateSchemaTraits_AbstractPreservesRequiredProperty(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegisterTraits(t, store, map[string]any{
+		"$id":            "gts://gts.x.entity.ns.abstract_required.v1~",
+		"x-gts-abstract": true,
+		"x-gts-traits-schema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"required": map[string]any{"type": "string"},
+			},
+		},
+		"x-gts-traits": map[string]any{"required": 42.0},
+	})
+
+	if result := store.ValidateSchemaTraits("gts.x.entity.ns.abstract_required.v1~"); result.OK {
+		t.Fatal("abstract trait validation accepted a non-string required property")
+	}
+}
+
+func TestValidateSchemaTraits_RejectsCyclicContent(t *testing.T) {
+	store := NewGtsStore(nil)
+	content := map[string]any{
+		"$id":  "gts://gts.x.entity.ns.cyclic.v1~",
+		"type": "object",
+	}
+	content["x-gts-traits-schema"] = content
+	id, err := gtsid.New("gts.x.entity.ns.cyclic.v1~")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Register(&JsonEntity{GtsID: id, Content: content, IsTypeSchema: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if result := store.ValidateSchemaTraits("gts.x.entity.ns.cyclic.v1~"); result.OK {
+		t.Fatal("cyclic schema content was accepted")
 	}
 }

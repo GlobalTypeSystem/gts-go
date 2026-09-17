@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/GlobalTypeSystem/gts-go/gts"
@@ -112,5 +113,29 @@ func TestServerClosesConnections(t *testing.T) {
 
 	if !response.Close {
 		t.Fatal("response connection remains open")
+	}
+}
+
+func TestValidateSchemaRejectsInstanceID(t *testing.T) {
+	store := gts.NewGtsStore(nil)
+	typeID := "gts.x.server.ns.type.v1~"
+	if err := store.RegisterSchema(typeID, map[string]any{"$id": "gts://" + typeID, "type": "object"}); err != nil {
+		t.Fatal(err)
+	}
+	instanceID := "gts.x.server.ns.type.v1~x.server._.instance.v1"
+	if err := store.Register(gts.NewJsonEntity(map[string]any{
+		"gts_id": instanceID,
+		"type":   typeID,
+	}, gts.DefaultGtsConfig())); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewServer(store, "", 0, 0)
+	r := httptest.NewRequest(http.MethodPost, "/validate-type-schema", strings.NewReader(`{"type_id":"`+instanceID+`"}`))
+	w := httptest.NewRecorder()
+	s.handleValidateSchema(w, r)
+
+	if !strings.Contains(w.Body.String(), "type_id does not identify a type schema") {
+		t.Fatalf("response = %s", w.Body.String())
 	}
 }
