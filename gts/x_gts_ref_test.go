@@ -139,12 +139,41 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 	}
 }
 
+func TestXGtsRefValidator_RejectsCyclicSchemaInputs(t *testing.T) {
+	schema := map[string]any{"type": "object"}
+	schema["properties"] = map[string]any{"self": schema}
+	validator := NewXGtsRefValidator(NewGtsStore(nil))
+
+	if errors := validator.ValidateSchema(schema, "", nil); len(errors) != 1 || !strings.Contains(errors[0].Error(), "valid JSON") {
+		t.Fatalf("ValidateSchema errors = %v", errors)
+	}
+	if errors := validator.ValidateSchemaRefExistence(schema, ""); len(errors) != 1 || !strings.Contains(errors[0].Error(), "valid JSON") {
+		t.Fatalf("ValidateSchemaRefExistence errors = %v", errors)
+	}
+}
+
+func TestXGtsRefValidator_ValidateSchemaRefExistenceTraversesTupleItems(t *testing.T) {
+	constraintID := "gts.x.testref.ns.tuple.v1~"
+	schema := map[string]any{
+		"type": "array",
+		"items": []any{
+			map[string]any{"type": "string", "x-gts-ref": constraintID},
+		},
+	}
+	validator := NewXGtsRefValidator(NewGtsStore(nil))
+
+	errors := validator.ValidateSchemaRefExistence(schema, "")
+	if len(errors) != 1 || !strings.Contains(errors[0].Error(), constraintID) {
+		t.Fatalf("errors = %v", errors)
+	}
+}
+
 func TestXGtsRefValidator_ValidateSchemaRefExistenceResolvesRelativeTarget(t *testing.T) {
 	store := NewGtsStore(nil)
 	schema := map[string]any{
 		"constraintType": "gts.x.testref.ns.relative.v1~",
 		"properties": map[string]any{
-			"target": map[string]any{"x-gts-ref": "/constraintType"},
+			"target": map[string]any{"x-gts-ref": "/x-gts-traits-schema/constraintType"},
 		},
 	}
 
