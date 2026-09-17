@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 
@@ -91,10 +92,13 @@ func (s *Server) registerRoutes() {
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.host, s.port)
-	log.Printf("Starting GTS server on http://%s", addr)
+	listener, err := net.Listen("tcp4", addr)
+	if err != nil {
+		return err
+	}
 
-	handler := s.withLogging(s.mux)
-	return http.ListenAndServe(addr, handler)
+	log.Printf("GTS server listening on http://%s", addr)
+	return http.Serve(listener, s.withLogging(s.mux))
 }
 
 // Helper methods
