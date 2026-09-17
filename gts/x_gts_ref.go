@@ -119,6 +119,37 @@ func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string
 	}
 }
 
+func visitSchemaChildren(schema map[string]interface{}, path string, visit func(map[string]interface{}, string)) {
+	for key, value := range schema {
+		nestedPath := key
+		if path != "" {
+			nestedPath = path + "/" + key
+		}
+		switch key {
+		case "properties", "patternProperties", "definitions", "$defs", "dependentSchemas", "dependencies":
+			if named, ok := value.(map[string]interface{}); ok {
+				for name, child := range named {
+					if childSchema, ok := child.(map[string]interface{}); ok {
+						visit(childSchema, nestedPath+"/"+name)
+					}
+				}
+			}
+		case "allOf", "anyOf", "oneOf", "prefixItems":
+			if children, ok := value.([]interface{}); ok {
+				for index, child := range children {
+					if childSchema, ok := child.(map[string]interface{}); ok {
+						visit(childSchema, fmt.Sprintf("%s[%d]", nestedPath, index))
+					}
+				}
+			}
+		case "not", "if", "then", "else", "items", "contains", "additionalProperties", "additionalItems", "propertyNames", "unevaluatedProperties", "unevaluatedItems", KeyXGtsTraitsSchema:
+			if childSchema, ok := value.(map[string]interface{}); ok {
+				visit(childSchema, nestedPath)
+			}
+		}
+	}
+}
+
 // visitSchema recursively visits schema nodes
 func (v *XGtsRefValidator) visitSchema(schema map[string]interface{}, path string, rootSchema map[string]interface{}, errors *[]*XGtsRefValidationError) {
 	if schema == nil {
@@ -136,28 +167,9 @@ func (v *XGtsRefValidator) visitSchema(schema map[string]interface{}, path strin
 		}
 	}
 
-	// Recurse into nested structures
-	for key, value := range schema {
-		if key == "x-gts-ref" {
-			continue
-		}
-
-		nestedPath := key
-		if path != "" {
-			nestedPath = path + "/" + key
-		}
-
-		switch val := value.(type) {
-		case map[string]interface{}:
-			v.visitSchema(val, nestedPath, rootSchema, errors)
-		case []interface{}:
-			for idx, item := range val {
-				if itemMap, ok := item.(map[string]interface{}); ok {
-					v.visitSchema(itemMap, fmt.Sprintf("%s[%d]", nestedPath, idx), rootSchema, errors)
-				}
-			}
-		}
-	}
+	visitSchemaChildren(schema, path, func(child map[string]interface{}, childPath string) {
+		v.visitSchema(child, childPath, rootSchema, errors)
+	})
 }
 
 // validateRefValue validates an instance value against its x-gts-ref constraint
@@ -334,25 +346,9 @@ func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]interface{}
 		}
 	}
 
-	for key, value := range schema {
-		if key == "x-gts-ref" {
-			continue
-		}
-		nestedPath := key
-		if path != "" {
-			nestedPath = path + "/" + key
-		}
-		switch val := value.(type) {
-		case map[string]interface{}:
-			v.visitSchemaRefExistence(val, nestedPath, errors)
-		case []interface{}:
-			for idx, item := range val {
-				if itemMap, ok := item.(map[string]interface{}); ok {
-					v.visitSchemaRefExistence(itemMap, fmt.Sprintf("%s[%d]", nestedPath, idx), errors)
-				}
-			}
-		}
-	}
+	visitSchemaChildren(schema, path, func(child map[string]interface{}, childPath string) {
+		v.visitSchemaRefExistence(child, childPath, errors)
+	})
 }
 
 // validateGtsPattern validates value matches a GTS pattern
