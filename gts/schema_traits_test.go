@@ -1061,3 +1061,27 @@ func TestValidateEntity_AbstractSchemaMatchesTraitValidation(t *testing.T) {
 		t.Errorf("expected abstract schema to skip completeness, got: %s", entityResult.Error)
 	}
 }
+
+func TestValidateEntity_GTSLookingTraitStringWithoutRefIsNotDependency(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegisterTraits(t, store, map[string]any{
+		"$id":  "gts://gts.x.entity.ns.traitbase.v1~",
+		"type": "object",
+		"x-gts-traits-schema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"topic": map[string]any{"type": "string"}},
+		},
+	})
+	mustRegisterTraits(t, store, map[string]any{
+		"$id": "gts://gts.x.entity.ns.traitbase.v1~x.entity._.leaf.v1~",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.entity.ns.traitbase.v1~"},
+		},
+		"x-gts-traits": map[string]any{"topic": "gts.x.unregistered._.value.v1"},
+	})
+
+	result := store.ValidateEntity("gts.x.entity.ns.traitbase.v1~x.entity._.leaf.v1~")
+	if !result.OK {
+		t.Errorf("ordinary trait strings must not be treated as references, got: %s", result.Error)
+	}
+}

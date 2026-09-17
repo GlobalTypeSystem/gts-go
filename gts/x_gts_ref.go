@@ -26,7 +26,8 @@ func (e *XGtsRefValidationError) Error() string {
 
 // XGtsRefValidator validates x-gts-ref constraints in GTS schemas
 type XGtsRefValidator struct {
-	store *GtsStore
+	store         *GtsStore
+	referencedIDs map[string]struct{}
 	// enforceExistence, when true and a store is provided, requires an
 	// x-gts-ref value to resolve to a registered entity or validation fails.
 	// Existence is enforced uniformly for all constraint forms, including the
@@ -40,8 +41,17 @@ type XGtsRefValidator struct {
 func NewXGtsRefValidator(store *GtsStore) *XGtsRefValidator {
 	return &XGtsRefValidator{
 		store:            store,
+		referencedIDs:    make(map[string]struct{}),
 		enforceExistence: true,
 	}
+}
+
+func (v *XGtsRefValidator) ReferencedIDs() []string {
+	ids := make([]string, 0, len(v.referencedIDs))
+	for id := range v.referencedIDs {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // ValidateInstance validates an instance against x-gts-ref constraints in schema
@@ -382,13 +392,16 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 	// available and existence enforcement is enabled. Existence is enforced
 	// uniformly for all constraint forms, including the bare "gts.*" wildcard
 	// (gts-spec §9.6).
-	if v.store != nil && v.enforceExistence && v.store.Get(value) == nil {
-		return &XGtsRefValidationError{
-			FieldPath:  fieldPath,
-			Value:      value,
-			RefPattern: pattern,
-			Reason:     fmt.Sprintf("Referenced entity '%s' not found in registry", value),
+	if v.store != nil && v.enforceExistence {
+		if v.store.Get(value) == nil {
+			return &XGtsRefValidationError{
+				FieldPath:  fieldPath,
+				Value:      value,
+				RefPattern: pattern,
+				Reason:     fmt.Sprintf("Referenced entity '%s' not found in registry", value),
+			}
 		}
+		v.referencedIDs[value] = struct{}{}
 	}
 
 	return nil

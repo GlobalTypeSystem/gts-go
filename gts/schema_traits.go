@@ -385,9 +385,10 @@ func removeXGtsFields(schema map[string]any) map[string]any {
 
 // ValidateSchemaTraitsResult is the result of OP#13 schema traits validation.
 type ValidateSchemaTraitsResult struct {
-	TypeID string `json:"type_id"`
-	OK     bool   `json:"ok"`
-	Error  string `json:"error,omitempty"`
+	TypeID        string   `json:"type_id"`
+	OK            bool     `json:"ok"`
+	Error         string   `json:"error,omitempty"`
+	ReferencedIDs []string `json:"-"`
 }
 
 // ValidateSchemaTraits validates schema traits across the inheritance chain (OP#13).
@@ -513,11 +514,18 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	// traits are prohibited on this host and its whole subtree. A type carrying
 	// no traits is still valid; any trait value fails.
 	if b, ok := effAny.(bool); ok && !b {
-		if hasTraitValues {
+		hasNonFalseDeclaration := false
+		for _, traitSchema := range traitSchemas {
+			if declaration, isBool := traitSchema.(bool); !isBool || declaration {
+				hasNonFalseDeclaration = true
+				break
+			}
+		}
+		if hasTraitValues || hasNonFalseDeclaration {
 			return &ValidateSchemaTraitsResult{
 				TypeID: schemaID,
 				OK:     false,
-				Error:  "x-gts-traits-schema resolves to `false` in the chain — x-gts-traits values are prohibited",
+				Error:  "x-gts-traits-schema resolves to `false` in the chain — trait declarations and values are prohibited",
 			}
 		}
 		return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
@@ -544,7 +552,12 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	// Completeness (standard JSON Schema validation of the materialized traits,
 	// including required/const/type) runs only for non-abstract types.
 	var errs []string
-	if !isAbstract {
+	if isAbstract {
+		abstractTraitSchema := walkSchema(effectiveTraitSchema, nil, func(k string) bool {
+			return k == "required"
+		})
+		errs = validateTraitsAgainstSchema(abstractTraitSchema, effectiveTraits, false)
+	} else {
 		errs = validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)
 	}
 
@@ -568,7 +581,11 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		}
 	}
 
-	return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
+	return &ValidateSchemaTraitsResult{
+		TypeID:        schemaID,
+		OK:            true,
+		ReferencedIDs: xGtsRefValidator.ReferencedIDs(),
+	}
 }
 
 // walkSchema applies a key transform and a recursive map transform to every node in a schema.
@@ -613,6 +630,169 @@ func normalizeDollarRefs(m map[string]any) map[string]any {
 	}, nil)
 }
 
+type dependencyValidationState struct {
+	store     *GtsStore
+	visiting  map[string]bool
+	completed map[string]bool
+	results   map[string]error
+}
+
+func (s *GtsStore) validateTypeSchemaTransitive(schemaID string) error {
+	state := &dependencyValidationState{
+		store:     s,
+		visiting:  make(map[string]bool),
+		completed: make(map[string]bool),
+		results:   make(map[string]error),
+	}
+	return state.validateType(schemaID)
+}
+
+func (s *GtsStore) validateInstanceTransitive(instanceID string) error {
+	state := &dependencyValidationState{
+		store:     s,
+		visiting:  make(map[string]bool),
+		completed: make(map[string]bool),
+		results:   make(map[string]error),
+	}
+	return state.validateInstance(instanceID)
+}
+
+func (v *dependencyValidationState) validateEntity(entityID string) error {
+	entity := v.store.Get(entityID)
+	if entity == nil {
+		return fmt.Errorf("referenced entity '%s' not found", entityID)
+	}
+	if entity.IsTypeSchema {
+		return v.validateType(entityID)
+	}
+	return v.validateInstance(entityID)
+}
+
+func (v *dependencyValidationState) validateType(schemaID string) (err error) {
+	key := "type:" + schemaID
+	if v.completed[key] {
+		return v.results[key]
+	}
+	if v.visiting[key] {
+		return nil
+	}
+	v.visiting[key] = true
+	defer func() {
+		delete(v.visiting, key)
+		v.completed[key] = true
+		v.results[key] = err
+	}()
+
+	entity := v.store.Get(schemaID)
+	if entity == nil {
+		return &StoreGtsSchemaNotFoundError{EntityID: schemaID}
+	}
+	if !entity.IsTypeSchema {
+		return fmt.Errorf("entity '%s' is not a type-schema", schemaID)
+	}
+
+	gid, parseErr := gtsid.New(schemaID)
+	if parseErr != nil {
+		return fmt.Errorf("invalid GTS ID: %w", parseErr)
+	}
+	for i := 0; i < len(gid.Segments)-1; i++ {
+		ancestorID := buildIDFromSegments(gid.Segments[:i+1])
+		if dependencyErr := v.validateType(ancestorID); dependencyErr != nil {
+			return fmt.Errorf("ancestor type '%s' is invalid: %w", ancestorID, dependencyErr)
+		}
+	}
+
+	for _, ref := range entity.GtsRefs {
+		if ref.ID == schemaID || gtsid.HasWildcard(ref.ID) || isJSONSchemaURL(ref.ID) {
+			continue
+		}
+		if strings.Contains(ref.SourcePath, "$ref") || strings.Contains(ref.SourcePath, "x-gts-ref") {
+			if dependencyErr := v.validateType(ref.ID); dependencyErr != nil {
+				return fmt.Errorf("referenced type '%s' is invalid: %w", ref.ID, dependencyErr)
+			}
+		}
+	}
+
+	xGtsRefValidator := NewXGtsRefValidator(v.store)
+	if refErrors := xGtsRefValidator.ValidateSchema(entity.Content, "", nil); len(refErrors) > 0 {
+		return fmt.Errorf("x-gts-ref validation failed: %s", refErrors[0].Error())
+	}
+	if refErrors := xGtsRefValidator.ValidateSchemaRefExistence(entity.Content, ""); len(refErrors) > 0 {
+		return fmt.Errorf("x-gts-ref validation failed: %s", refErrors[0].Error())
+	}
+	if modifierErr := ValidateSchemaModifiers(entity.Content); modifierErr != nil {
+		return modifierErr
+	}
+	if placementErr := ValidateTraitPlacement(entity.Content); placementErr != nil {
+		return placementErr
+	}
+	if chainResult := v.store.ValidateSchemaChain(schemaID); !chainResult.OK {
+		return fmt.Errorf("%s", chainResult.Error)
+	}
+	traitsResult := v.store.ValidateSchemaTraits(schemaID)
+	if !traitsResult.OK {
+		return fmt.Errorf("%s", traitsResult.Error)
+	}
+	for _, dependencyID := range traitsResult.ReferencedIDs {
+		if dependencyErr := v.validateEntity(dependencyID); dependencyErr != nil {
+			return fmt.Errorf("referenced trait entity '%s' is invalid: %w", dependencyID, dependencyErr)
+		}
+	}
+	return nil
+}
+
+func (v *dependencyValidationState) validateInstance(instanceID string) (err error) {
+	key := "instance:" + instanceID
+	if v.completed[key] {
+		return v.results[key]
+	}
+	if v.visiting[key] {
+		return nil
+	}
+	v.visiting[key] = true
+	defer func() {
+		delete(v.visiting, key)
+		v.completed[key] = true
+		v.results[key] = err
+	}()
+
+	lookupID := instanceID
+	if gtsid.IsValid(instanceID) {
+		gid, parseErr := gtsid.New(instanceID)
+		if parseErr != nil {
+			return parseErr
+		}
+		lookupID = gid.ID
+	}
+	entity := v.store.Get(lookupID)
+	if entity == nil {
+		return &StoreGtsObjectNotFoundError{EntityID: instanceID}
+	}
+	if entity.IsTypeSchema {
+		return fmt.Errorf("entity '%s' is a type-schema, not an instance", instanceID)
+	}
+	if entity.TypeID == "" {
+		return &StoreGtsSchemaForInstanceNotFoundError{EntityID: lookupID}
+	}
+	if dependencyErr := v.validateType(entity.TypeID); dependencyErr != nil {
+		return fmt.Errorf("instance type '%s' is invalid: %w", entity.TypeID, dependencyErr)
+	}
+
+	localResult := v.store.validateInstanceLocal(instanceID)
+	if !localResult.OK {
+		return fmt.Errorf("%s", localResult.Error)
+	}
+	schema := v.store.Get(entity.TypeID)
+	xGtsRefValidator := NewXGtsRefValidator(v.store)
+	xGtsRefValidator.ValidateInstance(entity.Content, schema.Content, "")
+	for _, dependencyID := range xGtsRefValidator.ReferencedIDs() {
+		if dependencyErr := v.validateEntity(dependencyID); dependencyErr != nil {
+			return fmt.Errorf("referenced entity '%s' is invalid: %w", dependencyID, dependencyErr)
+		}
+	}
+	return nil
+}
+
 // ValidateEntityResult is the result of OP#13 entity-level validation.
 type ValidateEntityResult struct {
 	EntityID   string `json:"entity_id"`
@@ -634,8 +814,7 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 	}
 
 	if entity.IsTypeSchema {
-		// Validate schema modifiers (x-gts-final, x-gts-abstract): type, mutual exclusion, placement.
-		if err := ValidateSchemaModifiers(entity.Content); err != nil {
+		if err := s.validateTypeSchemaTransitive(entityID); err != nil {
 			return &ValidateEntityResult{
 				EntityID:   entityID,
 				EntityType: "schema",
@@ -643,40 +822,6 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 				Error:      err.Error(),
 			}
 		}
-
-		// Validate trait keyword placement (x-gts-traits, x-gts-traits-schema):
-		// these are type-level keywords and MUST appear only at the schema top
-		// level (gts-spec §9.7.1/§9.11).
-		if err := ValidateTraitPlacement(entity.Content); err != nil {
-			return &ValidateEntityResult{
-				EntityID:   entityID,
-				EntityType: "schema",
-				OK:         false,
-				Error:      err.Error(),
-			}
-		}
-
-		// For schemas: run OP#12 chain validation + OP#13 traits validation
-		chainResult := s.ValidateSchemaChain(entityID)
-		if !chainResult.OK {
-			return &ValidateEntityResult{
-				EntityID:   entityID,
-				EntityType: "schema",
-				OK:         false,
-				Error:      chainResult.Error,
-			}
-		}
-
-		traitsResult := s.ValidateSchemaTraits(entityID)
-		if !traitsResult.OK {
-			return &ValidateEntityResult{
-				EntityID:   entityID,
-				EntityType: "schema",
-				OK:         false,
-				Error:      traitsResult.Error,
-			}
-		}
-
 		return &ValidateEntityResult{EntityID: entityID, EntityType: "schema", OK: true}
 	}
 

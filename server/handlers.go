@@ -577,19 +577,7 @@ func (s *Server) handleValidateSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := s.store.ValidateSchemaChain(req.TypeID)
-	if result.OK {
-		// Also run OP#13 traits validation
-		traitsResult := s.store.ValidateSchemaTraits(req.TypeID)
-		if !traitsResult.OK {
-			s.writeJSON(w, http.StatusOK, map[string]any{
-				"ok":    false,
-				"error": traitsResult.Error,
-			})
-			return
-		}
-	}
-
+	result := s.store.ValidateEntity(req.TypeID)
 	if result.OK {
 		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	} else {

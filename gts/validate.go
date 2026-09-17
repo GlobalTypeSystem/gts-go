@@ -80,6 +80,13 @@ type ValidationResult struct {
 // (e.g. a UUID paired with a separate "type" field on the stored entity,
 // spec §3.7). Returns ValidationResult with ok=true if validation succeeds.
 func (s *GtsStore) ValidateInstance(instanceID string) *ValidationResult {
+	if err := s.validateInstanceTransitive(instanceID); err != nil {
+		return &ValidationResult{ID: instanceID, OK: false, Error: err.Error()}
+	}
+	return &ValidationResult{ID: instanceID, OK: true, Error: ""}
+}
+
+func (s *GtsStore) validateInstanceLocal(instanceID string) *ValidationResult {
 	// Well-known GTS id first; fall back to a raw store lookup by the
 	// passed string so anonymous instances (keyed by UUID) resolve too.
 	lookupID := instanceID
