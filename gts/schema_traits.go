@@ -21,7 +21,6 @@ package gts
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 
 	"github.com/GlobalTypeSystem/gts-go/gtsid"
@@ -436,52 +435,6 @@ func removeRequiredFromNamedSchemas(schemas map[string]any, depth int) map[strin
 	return result
 }
 
-func hasContainerCycle(value any) bool {
-	return hasContainerCycleAtPath(value, make(map[uintptr]bool), make(map[uintptr]bool))
-}
-
-func hasContainerCycleAtPath(value any, visiting, visited map[uintptr]bool) bool {
-	var pointer uintptr
-	switch container := value.(type) {
-	case map[string]any:
-		pointer = reflect.ValueOf(container).Pointer()
-		if visiting[pointer] {
-			return true
-		}
-		if visited[pointer] {
-			return false
-		}
-		visiting[pointer] = true
-		for _, nested := range container {
-			if hasContainerCycleAtPath(nested, visiting, visited) {
-				return true
-			}
-		}
-	case []any:
-		pointer = reflect.ValueOf(container).Pointer()
-		if pointer == 0 {
-			return false
-		}
-		if visiting[pointer] {
-			return true
-		}
-		if visited[pointer] {
-			return false
-		}
-		visiting[pointer] = true
-		for _, nested := range container {
-			if hasContainerCycleAtPath(nested, visiting, visited) {
-				return true
-			}
-		}
-	default:
-		return false
-	}
-	delete(visiting, pointer)
-	visited[pointer] = true
-	return false
-}
-
 // removeXGtsFields removes x-gts-* extension fields from a schema recursively.
 func removeXGtsFields(schema map[string]any) map[string]any {
 	return walkSchema(schema, nil, func(k string) bool {
@@ -533,13 +486,6 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		}
 
 		content := entity.Content
-		if hasContainerCycle(content) {
-			return &ValidateSchemaTraitsResult{
-				TypeID: schemaID,
-				OK:     false,
-				Error:  fmt.Sprintf("Schema '%s' contains cyclic content", segSchemaID),
-			}
-		}
 
 		collectTraitSchemaFromValue(content, &traitSchemas, 0)
 

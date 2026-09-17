@@ -5,11 +5,7 @@ Released under Apache License 2.0
 
 package gts
 
-import (
-	"testing"
-
-	"github.com/GlobalTypeSystem/gts-go/gtsid"
-)
+import "testing"
 
 // =============================================================================
 // walkSchema / normalizeDollarRefs / removeXGtsFields
@@ -1104,25 +1100,5 @@ func TestValidateSchemaTraits_AbstractPreservesRequiredProperty(t *testing.T) {
 
 	if result := store.ValidateSchemaTraits("gts.x.entity.ns.abstract_required.v1~"); result.OK {
 		t.Fatal("abstract trait validation accepted a non-string required property")
-	}
-}
-
-func TestValidateSchemaTraits_RejectsCyclicContent(t *testing.T) {
-	store := NewGtsStore(nil)
-	content := map[string]any{
-		"$id":  "gts://gts.x.entity.ns.cyclic.v1~",
-		"type": "object",
-	}
-	content["x-gts-traits-schema"] = content
-	id, err := gtsid.New("gts.x.entity.ns.cyclic.v1~")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Register(&JsonEntity{GtsID: id, Content: content, IsTypeSchema: true}); err != nil {
-		t.Fatal(err)
-	}
-
-	if result := store.ValidateSchemaTraits("gts.x.entity.ns.cyclic.v1~"); result.OK {
-		t.Fatal("cyclic schema content was accepted")
 	}
 }
