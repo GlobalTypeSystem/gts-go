@@ -400,7 +400,7 @@ func removeRequiredKeywordsAtDepth(schema map[string]any, depth int) map[string]
 				result[key] = removeRequiredKeywordsAtDepth(nested, depth+1)
 				continue
 			}
-		case "properties", "patternProperties", "dependentSchemas", "dependencies":
+		case "properties", "patternProperties", "definitions", "$defs", "dependentSchemas", "dependencies":
 			if schemas, ok := value.(map[string]any); ok {
 				result[key] = removeRequiredFromNamedSchemas(schemas, depth+1)
 				continue

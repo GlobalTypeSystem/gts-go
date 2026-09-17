@@ -939,6 +939,32 @@ func TestValidateSchemaTraits_AbstractSkipsCompleteness(t *testing.T) {
 	}
 }
 
+func TestValidateSchemaTraits_AbstractSkipsRequiredInDefinitions(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegisterTraits(t, store, map[string]any{
+		"$id":            "gts://gts.x.traitsa.ns.definitions.v1~",
+		"type":           "object",
+		"x-gts-abstract": true,
+		"x-gts-traits-schema": map[string]any{
+			"type": "object",
+			"definitions": map[string]any{
+				"config": map[string]any{
+					"type":       "object",
+					"required":   []any{"name"},
+					"properties": map[string]any{"name": map[string]any{"type": "string"}},
+				},
+			},
+			"properties": map[string]any{
+				"config": map[string]any{"$ref": "#/definitions/config"},
+			},
+		},
+		"x-gts-traits": map[string]any{"config": map[string]any{}},
+	})
+	if result := store.ValidateSchemaTraits("gts.x.traitsa.ns.definitions.v1~"); !result.OK {
+		t.Fatalf("abstract required in definitions should be skipped: %s", result.Error)
+	}
+}
+
 // =============================================================================
 // ValidateEntity integration tests
 // =============================================================================
