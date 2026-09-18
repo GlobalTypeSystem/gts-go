@@ -48,13 +48,15 @@ func (s *Server) handleGetEntity(w http.ResponseWriter, r *http.Request) {
 	entity := s.store.Get(id)
 	if entity == nil {
 		s.writeJSON(w, http.StatusOK, map[string]any{
-			"ok":    false,
-			"error": fmt.Sprintf("Entity not found: %s", id),
+			"ok":      false,
+			"error":   fmt.Sprintf("Entity not found: %s", id),
+			"content": nil,
 		})
 		return
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
 		"id":      entity.GtsID.ID,
 		"content": entity.Content,
 	})
@@ -262,17 +264,8 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 	}
 	if validation == "true" {
 		err := s.store.RegisterWithValidation(entity, func(id string) error {
-			if entity.IsTypeSchema {
-				if r := s.store.ValidateSchemaChain(id); !r.OK {
-					return errors.New(r.Error)
-				}
-				if r := s.store.ValidateSchemaTraits(id); !r.OK {
-					return errors.New(r.Error)
-				}
-				return nil
-			}
-			if r := s.store.ValidateInstance(id); !r.OK {
-				return errors.New(r.Error)
+			if result := s.store.ValidateEntity(id); !result.OK {
+				return errors.New(result.Error)
 			}
 			return nil
 		})

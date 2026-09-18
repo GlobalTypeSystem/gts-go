@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,6 +56,18 @@ func postEntity(t *testing.T, s *Server, body string) int {
 	return w.Code
 }
 
+func entityRequest(t *testing.T, s *Server, method, path, body string) (int, map[string]any) {
+	t.Helper()
+	r := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, r)
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return w.Code, response
+}
+
 func TestAddEntityConflict(t *testing.T) {
 	s := NewServer(gts.NewGtsStore(nil), "", 0, 0)
 
@@ -80,6 +93,47 @@ func TestAddEntityAllowUpdates(t *testing.T) {
 	}
 	if code := postEntity(t, s, testSchemaChanged); code != http.StatusOK {
 		t.Fatalf("changed register status = %d, want 200 with updates allowed", code)
+	}
+}
+
+func TestValidatedRegistrationFailureIsNotStored(t *testing.T) {
+	store := gts.NewGtsStore(nil)
+	s := NewServer(store, "", 0, 0)
+	const id = "gts.x.server.ns.rejected.v1~"
+	const target = "gts.x.server.ns.missing.v1~"
+	body := `{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://` + id + `","type":"object","properties":{"ref":{"type":"string","x-gts-ref":"` + target + `"}}}`
+
+	status, response := entityRequest(t, s, http.MethodPost, "/entities?validate=true", body)
+	errorText, _ := response["error"].(string)
+	if status != http.StatusUnprocessableEntity || response["ok"] != false || !strings.Contains(errorText, target) {
+		t.Fatalf("validated registration response = %d %v", status, response)
+	}
+	if store.Get(id) != nil {
+		t.Fatal("rejected entity was stored")
+	}
+}
+
+func TestRejectedRevalidationPreservesStoredSchema(t *testing.T) {
+	store := gts.NewGtsStore(nil)
+	s := NewServer(store, "", 0, 0)
+	const id = "gts.x.server.ns.preserved.v1~"
+	const target = "gts.x.server.ns.missing.v1~"
+	body := `{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://` + id + `","type":"object","properties":{"ref":{"type":"string","x-gts-ref":"` + target + `"}}}`
+
+	if status, _ := entityRequest(t, s, http.MethodPost, "/entities", body); status != http.StatusOK {
+		t.Fatalf("initial registration status = %d", status)
+	}
+	status, response := entityRequest(t, s, http.MethodPost, "/entities?validate=true", body)
+	if status != http.StatusUnprocessableEntity || response["ok"] != false {
+		t.Fatalf("revalidation response = %d %v", status, response)
+	}
+	stored := store.Get(id)
+	if stored == nil || stored.Content["type"] != "object" {
+		t.Fatalf("stored schema = %#v", stored)
+	}
+	status, response = entityRequest(t, s, http.MethodGet, "/entities/"+id, "")
+	if status != http.StatusOK || response["ok"] != true {
+		t.Fatalf("get response = %d %v", status, response)
 	}
 }
 
