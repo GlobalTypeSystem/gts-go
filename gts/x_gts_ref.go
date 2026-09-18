@@ -127,6 +127,24 @@ func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string
 	// Recurse into array items
 	if schemaType, ok := schema["type"].(string); ok && schemaType == "array" {
 		if instanceArray, ok := instance.([]interface{}); ok {
+			if prefixItems, ok := schema["prefixItems"].([]interface{}); ok {
+				for idx, itemSchema := range prefixItems {
+					if idx >= len(instanceArray) {
+						break
+					}
+					if schemaMap, ok := itemSchema.(map[string]interface{}); ok {
+						itemPath := fmt.Sprintf("%s[%d]", path, idx)
+						v.visitInstance(instanceArray[idx], schemaMap, itemPath, rootSchema, errors)
+					}
+				}
+				if items, ok := schema["items"].(map[string]interface{}); ok {
+					for idx := len(prefixItems); idx < len(instanceArray); idx++ {
+						itemPath := fmt.Sprintf("%s[%d]", path, idx)
+						v.visitInstance(instanceArray[idx], items, itemPath, rootSchema, errors)
+					}
+				}
+				return
+			}
 			switch items := schema["items"].(type) {
 			case map[string]interface{}:
 				for idx, item := range instanceArray {
