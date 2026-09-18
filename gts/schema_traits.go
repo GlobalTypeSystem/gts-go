@@ -624,6 +624,9 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	// resolve to a registered entity — regardless of whether a descendant may
 	// later override the value.
 	xGtsRefValidator := NewXGtsRefValidator(s)
+	for _, err := range xGtsRefValidator.ValidateSchema(effectiveTraitSchema, "", nil) {
+		errs = append(errs, err.Error())
+	}
 	for _, err := range xGtsRefValidator.ValidateSchemaRefExistence(effectiveTraitSchema, "") {
 		errs = append(errs, err.Error())
 	}

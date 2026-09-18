@@ -1128,3 +1128,51 @@ func TestValidateSchemaTraits_AbstractPreservesRequiredProperty(t *testing.T) {
 		t.Fatal("abstract trait validation accepted a non-string required property")
 	}
 }
+
+func TestValidateSchemaTraits_RejectsInvalidRelativeRefTargets(t *testing.T) {
+	tests := []struct {
+		name     string
+		id       string
+		property string
+		value    any
+	}{
+		{
+			name:     "missing target",
+			id:       "gts.x.traits.ns.refmissing.v1~",
+			property: "missingConstraintType",
+		},
+		{
+			name:     "non-string target",
+			id:       "gts.x.traits.ns.refnonstring.v1~",
+			property: "constraintTypes",
+			value:    []any{"gts.x.traits.ns.constraint.v1~"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewGtsStore(nil)
+			traitSchema := map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"topicRef": map[string]any{
+						"type":      "string",
+						"x-gts-ref": "/x-gts-traits-schema/" + tt.property,
+					},
+				},
+			}
+			if tt.value != nil {
+				traitSchema[tt.property] = tt.value
+			}
+			mustRegisterTraits(t, store, map[string]any{
+				"$id":                 "gts://" + tt.id,
+				"type":                "object",
+				"x-gts-traits-schema": traitSchema,
+			})
+
+			if result := store.ValidateSchemaTraits(tt.id); result.OK {
+				t.Fatal("trait validation accepted an invalid relative x-gts-ref target")
+			}
+		})
+	}
+}
