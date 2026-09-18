@@ -33,23 +33,22 @@ func invalidJSONRefErrors(path string, err error) []*XGtsRefValidationError {
 
 // XGtsRefValidator validates x-gts-ref constraints in GTS schemas
 type XGtsRefValidator struct {
-	store         *GtsStore
-	referencedIDs map[string]struct{}
-	// enforceExistence, when true and a store is provided, requires an
-	// x-gts-ref value to resolve to a registered entity or validation fails.
-	// Existence is enforced uniformly for all constraint forms, including the
-	// bare "gts.*" wildcard (gts-spec §9.6). When false, only well-formedness
-	// and pattern matching are checked. It defaults to true.
-	enforceExistence bool
+	store                      *GtsStore
+	mode                       GtsRefValidationMode
+	referencedIDs              map[string]struct{}
+	referencedWildcardPatterns map[string]struct{}
 }
 
-// NewXGtsRefValidator creates a new x-gts-ref validator with reference-existence
-// enforcement enabled (the reference-implementation default, gts-spec §9.6).
-func NewXGtsRefValidator(store *GtsStore) *XGtsRefValidator {
+func NewXGtsRefValidator(store *GtsStore, modes ...GtsRefValidationMode) *XGtsRefValidator {
+	mode := GtsRefValidationFull
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
 	return &XGtsRefValidator{
-		store:            store,
-		referencedIDs:    make(map[string]struct{}),
-		enforceExistence: true,
+		store:                      store,
+		mode:                       mode,
+		referencedIDs:              make(map[string]struct{}),
+		referencedWildcardPatterns: make(map[string]struct{}),
 	}
 }
 
@@ -59,6 +58,14 @@ func (v *XGtsRefValidator) ReferencedIDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+func (v *XGtsRefValidator) ReferencedWildcardPatterns() []string {
+	patterns := make([]string, 0, len(v.referencedWildcardPatterns))
+	for pattern := range v.referencedWildcardPatterns {
+		patterns = append(patterns, pattern)
+	}
+	return patterns
 }
 
 // ValidateInstance validates an instance against x-gts-ref constraints in schema
@@ -382,7 +389,7 @@ func (v *XGtsRefValidator) ValidateSchemaRefExistence(schema map[string]interfac
 		return invalidJSONRefErrors(schemaPath, err)
 	}
 	var errors []*XGtsRefValidationError
-	if v.store == nil || !v.enforceExistence {
+	if v.store == nil || v.mode == GtsRefValidationNone {
 		return errors
 	}
 	v.visitSchemaRefExistence(schema, schemaPath, schema, &errors)
@@ -401,18 +408,31 @@ func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]interface{}
 			if strings.HasPrefix(refStr, PointerPrefix) {
 				targetID = v.resolveRefPointer(rootSchema, refStr)
 			}
-			if gtsid.HasPrefix(targetID) && !gtsid.HasWildcard(targetID) {
+			if gtsid.HasPrefix(targetID) {
 				refPath := "x-gts-ref"
 				if path != "" {
 					refPath = path + "/x-gts-ref"
 				}
-				entity := v.store.Get(targetID)
-				if entity == nil || !entity.IsTypeSchema {
+				if gtsid.HasWildcard(targetID) {
+					matched := false
+					for entityID := range v.store.Items() {
+						if gtsid.Match(entityID, targetID).Match {
+							matched = true
+							break
+						}
+					}
+					if !matched {
+						*errors = append(*errors, &XGtsRefValidationError{
+							FieldPath: refPath, Value: refStr, RefPattern: targetID,
+							Reason: fmt.Sprintf("x-gts-ref wildcard constraint '%s' has no registered match", targetID),
+						})
+					} else {
+						v.referencedWildcardPatterns[targetID] = struct{}{}
+					}
+				} else if v.store.Get(targetID) == nil {
 					*errors = append(*errors, &XGtsRefValidationError{
-						FieldPath:  refPath,
-						Value:      refStr,
-						RefPattern: refStr,
-						Reason:     fmt.Sprintf("x-gts-ref constraint type '%s' is not registered as a type schema", targetID),
+						FieldPath: refPath, Value: refStr, RefPattern: targetID,
+						Reason: fmt.Sprintf("x-gts-ref constraint '%s' is not registered", targetID),
 					})
 				} else {
 					v.referencedIDs[targetID] = struct{}{}
@@ -464,7 +484,7 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 	// available and existence enforcement is enabled. Existence is enforced
 	// uniformly for all constraint forms, including the bare "gts.*" wildcard
 	// (gts-spec §9.6).
-	if v.store != nil && v.enforceExistence {
+	if v.store != nil && v.mode != GtsRefValidationNone {
 		if v.store.Get(value) == nil {
 			return &XGtsRefValidationError{
 				FieldPath:  fieldPath,

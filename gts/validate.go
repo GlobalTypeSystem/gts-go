@@ -79,14 +79,18 @@ type ValidationResult struct {
 // Accepts either a well-known GTS instance ID or an anonymous instance id
 // (e.g. a UUID paired with a separate "type" field on the stored entity,
 // spec §3.7). Returns ValidationResult with ok=true if validation succeeds.
-func (s *GtsStore) ValidateInstance(instanceID string) *ValidationResult {
-	if err := s.validateInstanceTransitive(instanceID); err != nil {
+func (s *GtsStore) ValidateInstance(instanceID string, modes ...GtsRefValidationMode) *ValidationResult {
+	mode := GtsRefValidationFull
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
+	if err := s.validateInstanceTransitive(instanceID, mode); err != nil {
 		return &ValidationResult{ID: instanceID, OK: false, Error: err.Error()}
 	}
 	return &ValidationResult{ID: instanceID, OK: true, Error: ""}
 }
 
-func (s *GtsStore) validateInstanceLocal(instanceID string) *ValidationResult {
+func (s *GtsStore) validateInstanceLocal(instanceID string, mode GtsRefValidationMode) *ValidationResult {
 	// Well-known GTS id first; fall back to a raw store lookup by the
 	// passed string so anonymous instances (keyed by UUID) resolve too.
 	lookupID := instanceID
@@ -170,7 +174,7 @@ func (s *GtsStore) validateInstanceLocal(instanceID string) *ValidationResult {
 
 	// Validate x-gts-ref constraints via XGtsRefValidator (separate pass with full
 	// instance path context for JSON pointer resolution and prefix/self-ref semantics)
-	xGtsRefValidator := NewXGtsRefValidator(s)
+	xGtsRefValidator := NewXGtsRefValidator(s, mode)
 	xGtsRefErrors := xGtsRefValidator.ValidateInstance(obj.Content, schemaEntity.Content, "")
 	if len(xGtsRefErrors) > 0 {
 		var errorMsgs []string
@@ -212,7 +216,7 @@ func (e *xGtsRefExt) Validate(ctx *jsonschema.ValidatorContext, v any) {
 	if strings.HasPrefix(e.pattern, PointerPrefix) {
 		return
 	}
-	validator := NewXGtsRefValidator(e.store)
+	validator := NewXGtsRefValidator(nil, GtsRefValidationNone)
 	if err := validator.validateRefValue(str, e.pattern, "", e.rootSchema); err != nil {
 		ctx.AddError(&xGtsRefErrorKind{err.Reason})
 	}

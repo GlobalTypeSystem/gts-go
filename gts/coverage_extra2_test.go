@@ -218,7 +218,7 @@ func TestEffectiveObjectSchema(t *testing.T) {
 	}
 }
 
-// ── ref_validation.go ───────────────────────────────────────────────────────
+// ── gts_ref_validation.go ───────────────────────────────────────────────────────
 
 func TestRefValidationError(t *testing.T) {
 	e := &RefValidationError{FieldPath: "$.properties.foo.$ref", RefValue: "gts://bad", Reason: "invalid"}
