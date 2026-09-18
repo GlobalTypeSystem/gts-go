@@ -143,6 +143,12 @@ func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string
 						v.visitInstance(instanceArray[idx], schemaMap, itemPath, rootSchema, errors)
 					}
 				}
+				if additionalItems, ok := schema["additionalItems"].(map[string]interface{}); ok {
+					for idx := len(items); idx < len(instanceArray); idx++ {
+						itemPath := fmt.Sprintf("%s[%d]", path, idx)
+						v.visitInstance(instanceArray[idx], additionalItems, itemPath, rootSchema, errors)
+					}
+				}
 			}
 		}
 	}

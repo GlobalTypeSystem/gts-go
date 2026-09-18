@@ -168,6 +168,31 @@ func TestXGtsRefValidator_ValidateSchemaRefExistenceTraversesTupleItems(t *testi
 	}
 }
 
+func TestXGtsRefValidator_ValidateInstanceTraversesTupleAdditionalItems(t *testing.T) {
+	constraintID := "gts.x.testref.ns.tupleoverflow.v1~"
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"refs": map[string]any{
+				"type":  "array",
+				"items": []any{map[string]any{"type": "string"}},
+				"additionalItems": map[string]any{
+					"type":      "string",
+					"x-gts-ref": constraintID,
+				},
+			},
+		},
+	}
+	instance := map[string]any{
+		"refs": []any{"tuple-prefix", constraintID + "x.testref._.missing.v1"},
+	}
+
+	errors := NewXGtsRefValidator(NewGtsStore(nil)).ValidateInstance(instance, schema, "")
+	if len(errors) != 1 || errors[0].FieldPath != "refs[1]" || !strings.Contains(errors[0].Error(), "not found in registry") {
+		t.Fatalf("errors = %v", errors)
+	}
+}
+
 func TestXGtsRefValidator_ValidateSchemaRefExistenceResolvesRelativeTarget(t *testing.T) {
 	store := NewGtsStore(nil)
 	schema := map[string]any{
