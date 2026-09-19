@@ -69,6 +69,11 @@ func (e *EntityConflictError) Error() string {
 // canonical and two entities with equal content hash to the same value. This is
 // used to distinguish an idempotent re-submission from a conflicting update
 // without a deep structural comparison.
+func validateJSONContent(content map[string]any) error {
+	_, err := json.Marshal(content)
+	return err
+}
+
 func contentHash(content map[string]any) string {
 	b, err := json.Marshal(content)
 	if err != nil {
@@ -156,6 +161,12 @@ func (s *GtsStore) populateFromReader() {
 			break
 		}
 		if key := entity.EffectiveID(); key != "" {
+			if err := validateJSONContent(entity.Content); err != nil {
+				if s.config.Verbose {
+					log.Printf("Skipping entity %s with invalid JSON content: %v", key, err)
+				}
+				continue
+			}
 			s.byID[key] = entity
 		}
 	}
@@ -173,6 +184,9 @@ func (s *GtsStore) registerLocked(entity *JsonEntity) error {
 	key := entity.EffectiveID()
 	if key == "" {
 		return fmt.Errorf("entity must have a gts_id or a non-empty id field")
+	}
+	if err := validateJSONContent(entity.Content); err != nil {
+		return fmt.Errorf("entity content must be valid JSON: %w", err)
 	}
 
 	if previous, ok := s.byID[key]; ok && !s.config.AllowEntityUpdates &&
@@ -226,6 +240,9 @@ func (s *GtsStore) RegisterWithValidation(entity *JsonEntity, validate func(id s
 func (s *GtsStore) RegisterSchema(typeID string, schema map[string]any) error {
 	if !gtsid.IsTypeID(typeID) {
 		return fmt.Errorf("schema type_id must end with '~'")
+	}
+	if err := validateJSONContent(schema); err != nil {
+		return fmt.Errorf("schema content must be valid JSON: %w", err)
 	}
 
 	// Parse to validate
@@ -426,7 +443,7 @@ func (s *GtsStore) ValidateSchema(gtsID string) error {
 
 	// Validate x-gts-ref constraints in the schema
 	xGtsRefValidator := NewXGtsRefValidator(s)
-	xGtsRefErrors := xGtsRefValidator.ValidateSchema(entity.Content, "", nil)
+	xGtsRefErrors := xGtsRefValidator.ValidateSchema(entity.Content, "")
 	if len(xGtsRefErrors) > 0 {
 		var errorMsgs []string
 		for _, err := range xGtsRefErrors {

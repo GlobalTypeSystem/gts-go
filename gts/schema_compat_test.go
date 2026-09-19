@@ -693,6 +693,55 @@ func TestValidateSchemaChain_SingleSegment(t *testing.T) {
 	}
 }
 
+func TestValidateSchemaChain_SingleSegmentMissingRef(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id": "gts://gts.x.chain.ns.missingref.v1~",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.chain.ns.missing.v1~"},
+		},
+	})
+	result := store.ValidateSchemaChain("gts.x.chain.ns.missingref.v1~")
+	if result.OK {
+		t.Fatal("expected failure for unresolved $ref")
+	}
+	if !strings.Contains(result.Error, "unresolved $ref") {
+		t.Errorf("expected unresolved $ref error, got: %s", result.Error)
+	}
+}
+
+func TestValidateEntity_StandaloneRecursiveRefsAreValid(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id": "gts://gts.x.chain.ns.selfref.v1~",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.chain.ns.selfref.v1~"},
+		},
+	})
+	mustRegister(t, store, map[string]any{
+		"$id": "gts://gts.x.chain.ns.node_a.v1~",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.chain.ns.node_b.v1~"},
+		},
+	})
+	mustRegister(t, store, map[string]any{
+		"$id": "gts://gts.x.chain.ns.node_b.v1~",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.chain.ns.node_a.v1~"},
+		},
+	})
+
+	for _, schemaID := range []string{
+		"gts.x.chain.ns.selfref.v1~",
+		"gts.x.chain.ns.node_a.v1~",
+		"gts.x.chain.ns.node_b.v1~",
+	} {
+		if result := store.ValidateEntity(schemaID); !result.OK {
+			t.Errorf("standalone recursive schema %s should be valid, got: %s", schemaID, result.Error)
+		}
+	}
+}
+
 func TestValidateSchemaChain_InvalidGtsID(t *testing.T) {
 	store := NewGtsStore(nil)
 	result := store.ValidateSchemaChain("not-a-valid-id")

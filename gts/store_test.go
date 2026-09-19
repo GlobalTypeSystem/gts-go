@@ -88,6 +88,22 @@ func TestGtsStore_RegisterSchema_InvalidID(t *testing.T) {
 	}
 }
 
+func TestGtsStore_RejectsCyclicContent(t *testing.T) {
+	store := NewGtsStore(nil)
+	schema := map[string]any{"$id": "gts://gts.x.test.ns.cyclic.v1~"}
+	entity := NewJsonEntity(schema, DefaultGtsConfig())
+	schema["self"] = schema
+	if err := store.Register(entity); err == nil || !strings.Contains(err.Error(), "valid JSON") {
+		t.Fatalf("Register error = %v", err)
+	}
+
+	legacySchema := map[string]any{"type": "object"}
+	legacySchema["self"] = legacySchema
+	if err := store.RegisterSchema("gts.x.test.ns.legacy_cyclic.v1~", legacySchema); err == nil || !strings.Contains(err.Error(), "valid JSON") {
+		t.Fatalf("RegisterSchema error = %v", err)
+	}
+}
+
 func TestGtsStore_GetSchemaContent(t *testing.T) {
 	store := NewGtsStore(nil)
 	schema := map[string]any{"type": "object"}

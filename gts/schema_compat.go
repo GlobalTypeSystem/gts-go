@@ -45,6 +45,16 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 		}
 	}
 
+	if _, err := s.resolveSchemaRefsChecked(schemaID); err != nil {
+		if len(gid.Segments) >= 2 || !strings.Contains(err.Error(), "circular $ref") {
+			return &ValidateSchemaChainResult{
+				TypeID: schemaID,
+				OK:     false,
+				Error:  fmt.Sprintf("Schema '%s' has %v", schemaID, err),
+			}
+		}
+	}
+
 	if len(gid.Segments) < 2 {
 		return &ValidateSchemaChainResult{TypeID: schemaID, OK: true}
 	}

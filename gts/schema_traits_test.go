@@ -5,9 +5,7 @@ Released under Apache License 2.0
 
 package gts
 
-import (
-	"testing"
-)
+import "testing"
 
 // =============================================================================
 // walkSchema / normalizeDollarRefs / removeXGtsFields
@@ -941,6 +939,32 @@ func TestValidateSchemaTraits_AbstractSkipsCompleteness(t *testing.T) {
 	}
 }
 
+func TestValidateSchemaTraits_AbstractSkipsRequiredInDefinitions(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegisterTraits(t, store, map[string]any{
+		"$id":            "gts://gts.x.traitsa.ns.definitions.v1~",
+		"type":           "object",
+		"x-gts-abstract": true,
+		"x-gts-traits-schema": map[string]any{
+			"type": "object",
+			"definitions": map[string]any{
+				"config": map[string]any{
+					"type":       "object",
+					"required":   []any{"name"},
+					"properties": map[string]any{"name": map[string]any{"type": "string"}},
+				},
+			},
+			"properties": map[string]any{
+				"config": map[string]any{"$ref": "#/definitions/config"},
+			},
+		},
+		"x-gts-traits": map[string]any{"config": map[string]any{}},
+	})
+	if result := store.ValidateSchemaTraits("gts.x.traitsa.ns.definitions.v1~"); !result.OK {
+		t.Fatalf("abstract required in definitions should be skipped: %s", result.Error)
+	}
+}
+
 // =============================================================================
 // ValidateEntity integration tests
 // =============================================================================
@@ -1006,10 +1030,7 @@ func TestValidateEntity_Schema_ChainIncompatible(t *testing.T) {
 	}
 }
 
-func TestValidateEntity_Schema_TraitSchemaWithoutValues_Fails(t *testing.T) {
-	// The entity-level check (/validate-entity) is stricter than type-schema
-	// validation: a deployable entity that declares a trait schema must provide
-	// trait values somewhere in the chain.
+func TestValidateEntity_Schema_TraitSchemaWithoutValues_Passes(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
 		"$id":  "gts://gts.x.entity.ns.novals.v1~",
@@ -1019,17 +1040,14 @@ func TestValidateEntity_Schema_TraitSchemaWithoutValues_Fails(t *testing.T) {
 			"properties":           map[string]any{"color": map[string]any{"type": "string"}},
 			"additionalProperties": false,
 		},
-		// No x-gts-traits — entity-level check must fail.
 	})
 	result := store.ValidateEntity("gts.x.entity.ns.novals.v1~")
-	if result.OK {
-		t.Error("expected failure: entity has trait schema but no trait values")
+	if !result.OK {
+		t.Errorf("expected valid entity, got: %s", result.Error)
 	}
 }
 
-func TestValidateEntity_Schema_TraitSchemaNotClosed_Fails(t *testing.T) {
-	// The entity-level check requires every (object-form) trait schema to be
-	// closed (additionalProperties:false) to be a deployable standalone entity.
+func TestValidateEntity_Schema_TraitSchemaNotClosed_Passes(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegisterTraits(t, store, map[string]any{
 		"$id":  "gts://gts.x.entity.ns.notclosed.v1~",
@@ -1037,12 +1055,124 @@ func TestValidateEntity_Schema_TraitSchemaNotClosed_Fails(t *testing.T) {
 		"x-gts-traits-schema": map[string]any{
 			"type":       "object",
 			"properties": map[string]any{"color": map[string]any{"type": "string"}},
-			// additionalProperties intentionally absent — entity-level check fails.
 		},
 		"x-gts-traits": map[string]any{"color": "red"},
 	})
 	result := store.ValidateEntity("gts.x.entity.ns.notclosed.v1~")
-	if result.OK {
-		t.Error("expected failure: entity trait schema must have additionalProperties:false")
+	if !result.OK {
+		t.Errorf("expected valid entity, got: %s", result.Error)
+	}
+}
+
+func TestValidateEntity_AbstractSchemaMatchesTraitValidation(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegisterTraits(t, store, map[string]any{
+		"$id":            "gts://gts.x.entity.ns.abstract.v1~",
+		"type":           "object",
+		"x-gts-abstract": true,
+		"x-gts-traits-schema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"topicRef": map[string]any{"type": "string"}},
+			"required":   []any{"topicRef"},
+		},
+	})
+	traitsResult := store.ValidateSchemaTraits("gts.x.entity.ns.abstract.v1~")
+	entityResult := store.ValidateEntity("gts.x.entity.ns.abstract.v1~")
+	if traitsResult.OK != entityResult.OK {
+		t.Fatalf("validation endpoints disagree: schema traits ok=%v, entity ok=%v: %s", traitsResult.OK, entityResult.OK, entityResult.Error)
+	}
+	if !entityResult.OK {
+		t.Errorf("expected abstract schema to skip completeness, got: %s", entityResult.Error)
+	}
+}
+
+func TestValidateEntity_GTSLookingTraitStringWithoutRefIsNotDependency(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegisterTraits(t, store, map[string]any{
+		"$id":  "gts://gts.x.entity.ns.traitbase.v1~",
+		"type": "object",
+		"x-gts-traits-schema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"topic": map[string]any{"type": "string"}},
+		},
+	})
+	mustRegisterTraits(t, store, map[string]any{
+		"$id": "gts://gts.x.entity.ns.traitbase.v1~x.entity._.leaf.v1~",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.entity.ns.traitbase.v1~"},
+		},
+		"x-gts-traits": map[string]any{"topic": "gts.x.unregistered._.value.v1"},
+	})
+
+	result := store.ValidateEntity("gts.x.entity.ns.traitbase.v1~x.entity._.leaf.v1~")
+	if !result.OK {
+		t.Errorf("ordinary trait strings must not be treated as references, got: %s", result.Error)
+	}
+}
+
+func TestValidateSchemaTraits_AbstractPreservesRequiredProperty(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegisterTraits(t, store, map[string]any{
+		"$id":            "gts://gts.x.entity.ns.abstract_required.v1~",
+		"x-gts-abstract": true,
+		"x-gts-traits-schema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"required": map[string]any{"type": "string"},
+			},
+		},
+		"x-gts-traits": map[string]any{"required": 42.0},
+	})
+
+	if result := store.ValidateSchemaTraits("gts.x.entity.ns.abstract_required.v1~"); result.OK {
+		t.Fatal("abstract trait validation accepted a non-string required property")
+	}
+}
+
+func TestValidateSchemaTraits_RejectsInvalidRelativeRefTargets(t *testing.T) {
+	tests := []struct {
+		name     string
+		id       string
+		property string
+		value    any
+	}{
+		{
+			name:     "missing target",
+			id:       "gts.x.traits.ns.refmissing.v1~",
+			property: "missingConstraintType",
+		},
+		{
+			name:     "non-string target",
+			id:       "gts.x.traits.ns.refnonstring.v1~",
+			property: "constraintTypes",
+			value:    []any{"gts.x.traits.ns.constraint.v1~"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewGtsStore(nil)
+			traitSchema := map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"topicRef": map[string]any{
+						"type":      "string",
+						"x-gts-ref": "/x-gts-traits-schema/" + tt.property,
+					},
+				},
+			}
+			if tt.value != nil {
+				traitSchema[tt.property] = tt.value
+			}
+			mustRegisterTraits(t, store, map[string]any{
+				"$id":                 "gts://" + tt.id,
+				"type":                "object",
+				"x-gts-traits-schema": traitSchema,
+			})
+
+			if result := store.ValidateSchemaTraits(tt.id); result.OK {
+				t.Fatal("trait validation accepted an invalid relative x-gts-ref target")
+			}
+		})
 	}
 }
