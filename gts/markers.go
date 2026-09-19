@@ -20,8 +20,8 @@ const (
 	// LocalRefPrefix marks a same-document JSON Pointer in a JSON Schema $ref.
 	LocalRefPrefix = "#"
 
-	// PointerPrefix marks a relative JSON Pointer used by x-gts-ref (e.g. "/$id").
-	PointerPrefix = "/"
+	// XGtsRefSelf is the only slash-prefixed x-gts-ref operand.
+	XGtsRefSelf = "/$id"
 
 	// HTTPPrefix / HTTPSPrefix are the URI schemes rejected as GTS references.
 	HTTPPrefix  = "http://"
@@ -38,6 +38,9 @@ const (
 // IsXGtsExtension reports whether a JSON Schema keyword is a GTS extension.
 func IsXGtsExtension(key string) bool { return strings.HasPrefix(key, XGtsExtPrefix) }
 
+// IsXGtsRefSelf reports whether value is the reserved selected-type reference.
+func IsXGtsRefSelf(value string) bool { return value == XGtsRefSelf }
+
 // RefKind classifies the textual form of a reference value ($ref / x-gts-ref).
 type RefKind int
 
@@ -50,15 +53,12 @@ const (
 	RefBareGtsID
 	// RefHTTP is an http:// or https:// URI.
 	RefHTTP
-	// RefRelPointer is a relative JSON Pointer ("/...", e.g. x-gts-ref "/$id").
-	RefRelPointer
 	// RefOther is anything else.
 	RefOther
 )
 
 // ClassifyRef determines which reference form s takes. The order of checks is
-// significant: the gts:// URI form is recognized before the bare gts. form, and
-// concrete scheme prefixes before the generic relative-pointer prefix.
+// significant: the gts:// URI form is recognized before the bare gts. form.
 func ClassifyRef(s string) RefKind {
 	switch {
 	case strings.HasPrefix(s, LocalRefPrefix):
@@ -69,8 +69,6 @@ func ClassifyRef(s string) RefKind {
 		return RefBareGtsID
 	case strings.HasPrefix(s, HTTPPrefix), strings.HasPrefix(s, HTTPSPrefix):
 		return RefHTTP
-	case strings.HasPrefix(s, PointerPrefix):
-		return RefRelPointer
 	default:
 		return RefOther
 	}

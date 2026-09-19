@@ -218,7 +218,7 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 
 		// Create a validator to validate x-gts-ref patterns in schema definition
 		xGtsRefValidator := gts.NewXGtsRefValidator(s.store)
-		xGtsRefErrors := xGtsRefValidator.ValidateSchema(entity.Content, "", nil)
+		xGtsRefErrors := xGtsRefValidator.ValidateSchema(entity.Content, "")
 		if len(xGtsRefErrors) > 0 {
 			var errorMsgs []string
 			for _, err := range xGtsRefErrors {

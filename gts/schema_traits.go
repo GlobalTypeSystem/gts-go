@@ -572,13 +572,13 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string, modes ...GtsRefValidati
 	// resolve to a registered entity — regardless of whether a descendant may
 	// later override the value.
 	xGtsRefValidator := NewXGtsRefValidator(s, mode)
-	for _, err := range xGtsRefValidator.ValidateSchema(effectiveTraitSchema, "", nil) {
+	for _, err := range xGtsRefValidator.ValidateSchema(effectiveTraitSchema, "") {
 		errs = append(errs, err.Error())
 	}
-	for _, err := range xGtsRefValidator.ValidateSchemaRefExistence(effectiveTraitSchema, "") {
+	for _, err := range xGtsRefValidator.ValidateSchemaRefExistence(effectiveTraitSchema, "", schemaID) {
 		errs = append(errs, err.Error())
 	}
-	for _, err := range xGtsRefValidator.ValidateInstance(effectiveTraits, effectiveTraitSchema, "") {
+	for _, err := range xGtsRefValidator.ValidateInstance(effectiveTraits, effectiveTraitSchema, "", schemaID) {
 		errs = append(errs, err.Error())
 	}
 	if len(errs) > 0 {
@@ -744,10 +744,10 @@ func (v *dependencyValidationState) validateType(schemaID string) (err error) {
 	}
 
 	xGtsRefValidator := NewXGtsRefValidator(v.store, v.gtsRefValidationMode)
-	if refErrors := xGtsRefValidator.ValidateSchema(entity.Content, "", nil); len(refErrors) > 0 {
+	if refErrors := xGtsRefValidator.ValidateSchema(entity.Content, ""); len(refErrors) > 0 {
 		return fmt.Errorf("x-gts-ref validation failed: %s", refErrors[0].Error())
 	}
-	if refErrors := xGtsRefValidator.ValidateSchemaRefExistence(entity.Content, ""); len(refErrors) > 0 {
+	if refErrors := xGtsRefValidator.ValidateSchemaRefExistence(entity.Content, "", schemaID); len(refErrors) > 0 {
 		return fmt.Errorf("x-gts-ref validation failed: %s", refErrors[0].Error())
 	}
 	if v.gtsRefValidationMode == GtsRefValidationFull {
@@ -831,9 +831,12 @@ func (v *dependencyValidationState) validateInstance(instanceID string) (err err
 	if !localResult.OK {
 		return fmt.Errorf("%s", localResult.Error)
 	}
-	schema := v.store.Get(entity.TypeID)
+	xGtsRefSchema, resolveErr := v.store.resolveSchemaRefsChecked(entity.TypeID)
+	if resolveErr != nil {
+		return resolveErr
+	}
 	xGtsRefValidator := NewXGtsRefValidator(v.store, v.gtsRefValidationMode)
-	xGtsRefValidator.ValidateInstance(entity.Content, schema.Content, "")
+	xGtsRefValidator.ValidateInstance(entity.Content, xGtsRefSchema, "", entity.TypeID)
 	if v.gtsRefValidationMode == GtsRefValidationFull {
 		for _, dependencyID := range xGtsRefValidator.ReferencedIDs() {
 			if dependencyErr := v.validateEntity(dependencyID); dependencyErr != nil {

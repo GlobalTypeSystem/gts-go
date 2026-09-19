@@ -443,7 +443,7 @@ func (s *GtsStore) ValidateSchema(gtsID string) error {
 
 	// Validate x-gts-ref constraints in the schema
 	xGtsRefValidator := NewXGtsRefValidator(s)
-	xGtsRefErrors := xGtsRefValidator.ValidateSchema(entity.Content, "", nil)
+	xGtsRefErrors := xGtsRefValidator.ValidateSchema(entity.Content, "")
 	if len(xGtsRefErrors) > 0 {
 		var errorMsgs []string
 		for _, err := range xGtsRefErrors {

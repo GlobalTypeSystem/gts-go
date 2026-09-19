@@ -172,10 +172,14 @@ func (s *GtsStore) validateInstanceLocal(instanceID string, mode GtsRefValidatio
 		}
 	}
 
-	// Validate x-gts-ref constraints via XGtsRefValidator (separate pass with full
-	// instance path context for JSON pointer resolution and prefix/self-ref semantics)
+	// Resolve composed schemas before x-gts-ref traversal while keeping the
+	// selected leaf identifier as the /$id root.
+	xGtsRefSchema, err := s.resolveSchemaRefsChecked(obj.TypeID)
+	if err != nil {
+		return &ValidationResult{ID: instanceID, OK: false, Error: err.Error()}
+	}
 	xGtsRefValidator := NewXGtsRefValidator(s, mode)
-	xGtsRefErrors := xGtsRefValidator.ValidateInstance(obj.Content, schemaEntity.Content, "")
+	xGtsRefErrors := xGtsRefValidator.ValidateInstance(obj.Content, xGtsRefSchema, "", obj.TypeID)
 	if len(xGtsRefErrors) > 0 {
 		var errorMsgs []string
 		for _, e := range xGtsRefErrors {
@@ -198,12 +202,10 @@ func (s *GtsStore) validateInstanceLocal(instanceID string, mode GtsRefValidatio
 // xGtsRefExt is the compiled form of an x-gts-ref keyword for a single schema node.
 // Validate enforces the GTS pattern constraint so that oneOf/anyOf/allOf branches
 // correctly pass or fail based on whether the value matches the pattern.
-// The separate XGtsRefValidator pass handles JSON pointer resolution and other
-// schema-level semantics that require full instance path context.
+// The separate XGtsRefValidator pass handles /$id and registry semantics that
+// require the selected type and full instance path context.
 type xGtsRefExt struct {
-	pattern    string
-	rootSchema map[string]any
-	store      *GtsStore
+	pattern string
 }
 
 func (e *xGtsRefExt) Validate(ctx *jsonschema.ValidatorContext, v any) {
@@ -211,13 +213,12 @@ func (e *xGtsRefExt) Validate(ctx *jsonschema.ValidatorContext, v any) {
 	if !ok {
 		return
 	}
-	// Relative pointer patterns (starting with "/") require the full root schema
-	// context for resolution — defer those entirely to XGtsRefValidator's separate pass.
-	if strings.HasPrefix(e.pattern, PointerPrefix) {
+	// /$id needs the selected type and is enforced by the separate store pass.
+	if IsXGtsRefSelf(e.pattern) {
 		return
 	}
 	validator := NewXGtsRefValidator(nil, GtsRefValidationNone)
-	if err := validator.validateRefValue(str, e.pattern, "", e.rootSchema); err != nil {
+	if err := validator.validateRefValue(str, e.pattern, "", ""); err != nil {
 		ctx.AddError(&xGtsRefErrorKind{err.Reason})
 	}
 }
@@ -232,7 +233,7 @@ func (k *xGtsRefErrorKind) LocalizedString(_ *message.Printer) string { return k
 // compiler. This is the correct fix for the oneOf/anyOf/allOf problem: branches like
 // {"x-gts-ref": "gts.x.foo~"} are no longer empty match-all schemas — they carry a
 // real constraint that the library evaluates during combinator resolution.
-func newXGtsRefVocabulary(store *GtsStore) *jsonschema.Vocabulary {
+func newXGtsRefVocabulary(_ *GtsStore) *jsonschema.Vocabulary {
 	return &jsonschema.Vocabulary{
 		URL: "https://globaltypesystem.io/vocab/x-gts-ref",
 		Compile: func(_ *jsonschema.CompilerContext, obj map[string]any) (jsonschema.SchemaExt, error) {
@@ -244,7 +245,7 @@ func newXGtsRefVocabulary(store *GtsStore) *jsonschema.Vocabulary {
 			if !ok {
 				return nil, fmt.Errorf("x-gts-ref must be a string")
 			}
-			return &xGtsRefExt{pattern: pattern, rootSchema: obj, store: store}, nil
+			return &xGtsRefExt{pattern: pattern}, nil
 		},
 	}
 }
