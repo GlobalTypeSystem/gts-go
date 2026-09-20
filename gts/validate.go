@@ -80,7 +80,7 @@ type ValidationResult struct {
 // (e.g. a UUID paired with a separate "type" field on the stored entity,
 // spec §3.7). Returns ValidationResult with ok=true if validation succeeds.
 func (s *GtsStore) ValidateInstance(instanceID string, modes ...GtsRefValidationMode) *ValidationResult {
-	mode := GtsRefValidationFull
+	mode := GtsRefValidationAnyValid
 	if len(modes) > 0 {
 		mode = modes[0]
 	}

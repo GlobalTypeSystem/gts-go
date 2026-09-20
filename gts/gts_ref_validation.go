@@ -5,20 +5,20 @@ import "fmt"
 type GtsRefValidationMode string
 
 const (
-	GtsRefValidationNone     GtsRefValidationMode = "none"
-	GtsRefValidationPresence GtsRefValidationMode = "presence"
-	GtsRefValidationFull     GtsRefValidationMode = "full"
+	GtsRefValidationNone       GtsRefValidationMode = "none"
+	GtsRefValidationAnyPresent GtsRefValidationMode = "any-present"
+	GtsRefValidationAnyValid   GtsRefValidationMode = "any-valid"
 )
 
 func ParseGtsRefValidationMode(value string) (GtsRefValidationMode, error) {
 	if value == "" {
-		return GtsRefValidationFull, nil
+		return GtsRefValidationAnyValid, nil
 	}
 	mode := GtsRefValidationMode(value)
 	switch mode {
-	case GtsRefValidationNone, GtsRefValidationPresence, GtsRefValidationFull:
+	case GtsRefValidationNone, GtsRefValidationAnyPresent, GtsRefValidationAnyValid:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("gts-ref-validation must be one of: none, presence, full")
+		return "", fmt.Errorf("gts-ref-validation must be one of: none, any-present, any-valid")
 	}
 }

@@ -40,7 +40,7 @@ type XGtsRefValidator struct {
 }
 
 func NewXGtsRefValidator(store *GtsStore, modes ...GtsRefValidationMode) *XGtsRefValidator {
-	mode := GtsRefValidationFull
+	mode := GtsRefValidationAnyValid
 	if len(modes) > 0 {
 		mode = modes[0]
 	}

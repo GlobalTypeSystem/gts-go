@@ -396,7 +396,7 @@ type ValidateSchemaTraitsResult struct {
 // Walks the chain from base to leaf, collects x-gts-traits-schema and x-gts-traits
 // from each level's raw content, then validates.
 func (s *GtsStore) ValidateSchemaTraits(schemaID string, modes ...GtsRefValidationMode) *ValidateSchemaTraitsResult {
-	mode := GtsRefValidationFull
+	mode := GtsRefValidationAnyValid
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
@@ -750,7 +750,7 @@ func (v *dependencyValidationState) validateType(schemaID string) (err error) {
 	if refErrors := xGtsRefValidator.ValidateSchemaRefExistence(entity.Content, "", schemaID); len(refErrors) > 0 {
 		return fmt.Errorf("x-gts-ref validation failed: %s", refErrors[0].Error())
 	}
-	if v.gtsRefValidationMode == GtsRefValidationFull {
+	if v.gtsRefValidationMode == GtsRefValidationAnyValid {
 		for _, dependencyID := range xGtsRefValidator.ReferencedIDs() {
 			if dependencyErr := v.validateEntity(dependencyID); dependencyErr != nil {
 				return fmt.Errorf("referenced x-gts-ref entity '%s' is invalid: %w", dependencyID, dependencyErr)
@@ -775,7 +775,7 @@ func (v *dependencyValidationState) validateType(schemaID string) (err error) {
 	if !traitsResult.OK {
 		return fmt.Errorf("%s", traitsResult.Error)
 	}
-	if v.gtsRefValidationMode == GtsRefValidationFull {
+	if v.gtsRefValidationMode == GtsRefValidationAnyValid {
 		for _, dependencyID := range traitsResult.ReferencedIDs {
 			if dependencyErr := v.validateEntity(dependencyID); dependencyErr != nil {
 				return fmt.Errorf("referenced trait entity '%s' is invalid: %w", dependencyID, dependencyErr)
@@ -837,7 +837,7 @@ func (v *dependencyValidationState) validateInstance(instanceID string) (err err
 	}
 	xGtsRefValidator := NewXGtsRefValidator(v.store, v.gtsRefValidationMode)
 	xGtsRefValidator.ValidateInstance(entity.Content, xGtsRefSchema, "", entity.TypeID)
-	if v.gtsRefValidationMode == GtsRefValidationFull {
+	if v.gtsRefValidationMode == GtsRefValidationAnyValid {
 		for _, dependencyID := range xGtsRefValidator.ReferencedIDs() {
 			if dependencyErr := v.validateEntity(dependencyID); dependencyErr != nil {
 				return fmt.Errorf("referenced entity '%s' is invalid: %w", dependencyID, dependencyErr)
@@ -858,7 +858,7 @@ type ValidateEntityResult struct {
 // ValidateEntity validates an entity by running both OP#12 (schema chain) and OP#13 (traits).
 // The entity_id can be either a schema ID or an instance ID.
 func (s *GtsStore) ValidateEntity(entityID string, modes ...GtsRefValidationMode) *ValidateEntityResult {
-	mode := GtsRefValidationFull
+	mode := GtsRefValidationAnyValid
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
