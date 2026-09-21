@@ -24,38 +24,82 @@ func (e *XGtsRefValidationError) Error() string {
 	return fmt.Sprintf("x-gts-ref validation failed for field '%s': %s", e.FieldPath, e.Reason)
 }
 
-// XGtsRefValidator validates x-gts-ref constraints in GTS schemas
-type XGtsRefValidator struct {
-	store *GtsStore
+func invalidJSONRefErrors(path string, err error) []*XGtsRefValidationError {
+	return []*XGtsRefValidationError{{
+		FieldPath: path,
+		Reason:    fmt.Sprintf("input must be valid JSON: %v", err),
+	}}
 }
 
-// NewXGtsRefValidator creates a new x-gts-ref validator
-func NewXGtsRefValidator(store *GtsStore) *XGtsRefValidator {
+// XGtsRefValidator validates x-gts-ref constraints in GTS schemas
+type XGtsRefValidator struct {
+	store                      *GtsStore
+	mode                       GtsRefValidationMode
+	referencedIDs              map[string]struct{}
+	referencedWildcardPatterns map[string]struct{}
+}
+
+func NewXGtsRefValidator(store *GtsStore, modes ...GtsRefValidationMode) *XGtsRefValidator {
+	mode := GtsRefValidationAnyValid
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
 	return &XGtsRefValidator{
-		store: store,
+		store:                      store,
+		mode:                       mode,
+		referencedIDs:              make(map[string]struct{}),
+		referencedWildcardPatterns: make(map[string]struct{}),
 	}
 }
 
+func (v *XGtsRefValidator) ReferencedIDs() []string {
+	ids := make([]string, 0, len(v.referencedIDs))
+	for id := range v.referencedIDs {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (v *XGtsRefValidator) ReferencedWildcardPatterns() []string {
+	patterns := make([]string, 0, len(v.referencedWildcardPatterns))
+	for pattern := range v.referencedWildcardPatterns {
+		patterns = append(patterns, pattern)
+	}
+	return patterns
+}
+
 // ValidateInstance validates an instance against x-gts-ref constraints in schema
-func (v *XGtsRefValidator) ValidateInstance(instance map[string]interface{}, schema map[string]interface{}, instancePath string) []*XGtsRefValidationError {
+func (v *XGtsRefValidator) ValidateInstance(instance map[string]interface{}, schema map[string]interface{}, instancePath string, selectedTypeIDs ...string) []*XGtsRefValidationError {
+	if err := validateJSONContent(instance); err != nil {
+		return invalidJSONRefErrors(instancePath, err)
+	}
+	if err := validateJSONContent(schema); err != nil {
+		return invalidJSONRefErrors(instancePath, err)
+	}
+	selectedTypeID := ""
+	if len(selectedTypeIDs) > 0 {
+		selectedTypeID = gtsid.NormalizeID(selectedTypeIDs[0])
+	} else if schemaID, ok := schema["$id"].(string); ok {
+		selectedTypeID = gtsid.NormalizeID(schemaID)
+	}
 	var errors []*XGtsRefValidationError
-	v.visitInstance(instance, schema, instancePath, schema, &errors)
+	v.visitInstance(instance, schema, instancePath, selectedTypeID, &errors)
 	return errors
 }
 
 // ValidateSchema validates x-gts-ref fields in a schema definition
-func (v *XGtsRefValidator) ValidateSchema(schema map[string]interface{}, schemaPath string, rootSchema map[string]interface{}) []*XGtsRefValidationError {
-	if rootSchema == nil {
-		rootSchema = schema
+func (v *XGtsRefValidator) ValidateSchema(schema map[string]interface{}, schemaPath string) []*XGtsRefValidationError {
+	if err := validateJSONContent(schema); err != nil {
+		return invalidJSONRefErrors(schemaPath, err)
 	}
 
 	var errors []*XGtsRefValidationError
-	v.visitSchema(schema, schemaPath, rootSchema, &errors)
+	v.visitSchema(schema, schemaPath, &errors)
 	return errors
 }
 
 // visitInstance recursively visits instance nodes and validates x-gts-ref constraints
-func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string]interface{}, path string, rootSchema map[string]interface{}, errors *[]*XGtsRefValidationError) {
+func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string]interface{}, path, selectedTypeID string, errors *[]*XGtsRefValidationError) {
 	if schema == nil {
 		return
 	}
@@ -63,7 +107,7 @@ func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string
 	// Check for x-gts-ref constraint
 	if xGtsRef, hasRef := schema["x-gts-ref"]; hasRef {
 		if strInstance, ok := instance.(string); ok {
-			if err := v.validateRefValue(strInstance, xGtsRef, path, rootSchema); err != nil {
+			if err := v.validateRefValue(strInstance, xGtsRef, path, selectedTypeID); err != nil {
 				*errors = append(*errors, err)
 			}
 		}
@@ -80,7 +124,7 @@ func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string
 							propPath = path + "." + propName
 						}
 						if propSchemaMap, ok := propSchema.(map[string]interface{}); ok {
-							v.visitInstance(propValue, propSchemaMap, propPath, rootSchema, errors)
+							v.visitInstance(propValue, propSchemaMap, propPath, selectedTypeID, errors)
 						}
 					}
 				}
@@ -90,19 +134,96 @@ func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string
 
 	// Recurse into array items
 	if schemaType, ok := schema["type"].(string); ok && schemaType == "array" {
-		if items, hasItems := schema["items"].(map[string]interface{}); hasItems {
-			if instanceArray, ok := instance.([]interface{}); ok {
+		if instanceArray, ok := instance.([]interface{}); ok {
+			if prefixItems, ok := schema["prefixItems"].([]interface{}); ok {
+				for idx, itemSchema := range prefixItems {
+					if idx >= len(instanceArray) {
+						break
+					}
+					if schemaMap, ok := itemSchema.(map[string]interface{}); ok {
+						itemPath := fmt.Sprintf("%s[%d]", path, idx)
+						v.visitInstance(instanceArray[idx], schemaMap, itemPath, selectedTypeID, errors)
+					}
+				}
+				if items, ok := schema["items"].(map[string]interface{}); ok {
+					for idx := len(prefixItems); idx < len(instanceArray); idx++ {
+						itemPath := fmt.Sprintf("%s[%d]", path, idx)
+						v.visitInstance(instanceArray[idx], items, itemPath, selectedTypeID, errors)
+					}
+				}
+				return
+			}
+			switch items := schema["items"].(type) {
+			case map[string]interface{}:
 				for idx, item := range instanceArray {
 					itemPath := fmt.Sprintf("%s[%d]", path, idx)
-					v.visitInstance(item, items, itemPath, rootSchema, errors)
+					v.visitInstance(item, items, itemPath, selectedTypeID, errors)
+				}
+			case []interface{}:
+				for idx, itemSchema := range items {
+					if idx >= len(instanceArray) {
+						break
+					}
+					if schemaMap, ok := itemSchema.(map[string]interface{}); ok {
+						itemPath := fmt.Sprintf("%s[%d]", path, idx)
+						v.visitInstance(instanceArray[idx], schemaMap, itemPath, selectedTypeID, errors)
+					}
+				}
+				if additionalItems, ok := schema["additionalItems"].(map[string]interface{}); ok {
+					for idx := len(items); idx < len(instanceArray); idx++ {
+						itemPath := fmt.Sprintf("%s[%d]", path, idx)
+						v.visitInstance(instanceArray[idx], additionalItems, itemPath, selectedTypeID, errors)
+					}
 				}
 			}
 		}
 	}
 }
 
+func visitSchemaChildren(schema map[string]interface{}, path string, visit func(map[string]interface{}, string)) {
+	for key, value := range schema {
+		nestedPath := key
+		if path != "" {
+			nestedPath = path + "/" + key
+		}
+		switch key {
+		case "properties", "patternProperties", "definitions", "$defs", "dependentSchemas", "dependencies":
+			if named, ok := value.(map[string]interface{}); ok {
+				for name, child := range named {
+					if childSchema, ok := child.(map[string]interface{}); ok {
+						visit(childSchema, nestedPath+"/"+name)
+					}
+				}
+			}
+		case "allOf", "anyOf", "oneOf", "prefixItems":
+			if children, ok := value.([]interface{}); ok {
+				for index, child := range children {
+					if childSchema, ok := child.(map[string]interface{}); ok {
+						visit(childSchema, fmt.Sprintf("%s[%d]", nestedPath, index))
+					}
+				}
+			}
+		case "items":
+			switch children := value.(type) {
+			case map[string]interface{}:
+				visit(children, nestedPath)
+			case []interface{}:
+				for index, child := range children {
+					if childSchema, ok := child.(map[string]interface{}); ok {
+						visit(childSchema, fmt.Sprintf("%s[%d]", nestedPath, index))
+					}
+				}
+			}
+		case "not", "if", "then", "else", "contains", "additionalProperties", "additionalItems", "propertyNames", "unevaluatedProperties", "unevaluatedItems", KeyXGtsTraitsSchema:
+			if childSchema, ok := value.(map[string]interface{}); ok {
+				visit(childSchema, nestedPath)
+			}
+		}
+	}
+}
+
 // visitSchema recursively visits schema nodes
-func (v *XGtsRefValidator) visitSchema(schema map[string]interface{}, path string, rootSchema map[string]interface{}, errors *[]*XGtsRefValidationError) {
+func (v *XGtsRefValidator) visitSchema(schema map[string]interface{}, path string, errors *[]*XGtsRefValidationError) {
 	if schema == nil {
 		return
 	}
@@ -113,37 +234,18 @@ func (v *XGtsRefValidator) visitSchema(schema map[string]interface{}, path strin
 		if path != "" {
 			refPath = path + "/x-gts-ref"
 		}
-		if err := v.validateRefPattern(xGtsRef, refPath, rootSchema); err != nil {
+		if err := v.validateRefPattern(xGtsRef, refPath); err != nil {
 			*errors = append(*errors, err)
 		}
 	}
 
-	// Recurse into nested structures
-	for key, value := range schema {
-		if key == "x-gts-ref" {
-			continue
-		}
-
-		nestedPath := key
-		if path != "" {
-			nestedPath = path + "/" + key
-		}
-
-		switch val := value.(type) {
-		case map[string]interface{}:
-			v.visitSchema(val, nestedPath, rootSchema, errors)
-		case []interface{}:
-			for idx, item := range val {
-				if itemMap, ok := item.(map[string]interface{}); ok {
-					v.visitSchema(itemMap, fmt.Sprintf("%s[%d]", nestedPath, idx), rootSchema, errors)
-				}
-			}
-		}
-	}
+	visitSchemaChildren(schema, path, func(child map[string]interface{}, childPath string) {
+		v.visitSchema(child, childPath, errors)
+	})
 }
 
 // validateRefValue validates an instance value against its x-gts-ref constraint
-func (v *XGtsRefValidator) validateRefValue(value string, refPattern interface{}, fieldPath string, schema map[string]interface{}) *XGtsRefValidationError {
+func (v *XGtsRefValidator) validateRefValue(value string, refPattern interface{}, fieldPath, selectedTypeID string) *XGtsRefValidationError {
 	refPatternStr, ok := refPattern.(string)
 	if !ok {
 		return &XGtsRefValidationError{
@@ -154,41 +256,14 @@ func (v *XGtsRefValidator) validateRefValue(value string, refPattern interface{}
 		}
 	}
 
-	// Resolve pattern if it's a relative reference
-	if strings.HasPrefix(refPatternStr, PointerPrefix) {
-		resolved := v.resolvePointer(schema, refPatternStr)
-		if resolved == "" {
+	if IsXGtsRefSelf(refPatternStr) {
+		if selectedTypeID == "" {
 			return &XGtsRefValidationError{
-				FieldPath:  fieldPath,
-				Value:      value,
-				RefPattern: refPatternStr,
-				Reason:     fmt.Sprintf("Cannot resolve reference path '%s'", refPatternStr),
+				FieldPath: fieldPath, Value: value, RefPattern: refPatternStr,
+				Reason: "Cannot resolve /$id without a selected GTS Type Schema",
 			}
 		}
-		// Check if the resolved value is a pointer that needs further resolution
-		if strings.HasPrefix(resolved, PointerPrefix) {
-			// Recursive resolution
-			furtherResolved := v.resolvePointer(schema, resolved)
-			if furtherResolved == "" {
-				return &XGtsRefValidationError{
-					FieldPath:  fieldPath,
-					Value:      value,
-					RefPattern: refPatternStr,
-					Reason:     fmt.Sprintf("Cannot resolve nested reference '%s' -> '%s'", refPatternStr, resolved),
-				}
-			}
-			resolved = furtherResolved
-		}
-
-		if !gtsid.HasPrefix(resolved) {
-			return &XGtsRefValidationError{
-				FieldPath:  fieldPath,
-				Value:      value,
-				RefPattern: refPatternStr,
-				Reason:     fmt.Sprintf("Resolved reference '%s' -> '%s' is not a GTS pattern", refPatternStr, resolved),
-			}
-		}
-		refPatternStr = resolved
+		refPatternStr = selectedTypeID
 	}
 
 	// Validate against GTS pattern
@@ -196,7 +271,7 @@ func (v *XGtsRefValidator) validateRefValue(value string, refPattern interface{}
 }
 
 // validateRefPattern validates an x-gts-ref pattern in a schema definition
-func (v *XGtsRefValidator) validateRefPattern(refPattern interface{}, fieldPath string, rootSchema map[string]interface{}) *XGtsRefValidationError {
+func (v *XGtsRefValidator) validateRefPattern(refPattern interface{}, fieldPath string) *XGtsRefValidationError {
 	refPatternStr, ok := refPattern.(string)
 	if !ok {
 		return &XGtsRefValidationError{
@@ -212,25 +287,7 @@ func (v *XGtsRefValidator) validateRefPattern(refPattern interface{}, fieldPath 
 		return v.validateGtsIDOrPattern(refPatternStr, fieldPath)
 	}
 
-	// Case 2: Relative reference
-	if strings.HasPrefix(refPatternStr, PointerPrefix) {
-		resolved := v.resolvePointer(rootSchema, refPatternStr)
-		if resolved == "" {
-			return &XGtsRefValidationError{
-				FieldPath:  fieldPath,
-				Value:      refPattern,
-				RefPattern: refPatternStr,
-				Reason:     fmt.Sprintf("Cannot resolve reference path '%s'", refPatternStr),
-			}
-		}
-		if !gtsid.IsValid(resolved) {
-			return &XGtsRefValidationError{
-				FieldPath:  fieldPath,
-				Value:      refPattern,
-				RefPattern: refPatternStr,
-				Reason:     fmt.Sprintf("Resolved reference '%s' -> '%s' is not a valid GTS identifier", refPatternStr, resolved),
-			}
-		}
+	if IsXGtsRefSelf(refPatternStr) {
 		return nil
 	}
 
@@ -238,7 +295,7 @@ func (v *XGtsRefValidator) validateRefPattern(refPattern interface{}, fieldPath 
 		FieldPath:  fieldPath,
 		Value:      refPattern,
 		RefPattern: refPatternStr,
-		Reason:     fmt.Sprintf("Invalid x-gts-ref value: '%s' must start with 'gts.' or '/'", refPatternStr),
+		Reason:     fmt.Sprintf("Invalid x-gts-ref value: '%s' must be a GTS identifier, wildcard, or '%s'", refPatternStr, XGtsRefSelf),
 	}
 }
 
@@ -272,6 +329,76 @@ func (v *XGtsRefValidator) validateGtsIDOrPattern(pattern, fieldPath string) *XG
 		}
 	}
 	return nil
+}
+
+// ValidateSchemaRefExistence checks concrete, wildcard, and /$id constraints
+// against the registry when the selected mode requires it.
+func (v *XGtsRefValidator) ValidateSchemaRefExistence(schema map[string]interface{}, schemaPath string, selectedTypeIDs ...string) []*XGtsRefValidationError {
+	if err := validateJSONContent(schema); err != nil {
+		return invalidJSONRefErrors(schemaPath, err)
+	}
+	var errors []*XGtsRefValidationError
+	if v.store == nil || v.mode == GtsRefValidationNone {
+		return errors
+	}
+	selectedTypeID := ""
+	if len(selectedTypeIDs) > 0 {
+		selectedTypeID = gtsid.NormalizeID(selectedTypeIDs[0])
+	} else if schemaID, ok := schema["$id"].(string); ok {
+		selectedTypeID = gtsid.NormalizeID(schemaID)
+	}
+	v.visitSchemaRefExistence(schema, schemaPath, selectedTypeID, &errors)
+	return errors
+}
+
+// visitSchemaRefExistence recursively checks concrete x-gts-ref targets exist.
+func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]interface{}, path, selectedTypeID string, errors *[]*XGtsRefValidationError) {
+	if schema == nil {
+		return
+	}
+
+	if xGtsRef, hasRef := schema["x-gts-ref"]; hasRef {
+		if refStr, ok := xGtsRef.(string); ok {
+			targetID := refStr
+			if IsXGtsRefSelf(refStr) {
+				targetID = selectedTypeID
+			}
+			if gtsid.HasPrefix(targetID) {
+				refPath := "x-gts-ref"
+				if path != "" {
+					refPath = path + "/x-gts-ref"
+				}
+				if gtsid.HasWildcard(targetID) {
+					matched := false
+					for entityID := range v.store.Items() {
+						if gtsid.Match(entityID, targetID).Match {
+							matched = true
+							break
+						}
+					}
+					if !matched {
+						*errors = append(*errors, &XGtsRefValidationError{
+							FieldPath: refPath, Value: refStr, RefPattern: targetID,
+							Reason: fmt.Sprintf("x-gts-ref wildcard constraint '%s' has no registered match", targetID),
+						})
+					} else {
+						v.referencedWildcardPatterns[targetID] = struct{}{}
+					}
+				} else if v.store.Get(targetID) == nil {
+					*errors = append(*errors, &XGtsRefValidationError{
+						FieldPath: refPath, Value: refStr, RefPattern: targetID,
+						Reason: fmt.Sprintf("x-gts-ref constraint '%s' is not registered", targetID),
+					})
+				} else {
+					v.referencedIDs[targetID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	visitSchemaChildren(schema, path, func(child map[string]interface{}, childPath string) {
+		v.visitSchemaRefExistence(child, childPath, selectedTypeID, errors)
+	})
 }
 
 // validateGtsPattern validates value matches a GTS pattern
@@ -308,60 +435,21 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 		}
 	}
 
-	if v.store != nil && gtsid.IsTypeID(pattern) && v.store.Get(pattern) != nil && v.store.Get(value) == nil {
-		return &XGtsRefValidationError{
-			FieldPath:  fieldPath,
-			Value:      value,
-			RefPattern: pattern,
-			Reason:     fmt.Sprintf("Referenced entity '%s' not found in registry", value),
+	// The referenced value must resolve to a registered entity when a store is
+	// available and existence enforcement is enabled. Existence is enforced
+	// uniformly for all constraint forms, including the bare "gts.*" wildcard
+	// (gts-spec §9.6).
+	if v.store != nil && v.mode != GtsRefValidationNone {
+		if v.store.Get(value) == nil {
+			return &XGtsRefValidationError{
+				FieldPath:  fieldPath,
+				Value:      value,
+				RefPattern: pattern,
+				Reason:     fmt.Sprintf("Referenced entity '%s' not found in registry", value),
+			}
 		}
+		v.referencedIDs[value] = struct{}{}
 	}
 
 	return nil
-}
-
-// resolvePointer resolves a JSON Pointer in the schema
-// Note: For /$id references, the gts:// prefix is stripped from the value
-// as per GTS specification (relative self-reference should match the $id without the prefix).
-func (v *XGtsRefValidator) resolvePointer(schema map[string]interface{}, pointer string) string {
-	path := strings.TrimPrefix(pointer, PointerPrefix)
-	if path == "" {
-		return ""
-	}
-
-	parts := strings.Split(path, "/")
-	var current interface{} = schema
-
-	for _, part := range parts {
-		currentMap, ok := current.(map[string]interface{})
-		if !ok {
-			return ""
-		}
-		current = currentMap[part]
-		if current == nil {
-			return ""
-		}
-	}
-
-	// If current is a string, return it (stripping gts:// prefix if present).
-	// For /$id relative references the schema's $id may be a full GTS URI
-	// (e.g. "gts://gts.x.example._.user.v1~") but the instance value matches
-	// without the prefix, so normalize here.
-	if str, ok := current.(string); ok {
-		return gtsid.NormalizeID(str)
-	}
-
-	// If current is a dict with x-gts-ref, resolve it
-	if currentMap, ok := current.(map[string]interface{}); ok {
-		if xGtsRef, hasRef := currentMap["x-gts-ref"]; hasRef {
-			if refStr, ok := xGtsRef.(string); ok {
-				if strings.HasPrefix(refStr, PointerPrefix) {
-					return v.resolvePointer(schema, refStr)
-				}
-				return refStr
-			}
-		}
-	}
-
-	return ""
 }

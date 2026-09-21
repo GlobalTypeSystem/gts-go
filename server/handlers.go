@@ -16,6 +16,12 @@ import (
 	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
+const gtsRefValidationQueryParam = "gts-ref-validation"
+
+func parseGtsRefValidationMode(r *http.Request) (gts.GtsRefValidationMode, error) {
+	return gts.ParseGtsRefValidationMode(r.URL.Query().Get(gtsRefValidationQueryParam))
+}
+
 // isConflict reports whether err represents an entity content conflict, which is
 // surfaced to clients as HTTP 409.
 func isConflict(err error) bool {
@@ -55,6 +61,7 @@ func (s *Server) handleGetEntity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
 		"id":      entity.GtsID.ID,
 		"content": entity.Content,
 	})
@@ -211,7 +218,7 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 
 		// Create a validator to validate x-gts-ref patterns in schema definition
 		xGtsRefValidator := gts.NewXGtsRefValidator(s.store)
-		xGtsRefErrors := xGtsRefValidator.ValidateSchema(entity.Content, "", nil)
+		xGtsRefErrors := xGtsRefValidator.ValidateSchema(entity.Content, "")
 		if len(xGtsRefErrors) > 0 {
 			var errorMsgs []string
 			for _, err := range xGtsRefErrors {
@@ -261,18 +268,14 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 		validation = r.URL.Query().Get("validation")
 	}
 	if validation == "true" {
+		mode, modeErr := parseGtsRefValidationMode(r)
+		if modeErr != nil {
+			s.writeError(w, http.StatusUnprocessableEntity, modeErr.Error())
+			return
+		}
 		err := s.store.RegisterWithValidation(entity, func(id string) error {
-			if entity.IsTypeSchema {
-				if r := s.store.ValidateSchemaChain(id); !r.OK {
-					return errors.New(r.Error)
-				}
-				if r := s.store.ValidateSchemaTraits(id); !r.OK {
-					return errors.New(r.Error)
-				}
-				return nil
-			}
-			if r := s.store.ValidateInstance(id); !r.OK {
-				return errors.New(r.Error)
+			if result := s.store.ValidateEntity(id, mode); !result.OK {
+				return errors.New(result.Error)
 			}
 			return nil
 		})
@@ -477,7 +480,12 @@ func (s *Server) handleValidateInstance(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	result := s.store.ValidateInstance(req.InstanceID)
+	mode, err := parseGtsRefValidationMode(r)
+	if err != nil {
+		s.writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	result := s.store.ValidateInstance(req.InstanceID, mode)
 	s.writeJSON(w, http.StatusOK, result)
 }
 
@@ -577,19 +585,17 @@ func (s *Server) handleValidateSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := s.store.ValidateSchemaChain(req.TypeID)
-	if result.OK {
-		// Also run OP#13 traits validation
-		traitsResult := s.store.ValidateSchemaTraits(req.TypeID)
-		if !traitsResult.OK {
-			s.writeJSON(w, http.StatusOK, map[string]any{
-				"ok":    false,
-				"error": traitsResult.Error,
-			})
-			return
-		}
+	mode, err := parseGtsRefValidationMode(r)
+	if err != nil {
+		s.writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
 	}
-
+	entity := s.store.Get(req.TypeID)
+	if entity == nil || !entity.IsTypeSchema {
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "type_id does not identify a type schema"})
+		return
+	}
+	result := s.store.ValidateEntity(req.TypeID, mode)
 	if result.OK {
 		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	} else {
@@ -620,7 +626,12 @@ func (s *Server) handleValidateEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := s.store.ValidateEntity(id)
+	mode, err := parseGtsRefValidationMode(r)
+	if err != nil {
+		s.writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	result := s.store.ValidateEntity(id, mode)
 	resp := map[string]any{
 		"ok":          result.OK,
 		"entity_type": result.EntityType,

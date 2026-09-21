@@ -44,7 +44,7 @@ func TestMergeRFC7396Recursive_DepthLimit(t *testing.T) {
 
 func TestXGtsRefExt_Validate_NonString(t *testing.T) {
 	// The Validate method should silently return for non-string values
-	ext := &xGtsRefExt{pattern: "gts.x.*", store: NewGtsStore(nil)}
+	ext := &xGtsRefExt{pattern: "gts.x.*"}
 	// Using nil context is not possible, so we test through the full flow instead
 	// via ValidateInstance which triggers the vocabulary
 	_ = ext // ensure compiled
@@ -218,7 +218,7 @@ func TestEffectiveObjectSchema(t *testing.T) {
 	}
 }
 
-// ── ref_validation.go ───────────────────────────────────────────────────────
+// ── gts_ref_validation.go ───────────────────────────────────────────────────────
 
 func TestRefValidationError(t *testing.T) {
 	e := &RefValidationError{FieldPath: "$.properties.foo.$ref", RefValue: "gts://bad", Reason: "invalid"}
@@ -386,68 +386,6 @@ func TestCheckEnumeratedValuesAgainstBase_MaxConstraints(t *testing.T) {
 	errs4 := checkEnumeratedValuesAgainstBase(base3, []any{float64(0)}, "prop")
 	if len(errs4) == 0 {
 		t.Error("expected error for value at exclusiveMinimum")
-	}
-}
-
-// ── x_gts_ref.go — resolvePointer ──────────────────────────────────────────
-
-func TestXGtsRefValidator_ResolvePointer_Missing(t *testing.T) {
-	validator := NewXGtsRefValidator(NewGtsStore(nil))
-	schema := map[string]any{"properties": map[string]any{"name": map[string]any{"type": "string"}}}
-	val := validator.resolvePointer(schema, "/missing/path")
-	if val != "" {
-		t.Errorf("expected empty for missing pointer, got %q", val)
-	}
-}
-
-func TestXGtsRefValidator_ResolvePointer_Valid(t *testing.T) {
-	validator := NewXGtsRefValidator(NewGtsStore(nil))
-	schema := map[string]any{
-		"properties": map[string]any{
-			"name": map[string]any{"const": "hello"},
-		},
-	}
-	val := validator.resolvePointer(schema, "/properties/name/const")
-	if val != "hello" {
-		t.Errorf("expected 'hello', got %q", val)
-	}
-}
-
-func TestXGtsRefValidator_ResolvePointer_Empty(t *testing.T) {
-	validator := NewXGtsRefValidator(NewGtsStore(nil))
-	val := validator.resolvePointer(map[string]any{}, "/")
-	if val != "" {
-		t.Errorf("expected empty for empty path, got %q", val)
-	}
-}
-
-func TestXGtsRefValidator_ResolvePointer_NonStringValue(t *testing.T) {
-	validator := NewXGtsRefValidator(NewGtsStore(nil))
-	schema := map[string]any{
-		"properties": map[string]any{
-			"count": map[string]any{"type": "integer"},
-		},
-	}
-	// Resolving to "integer" (a string) should work
-	val := validator.resolvePointer(schema, "/properties/count/type")
-	if val != "integer" {
-		t.Errorf("expected 'integer', got %q", val)
-	}
-
-	// Resolving to a map (properties node itself) returns ""
-	val2 := validator.resolvePointer(schema, "/properties/count")
-	_ = val2 // just ensure no panic
-}
-
-func TestXGtsRefValidator_ResolvePointer_IntermediateNonMap(t *testing.T) {
-	validator := NewXGtsRefValidator(NewGtsStore(nil))
-	schema := map[string]any{
-		"type": "string",
-	}
-	// path goes through a string value which is not a map → returns ""
-	val := validator.resolvePointer(schema, "/type/nested")
-	if val != "" {
-		t.Errorf("expected empty for non-map intermediate, got %q", val)
 	}
 }
 

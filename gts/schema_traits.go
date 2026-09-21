@@ -385,15 +385,21 @@ func removeXGtsFields(schema map[string]any) map[string]any {
 
 // ValidateSchemaTraitsResult is the result of OP#13 schema traits validation.
 type ValidateSchemaTraitsResult struct {
-	TypeID string `json:"type_id"`
-	OK     bool   `json:"ok"`
-	Error  string `json:"error,omitempty"`
+	TypeID                     string   `json:"type_id"`
+	OK                         bool     `json:"ok"`
+	Error                      string   `json:"error,omitempty"`
+	ReferencedIDs              []string `json:"-"`
+	ReferencedWildcardPatterns []string `json:"-"`
 }
 
 // ValidateSchemaTraits validates schema traits across the inheritance chain (OP#13).
 // Walks the chain from base to leaf, collects x-gts-traits-schema and x-gts-traits
 // from each level's raw content, then validates.
-func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsResult {
+func (s *GtsStore) ValidateSchemaTraits(schemaID string, modes ...GtsRefValidationMode) *ValidateSchemaTraitsResult {
+	mode := GtsRefValidationAnyValid
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
 	gid, err := gtsid.New(schemaID)
 	if err != nil {
 		return &ValidateSchemaTraitsResult{
@@ -513,22 +519,32 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	// traits are prohibited on this host and its whole subtree. A type carrying
 	// no traits is still valid; any trait value fails.
 	if b, ok := effAny.(bool); ok && !b {
-		if hasTraitValues {
+		hasNonFalseDeclaration := false
+		for _, traitSchema := range traitSchemas {
+			if declaration, isBool := traitSchema.(bool); !isBool || declaration {
+				hasNonFalseDeclaration = true
+				break
+			}
+		}
+		if hasTraitValues || hasNonFalseDeclaration {
 			return &ValidateSchemaTraitsResult{
 				TypeID: schemaID,
 				OK:     false,
-				Error:  "x-gts-traits-schema resolves to `false` in the chain — x-gts-traits values are prohibited",
+				Error:  "x-gts-traits-schema resolves to `false` in the chain — trait declarations and values are prohibited",
 			}
 		}
 		return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
 	}
 
-	// Abstract types are "incomplete waiting for descendants" (ADR-0003): the
-	// trait completeness and value validation is skipped for them, but
-	// trait-schema structural compatibility has already been checked above.
+	// Abstract types are "incomplete waiting for descendants" (ADR-0003 / §9.7.5):
+	// the completeness check — standard JSON Schema validation of the materialized
+	// effective traits against the effective trait schema — is skipped for them.
+	// x-gts-ref reference resolution is a SEPARATE §9.7.5 rule that does NOT
+	// exempt abstract types, so it still runs below.
+	isAbstract := false
 	if leafEntity := s.Get(schemaID); leafEntity != nil {
 		if ab, isBool := leafEntity.Content[KeyXGtsAbstract].(bool); isBool && ab {
-			return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
+			isAbstract = true
 		}
 	}
 
@@ -538,11 +554,31 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 	// properties not present after the chain merge.
 	effectiveTraits := applyDefaults(effectiveTraitSchema, mergedTraits, 0)
 
-	// Validate the materialized effective traits against the effective trait
-	// schema, including the required-trait completeness check (this type is
-	// non-abstract — abstract types returned OK above).
-	errs := validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)
-	for _, err := range NewXGtsRefValidator(s).ValidateInstance(effectiveTraits, effectiveTraitSchema, "") {
+	// Completeness (standard JSON Schema validation of the materialized traits,
+	// including required/const/type) runs only for non-abstract types.
+	var errs []string
+	if isAbstract {
+		abstractTraitSchema := walkSchema(effectiveTraitSchema, nil, func(k string) bool {
+			return k == "required"
+		})
+		errs = validateTraitsAgainstSchema(abstractTraitSchema, effectiveTraits, false)
+	} else {
+		errs = validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)
+	}
+
+	// x-gts-ref reference resolution runs for ALL types, including abstract
+	// (§9.7.5): concrete x-gts-ref targets declared in the effective trait schema
+	// must name a registered constraint type, and any supplied trait value must
+	// resolve to a registered entity — regardless of whether a descendant may
+	// later override the value.
+	xGtsRefValidator := NewXGtsRefValidator(s, mode)
+	for _, err := range xGtsRefValidator.ValidateSchema(effectiveTraitSchema, "") {
+		errs = append(errs, err.Error())
+	}
+	for _, err := range xGtsRefValidator.ValidateSchemaRefExistence(effectiveTraitSchema, "", schemaID) {
+		errs = append(errs, err.Error())
+	}
+	for _, err := range xGtsRefValidator.ValidateInstance(effectiveTraits, effectiveTraitSchema, "", schemaID) {
 		errs = append(errs, err.Error())
 	}
 	if len(errs) > 0 {
@@ -553,29 +589,43 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string) *ValidateSchemaTraitsRe
 		}
 	}
 
-	return &ValidateSchemaTraitsResult{TypeID: schemaID, OK: true}
+	return &ValidateSchemaTraitsResult{
+		TypeID:                     schemaID,
+		OK:                         true,
+		ReferencedIDs:              xGtsRefValidator.ReferencedIDs(),
+		ReferencedWildcardPatterns: xGtsRefValidator.ReferencedWildcardPatterns(),
+	}
 }
 
 // walkSchema applies a key transform and a recursive map transform to every node in a schema.
 // keyFn renames keys; valFn transforms map values (called after key rename).
 func walkSchema(m map[string]any, keyFn func(string) string, skipKey func(string) bool) map[string]any {
+	return walkSchemaInner(m, keyFn, skipKey, false)
+}
+
+func walkSchemaInner(m map[string]any, keyFn func(string) string, skipKey func(string) bool, preserveKeys bool) map[string]any {
 	result := make(map[string]any, len(m))
 	for k, v := range m {
-		if skipKey != nil && skipKey(k) {
+		if !preserveKeys && skipKey != nil && skipKey(k) {
 			continue
 		}
 		newKey := k
 		if keyFn != nil {
 			newKey = keyFn(k)
 		}
+		if k == "const" || k == "default" || k == "enum" || k == "examples" {
+			result[newKey] = v
+			continue
+		}
 		switch val := v.(type) {
 		case map[string]any:
-			result[newKey] = walkSchema(val, keyFn, skipKey)
+			isSchemaMap := k == "properties" || k == "patternProperties" || k == "definitions" || k == "$defs" || k == "dependentSchemas"
+			result[newKey] = walkSchemaInner(val, keyFn, skipKey, isSchemaMap)
 		case []any:
 			newArr := make([]any, len(val))
 			for i, item := range val {
 				if sub, ok := item.(map[string]any); ok {
-					newArr[i] = walkSchema(sub, keyFn, skipKey)
+					newArr[i] = walkSchemaInner(sub, keyFn, skipKey, false)
 				} else {
 					newArr[i] = item
 				}
@@ -598,65 +648,202 @@ func normalizeDollarRefs(m map[string]any) map[string]any {
 	}, nil)
 }
 
-// validateEntityLevelTraits is the OP#13 entity-level check applied on the
-// /validate-entity path (NOT on /validate-type-schema). For a schema to be a
-// valid standalone *entity*:
-//   - if any x-gts-traits-schema is declared along the chain, x-gts-traits
-//     values must be provided somewhere in the chain (an open trait surface
-//     with no values is an incomplete entity); and
-//   - every object-form x-gts-traits-schema must be closed
-//     (additionalProperties: false) — an open trait schema signals a type
-//     designed to be extended, not a deployable entity.
-//
-// Boolean trait subschemas (true/false) carry no additionalProperties and are
-// not subject to the closedness check. This mirrors the type-schema-validation
-// relaxations (ADR-0002/0003) while preserving the stricter entity contract.
-func (s *GtsStore) validateEntityLevelTraits(schemaID string) error {
-	gid, err := gtsid.New(schemaID)
-	if err != nil {
-		return fmt.Errorf("invalid GTS ID: %v", err)
+type dependencyValidationState struct {
+	store                *GtsStore
+	gtsRefValidationMode GtsRefValidationMode
+	visiting             map[string]bool
+	completed            map[string]bool
+	results              map[string]error
+}
+
+func (s *GtsStore) validateTypeSchemaTransitive(schemaID string, mode GtsRefValidationMode) error {
+	state := &dependencyValidationState{
+		store:                s,
+		gtsRefValidationMode: mode,
+		visiting:             make(map[string]bool),
+		completed:            make(map[string]bool),
+		results:              make(map[string]error),
 	}
+	return state.validateType(schemaID)
+}
 
-	segments := gid.Segments
-	var traitSchemas []any
-	hasTraitValues := false
+func (s *GtsStore) validateInstanceTransitive(instanceID string, mode GtsRefValidationMode) error {
+	state := &dependencyValidationState{
+		store:                s,
+		gtsRefValidationMode: mode,
+		visiting:             make(map[string]bool),
+		completed:            make(map[string]bool),
+		results:              make(map[string]error),
+	}
+	return state.validateInstance(instanceID)
+}
 
-	for i := range segments {
-		segSchemaID := buildIDFromSegments(segments[:i+1])
-		entity := s.Get(segSchemaID)
-		if entity == nil {
-			return fmt.Errorf("schema '%s' not found", segSchemaID)
-		}
-		content := entity.Content
-		collectTraitSchemaFromValue(content, &traitSchemas, 0)
-		levelTraits := make(map[string]any)
-		collectTraitsFromValue(content, levelTraits, 0)
-		if len(levelTraits) > 0 {
-			hasTraitValues = true
+func (v *dependencyValidationState) validateEntity(entityID string) error {
+	entity := v.store.Get(entityID)
+	if entity == nil {
+		return fmt.Errorf("referenced entity '%s' not found", entityID)
+	}
+	if entity.IsTypeSchema {
+		return v.validateType(entityID)
+	}
+	return v.validateInstance(entityID)
+}
+
+func (v *dependencyValidationState) hasValidWildcardMatch(pattern string) bool {
+	for entityID := range v.store.Items() {
+		if gtsid.Match(entityID, pattern).Match && v.validateEntity(entityID) == nil {
+			return true
 		}
 	}
+	return false
+}
 
-	if len(traitSchemas) == 0 {
+func (v *dependencyValidationState) validateType(schemaID string) (err error) {
+	key := "type:" + schemaID
+	if v.completed[key] {
+		return v.results[key]
+	}
+	if v.visiting[key] {
 		return nil
 	}
+	v.visiting[key] = true
+	defer func() {
+		delete(v.visiting, key)
+		v.completed[key] = true
+		v.results[key] = err
+	}()
 
-	if !hasTraitValues {
-		return fmt.Errorf("Entity defines x-gts-traits-schema but no x-gts-traits values are provided")
+	entity := v.store.Get(schemaID)
+	if entity == nil {
+		return &StoreGtsSchemaNotFoundError{EntityID: schemaID}
+	}
+	if !entity.IsTypeSchema {
+		return fmt.Errorf("entity '%s' is not a type-schema", schemaID)
 	}
 
-	for _, ts := range traitSchemas {
-		obj, ok := ts.(map[string]any)
-		if !ok {
-			// Boolean subschema — no additionalProperties to check.
+	gid, parseErr := gtsid.New(schemaID)
+	if parseErr != nil {
+		return fmt.Errorf("invalid GTS ID: %w", parseErr)
+	}
+	for i := 0; i < len(gid.Segments)-1; i++ {
+		ancestorID := buildIDFromSegments(gid.Segments[:i+1])
+		if dependencyErr := v.validateType(ancestorID); dependencyErr != nil {
+			return fmt.Errorf("ancestor type '%s' is invalid: %w", ancestorID, dependencyErr)
+		}
+	}
+
+	for _, ref := range entity.GtsRefs {
+		if ref.ID == schemaID || gtsid.HasWildcard(ref.ID) || isJSONSchemaURL(ref.ID) {
 			continue
 		}
-		if ap, hasAP := obj["additionalProperties"]; !hasAP {
-			return fmt.Errorf("Entity trait schema must set additionalProperties: false to be a valid standalone entity")
-		} else if b, isBool := ap.(bool); !isBool || b {
-			return fmt.Errorf("Entity trait schema must set additionalProperties: false to be a valid standalone entity")
+		if strings.Contains(ref.SourcePath, "$ref") && !strings.Contains(ref.SourcePath, "x-gts-ref") {
+			if dependencyErr := v.validateType(ref.ID); dependencyErr != nil {
+				return fmt.Errorf("referenced type '%s' is invalid: %w", ref.ID, dependencyErr)
+			}
 		}
 	}
 
+	xGtsRefValidator := NewXGtsRefValidator(v.store, v.gtsRefValidationMode)
+	if refErrors := xGtsRefValidator.ValidateSchema(entity.Content, ""); len(refErrors) > 0 {
+		return fmt.Errorf("x-gts-ref validation failed: %s", refErrors[0].Error())
+	}
+	if refErrors := xGtsRefValidator.ValidateSchemaRefExistence(entity.Content, "", schemaID); len(refErrors) > 0 {
+		return fmt.Errorf("x-gts-ref validation failed: %s", refErrors[0].Error())
+	}
+	if v.gtsRefValidationMode == GtsRefValidationAnyValid {
+		for _, dependencyID := range xGtsRefValidator.ReferencedIDs() {
+			if dependencyErr := v.validateEntity(dependencyID); dependencyErr != nil {
+				return fmt.Errorf("referenced x-gts-ref entity '%s' is invalid: %w", dependencyID, dependencyErr)
+			}
+		}
+		for _, pattern := range xGtsRefValidator.ReferencedWildcardPatterns() {
+			if !v.hasValidWildcardMatch(pattern) {
+				return fmt.Errorf("x-gts-ref wildcard constraint '%s' has no valid registered match", pattern)
+			}
+		}
+	}
+	if modifierErr := ValidateSchemaModifiers(entity.Content); modifierErr != nil {
+		return modifierErr
+	}
+	if placementErr := ValidateTraitPlacement(entity.Content); placementErr != nil {
+		return placementErr
+	}
+	if chainResult := v.store.ValidateSchemaChain(schemaID); !chainResult.OK {
+		return fmt.Errorf("%s", chainResult.Error)
+	}
+	traitsResult := v.store.ValidateSchemaTraits(schemaID, v.gtsRefValidationMode)
+	if !traitsResult.OK {
+		return fmt.Errorf("%s", traitsResult.Error)
+	}
+	if v.gtsRefValidationMode == GtsRefValidationAnyValid {
+		for _, dependencyID := range traitsResult.ReferencedIDs {
+			if dependencyErr := v.validateEntity(dependencyID); dependencyErr != nil {
+				return fmt.Errorf("referenced trait entity '%s' is invalid: %w", dependencyID, dependencyErr)
+			}
+		}
+		for _, pattern := range traitsResult.ReferencedWildcardPatterns {
+			if !v.hasValidWildcardMatch(pattern) {
+				return fmt.Errorf("x-gts-ref wildcard constraint '%s' has no valid registered match", pattern)
+			}
+		}
+	}
+	return nil
+}
+
+func (v *dependencyValidationState) validateInstance(instanceID string) (err error) {
+	key := "instance:" + instanceID
+	if v.completed[key] {
+		return v.results[key]
+	}
+	if v.visiting[key] {
+		return nil
+	}
+	v.visiting[key] = true
+	defer func() {
+		delete(v.visiting, key)
+		v.completed[key] = true
+		v.results[key] = err
+	}()
+
+	lookupID := instanceID
+	if gtsid.IsValid(instanceID) {
+		gid, parseErr := gtsid.New(instanceID)
+		if parseErr != nil {
+			return parseErr
+		}
+		lookupID = gid.ID
+	}
+	entity := v.store.Get(lookupID)
+	if entity == nil {
+		return &StoreGtsObjectNotFoundError{EntityID: instanceID}
+	}
+	if entity.IsTypeSchema {
+		return fmt.Errorf("entity '%s' is a type-schema, not an instance", instanceID)
+	}
+	if entity.TypeID == "" {
+		return &StoreGtsSchemaForInstanceNotFoundError{EntityID: lookupID}
+	}
+	if dependencyErr := v.validateType(entity.TypeID); dependencyErr != nil {
+		return fmt.Errorf("instance type '%s' is invalid: %w", entity.TypeID, dependencyErr)
+	}
+
+	localResult := v.store.validateInstanceLocal(instanceID, v.gtsRefValidationMode)
+	if !localResult.OK {
+		return fmt.Errorf("%s", localResult.Error)
+	}
+	xGtsRefSchema, resolveErr := v.store.resolveSchemaRefsChecked(entity.TypeID)
+	if resolveErr != nil {
+		return resolveErr
+	}
+	xGtsRefValidator := NewXGtsRefValidator(v.store, v.gtsRefValidationMode)
+	xGtsRefValidator.ValidateInstance(entity.Content, xGtsRefSchema, "", entity.TypeID)
+	if v.gtsRefValidationMode == GtsRefValidationAnyValid {
+		for _, dependencyID := range xGtsRefValidator.ReferencedIDs() {
+			if dependencyErr := v.validateEntity(dependencyID); dependencyErr != nil {
+				return fmt.Errorf("referenced entity '%s' is invalid: %w", dependencyID, dependencyErr)
+			}
+		}
+	}
 	return nil
 }
 
@@ -670,7 +857,11 @@ type ValidateEntityResult struct {
 
 // ValidateEntity validates an entity by running both OP#12 (schema chain) and OP#13 (traits).
 // The entity_id can be either a schema ID or an instance ID.
-func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
+func (s *GtsStore) ValidateEntity(entityID string, modes ...GtsRefValidationMode) *ValidateEntityResult {
+	mode := GtsRefValidationAnyValid
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
 	entity := s.Get(entityID)
 	if entity == nil {
 		return &ValidateEntityResult{
@@ -681,8 +872,7 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 	}
 
 	if entity.IsTypeSchema {
-		// Validate schema modifiers (x-gts-final, x-gts-abstract): type, mutual exclusion, placement.
-		if err := ValidateSchemaModifiers(entity.Content); err != nil {
+		if err := s.validateTypeSchemaTransitive(entityID, mode); err != nil {
 			return &ValidateEntityResult{
 				EntityID:   entityID,
 				EntityType: "schema",
@@ -690,52 +880,6 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 				Error:      err.Error(),
 			}
 		}
-
-		// Validate trait keyword placement (x-gts-traits, x-gts-traits-schema):
-		// these are type-level keywords and MUST appear only at the schema top
-		// level (gts-spec §9.7.1/§9.11).
-		if err := ValidateTraitPlacement(entity.Content); err != nil {
-			return &ValidateEntityResult{
-				EntityID:   entityID,
-				EntityType: "schema",
-				OK:         false,
-				Error:      err.Error(),
-			}
-		}
-
-		// For schemas: run OP#12 chain validation + OP#13 traits validation
-		chainResult := s.ValidateSchemaChain(entityID)
-		if !chainResult.OK {
-			return &ValidateEntityResult{
-				EntityID:   entityID,
-				EntityType: "schema",
-				OK:         false,
-				Error:      chainResult.Error,
-			}
-		}
-
-		traitsResult := s.ValidateSchemaTraits(entityID)
-		if !traitsResult.OK {
-			return &ValidateEntityResult{
-				EntityID:   entityID,
-				EntityType: "schema",
-				OK:         false,
-				Error:      traitsResult.Error,
-			}
-		}
-
-		// Entity-level trait check (stricter than type-schema validation): a
-		// deployable standalone entity must provide trait values when a trait
-		// schema is declared, and its trait schemas must be closed.
-		if err := s.validateEntityLevelTraits(entityID); err != nil {
-			return &ValidateEntityResult{
-				EntityID:   entityID,
-				EntityType: "schema",
-				OK:         false,
-				Error:      err.Error(),
-			}
-		}
-
 		return &ValidateEntityResult{EntityID: entityID, EntityType: "schema", OK: true}
 	}
 
@@ -750,7 +894,7 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 	}
 
 	// For instances: validate against schema
-	instanceResult := s.ValidateInstance(entityID)
+	instanceResult := s.ValidateInstance(entityID, mode)
 	if !instanceResult.OK {
 		return &ValidateEntityResult{
 			EntityID:   entityID,
@@ -772,7 +916,7 @@ func (s *GtsStore) ValidateEntity(entityID string) *ValidateEntityResult {
 			}
 		}
 
-		traitsResult := s.ValidateSchemaTraits(entity.TypeID)
+		traitsResult := s.ValidateSchemaTraits(entity.TypeID, mode)
 		if !traitsResult.OK {
 			return &ValidateEntityResult{
 				EntityID:   entityID,

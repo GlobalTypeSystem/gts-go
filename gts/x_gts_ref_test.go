@@ -92,10 +92,10 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 				},
 			},
 			shouldFail:    true,
-			errorContains: "Invalid x-gts-ref value: 'a.b.c' must start with 'gts.' or '/'",
+			errorContains: "must be a GTS identifier, wildcard, or '/$id'",
 		},
 		{
-			name: "invalid pointer resolution",
+			name: "unsupported pointer",
 			schema: map[string]interface{}{
 				"$id":  "gts://gts.x.test.ns.module.v1~",
 				"type": "object",
@@ -107,13 +107,13 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 				},
 			},
 			shouldFail:    true,
-			errorContains: "Cannot resolve reference path '/nonexistent'",
+			errorContains: "must be a GTS identifier, wildcard, or '/$id'",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errors := validator.ValidateSchema(tt.schema, "", nil)
+			errors := validator.ValidateSchema(tt.schema, "")
 
 			if tt.shouldFail {
 				if len(errors) == 0 {
@@ -136,6 +136,111 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestXGtsRefValidator_RejectsCyclicSchemaInputs(t *testing.T) {
+	schema := map[string]any{"type": "object"}
+	schema["properties"] = map[string]any{"self": schema}
+	validator := NewXGtsRefValidator(NewGtsStore(nil))
+
+	if errors := validator.ValidateSchema(schema, ""); len(errors) != 1 || !strings.Contains(errors[0].Error(), "valid JSON") {
+		t.Fatalf("ValidateSchema errors = %v", errors)
+	}
+	if errors := validator.ValidateSchemaRefExistence(schema, ""); len(errors) != 1 || !strings.Contains(errors[0].Error(), "valid JSON") {
+		t.Fatalf("ValidateSchemaRefExistence errors = %v", errors)
+	}
+}
+
+func TestXGtsRefValidator_ValidateSchemaRefExistenceTraversesTupleItems(t *testing.T) {
+	constraintID := "gts.x.testref.ns.tuple.v1~"
+	schema := map[string]any{
+		"type": "array",
+		"items": []any{
+			map[string]any{"type": "string", "x-gts-ref": constraintID},
+		},
+	}
+	validator := NewXGtsRefValidator(NewGtsStore(nil))
+
+	errors := validator.ValidateSchemaRefExistence(schema, "")
+	if len(errors) != 1 || !strings.Contains(errors[0].Error(), constraintID) {
+		t.Fatalf("errors = %v", errors)
+	}
+}
+
+func TestXGtsRefValidator_ValidateInstanceTraversesTupleAdditionalItems(t *testing.T) {
+	constraintID := "gts.x.testref.ns.tupleoverflow.v1~"
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"refs": map[string]any{
+				"type":  "array",
+				"items": []any{map[string]any{"type": "string"}},
+				"additionalItems": map[string]any{
+					"type":      "string",
+					"x-gts-ref": constraintID,
+				},
+			},
+		},
+	}
+	instance := map[string]any{
+		"refs": []any{"tuple-prefix", constraintID + "x.testref._.missing.v1"},
+	}
+
+	errors := NewXGtsRefValidator(NewGtsStore(nil)).ValidateInstance(instance, schema, "")
+	if len(errors) != 1 || errors[0].FieldPath != "refs[1]" || !strings.Contains(errors[0].Error(), "not found in registry") {
+		t.Fatalf("errors = %v", errors)
+	}
+}
+
+func TestXGtsRefValidator_ValidateInstanceTraversesPrefixItems(t *testing.T) {
+	constraintID := "gts.x.testref.ns.prefixoverflow.v1~"
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"refs": map[string]any{
+				"type":        "array",
+				"prefixItems": []any{map[string]any{"type": "string"}},
+				"items": map[string]any{
+					"type":      "string",
+					"x-gts-ref": constraintID,
+				},
+			},
+		},
+	}
+	instance := map[string]any{
+		"refs": []any{"tuple-prefix", constraintID + "x.testref._.missing.v1"},
+	}
+
+	errors := NewXGtsRefValidator(NewGtsStore(nil)).ValidateInstance(instance, schema, "")
+	if len(errors) != 1 || errors[0].FieldPath != "refs[1]" || !strings.Contains(errors[0].Error(), "not found in registry") {
+		t.Fatalf("errors = %v", errors)
+	}
+}
+
+func TestXGtsRefValidator_ValidateSchemaRejectsUnsupportedPointer(t *testing.T) {
+	schema := map[string]any{
+		"properties": map[string]any{
+			"target": map[string]any{"x-gts-ref": "/properties/constraintType"},
+		},
+	}
+
+	errors := NewXGtsRefValidator(nil).ValidateSchema(schema, "")
+	if len(errors) != 1 || !strings.Contains(errors[0].Error(), "must be a GTS identifier") {
+		t.Fatalf("errors = %v", errors)
+	}
+}
+
+func TestXGtsRefValidator_ValidateSchemaRefExistenceAcceptsInstanceTarget(t *testing.T) {
+	store := NewGtsStore(nil)
+	constraintID := "gts.x.testref.ns.constraint.v1~"
+	store.byID[constraintID] = &JsonEntity{IsTypeSchema: false}
+
+	errors := NewXGtsRefValidator(store).ValidateSchemaRefExistence(map[string]any{
+		"x-gts-ref": constraintID,
+	}, "")
+	if len(errors) != 0 {
+		t.Fatalf("errors = %v", errors)
 	}
 }
 
@@ -283,144 +388,12 @@ func TestXGtsRefValidator_ValidateInstance_PrefixValidation(t *testing.T) {
 	}
 }
 
-func TestXGtsRefValidator_ValidateInstance_JsonPointerResolution(t *testing.T) {
-	store := NewGtsStore(nil)
-	validator := NewXGtsRefValidator(store)
-
-	// Register schema with JSON pointer references
-	pointerSchema := map[string]interface{}{
-		"$id":         "gts://gts.x.testref.ns.pointer.v1~",
-		"$schema":     "http://json-schema.org/draft-07/schema#",
-		"title":       "PTR-TITLE",
-		"description": "PTR-DESC",
-		"type":        "object",
-		"properties": map[string]interface{}{
-			"id": map[string]interface{}{
-				"type":      "string",
-				"x-gts-ref": "/$id",
-			},
-			"type": map[string]interface{}{
-				"type":      "string",
-				"x-gts-ref": "/properties/id/x-gts-ref", // This should resolve to "/$id"
-			},
-		},
-		"required":             []interface{}{"id"},
-		"additionalProperties": false,
+func TestIsXGtsRefSelf(t *testing.T) {
+	if !IsXGtsRefSelf(XGtsRefSelf) {
+		t.Fatal("expected /$id to be recognized as the selected-type reference")
 	}
-
-	pointerEntity := NewJsonEntity(pointerSchema, DefaultGtsConfig())
-	_ = store.Register(pointerEntity)
-
-	// Register the instance entity that will be referenced
-	instanceEntity := map[string]interface{}{
-		"id":   "gts.x.testref.ns.pointer.v1~x.vendor._.ptr_ok.v1",
-		"type": "gts.x.testref.ns.pointer.v1~",
-	}
-	instanceEntityObj := NewJsonEntity(instanceEntity, DefaultGtsConfig())
-	_ = store.Register(instanceEntityObj)
-
-	tests := []struct {
-		name          string
-		instance      map[string]interface{}
-		shouldFail    bool
-		errorContains string
-	}{
-		{
-			name: "valid instance with correct pointer resolution",
-			instance: map[string]interface{}{
-				"id":   "gts.x.testref.ns.pointer.v1~x.vendor._.ptr_ok.v1",
-				"type": "gts.x.testref.ns.pointer.v1~",
-			},
-			shouldFail: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			errors := validator.ValidateInstance(tt.instance, pointerSchema, "")
-
-			if tt.shouldFail {
-				if len(errors) == 0 {
-					t.Errorf("Expected validation to fail, but no errors were returned")
-				} else if tt.errorContains != "" {
-					found := false
-					for _, err := range errors {
-						if containsSubstring(err.Error(), tt.errorContains) {
-							found = true
-							break
-						}
-					}
-					if !found {
-						t.Errorf("Expected error containing '%s', got errors: %v", tt.errorContains, errors)
-					}
-				}
-			} else {
-				if len(errors) > 0 {
-					t.Errorf("Expected validation to pass, but got errors: %v", errors)
-				}
-			}
-		})
-	}
-}
-
-func TestXGtsRefValidator_ResolvePointer(t *testing.T) {
-	validator := NewXGtsRefValidator(nil)
-
-	schema := map[string]interface{}{
-		"$id": "gts://gts.x.test.ns.module.v1~",
-		"properties": map[string]interface{}{
-			"type": map[string]interface{}{
-				"const": "gts.x.test.ns.type.v1~",
-			},
-			"nested": map[string]interface{}{
-				"properties": map[string]interface{}{
-					"anchor": map[string]interface{}{
-						"const": "gts.x.test.ns.anchor.v1~",
-					},
-				},
-			},
-		},
-	}
-
-	tests := []struct {
-		name     string
-		pointer  string
-		expected string
-	}{
-		{
-			name:     "resolve $id",
-			pointer:  "/$id",
-			expected: "gts.x.test.ns.module.v1~",
-		},
-		{
-			name:     "resolve property const",
-			pointer:  "/properties/type/const",
-			expected: "gts.x.test.ns.type.v1~",
-		},
-		{
-			name:     "resolve nested property const",
-			pointer:  "/properties/nested/properties/anchor/const",
-			expected: "gts.x.test.ns.anchor.v1~",
-		},
-		{
-			name:     "resolve non-existent path",
-			pointer:  "/properties/nonexistent",
-			expected: "",
-		},
-		{
-			name:     "resolve empty path",
-			pointer:  "/",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := validator.resolvePointer(schema, tt.pointer)
-			if result != tt.expected {
-				t.Errorf("Expected '%s', got '%s'", tt.expected, result)
-			}
-		})
+	if IsXGtsRefSelf("/properties/id") {
+		t.Fatal("general JSON pointers must not be recognized as x-gts-ref operands")
 	}
 }
 
@@ -605,43 +578,6 @@ func containsSubstring(s, substr string) bool {
 // Tests for URI prefix "gts://" in JSON Schema $id field and /$id references
 // =============================================================================
 
-// TestXGtsRefValidator_ResolvePointer_GtsURIPrefix tests that gts:// prefix is stripped when resolving /$id
-func TestXGtsRefValidator_ResolvePointer_GtsURIPrefix(t *testing.T) {
-	validator := NewXGtsRefValidator(nil)
-
-	schema := map[string]interface{}{
-		"$id":  "gts://gts.x.test.ns.module.v1~",
-		"type": "object",
-		"properties": map[string]interface{}{
-			"id": map[string]interface{}{
-				"type":      "string",
-				"x-gts-ref": "/$id",
-			},
-		},
-	}
-
-	tests := []struct {
-		name     string
-		pointer  string
-		expected string
-	}{
-		{
-			name:     "resolve $id with gts:// prefix - prefix should be stripped",
-			pointer:  "/$id",
-			expected: "gts.x.test.ns.module.v1~",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := validator.resolvePointer(schema, tt.pointer)
-			if result != tt.expected {
-				t.Errorf("Expected '%s', got '%s'", tt.expected, result)
-			}
-		})
-	}
-}
-
 // TestXGtsRefValidator_ValidateInstance_DollarIdWithGtsURIPrefix tests instance validation when schema $id has gts:// prefix
 func TestXGtsRefValidator_ValidateInstance_DollarIdWithGtsURIPrefix(t *testing.T) {
 	store := NewGtsStore(nil)
@@ -739,7 +675,7 @@ func TestXGtsRefValidator_ValidateSchema_DollarIdWithGtsURIPrefix(t *testing.T) 
 		},
 	}
 
-	errors := validator.ValidateSchema(schema, "", nil)
+	errors := validator.ValidateSchema(schema, "")
 	if len(errors) > 0 {
 		t.Errorf("Expected schema validation to pass (gts:// prefix should be stripped), but got errors: %v", errors)
 	}
