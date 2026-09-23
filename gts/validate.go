@@ -278,6 +278,9 @@ func (s *GtsStore) validateJSON(instance, schema map[string]any) error {
 }
 
 func (s *GtsStore) validateJSONSchema(schema map[string]any) error {
+	if _, err := schemaDialect(schema); err != nil {
+		return fmt.Errorf("JSON Schema validation failed: %v", err)
+	}
 	normalizedSchema := normalizeSchemaForCompile(schema)
 	schemaID, ok := normalizedSchema["$id"].(string)
 	if !ok || schemaID == "" {
@@ -380,6 +383,9 @@ func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) 
 
 // validateWithSchema performs the actual JSON Schema validation
 func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string]any) error {
+	if _, err := schemaDialect(schema); err != nil {
+		return err
+	}
 	// Rewrite $id to the absolute compile-URI form for JSON Schema validation
 	normalizedSchema := normalizeSchemaForCompile(schema)
 

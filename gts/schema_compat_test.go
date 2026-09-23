@@ -792,6 +792,67 @@ func TestValidateSchemaChain_TwoLevel_Compatible(t *testing.T) {
 	}
 }
 
+func TestSchemaDialectRejectsUnsupportedURIs(t *testing.T) {
+	for name, dialect := range map[string]string{
+		"unknown":  "https://example.invalid/not-a-json-schema-dialect",
+		"mistyped": "https://json-schema.org/draft/2020-21/schema",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := schemaDialect(map[string]any{"$schema": dialect})
+			if err == nil || !strings.Contains(err.Error(), "unsupported JSON Schema dialect") {
+				t.Fatalf("expected unsupported dialect error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateSchemaChain_MixedDialectChain(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.dialect.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type":    "object",
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.dialect.v1~x.chain.ns.child.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+	})
+
+	result := store.ValidateSchemaChain("gts.x.chain.ns.dialect.v1~x.chain.ns.child.v1~")
+	if result.OK || !strings.Contains(result.Error, "mixes JSON Schema dialects") {
+		t.Fatalf("expected mixed-dialect chain failure, got: %+v", result)
+	}
+}
+
+func TestValidateSchemaChain_TransitiveRefDialectMismatch(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.foreign.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.middle.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.chain.ns.foreign.v1~"},
+		},
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.host.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.chain.ns.middle.v1~"},
+		},
+	})
+
+	result := store.ValidateSchemaChain("gts.x.chain.ns.host.v1~")
+	if result.OK || !strings.Contains(result.Error, "gts.x.chain.ns.foreign.v1~") {
+		t.Fatalf("expected transitive ref dialect failure, got: %+v", result)
+	}
+}
+
 func TestValidateSchemaChain_TwoLevel_TypeChange(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{

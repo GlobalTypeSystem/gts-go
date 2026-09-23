@@ -34,6 +34,89 @@ type ValidateSchemaChainResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
+func schemaDialect(schema map[string]any) (string, error) {
+	rawDialect, exists := schema["$schema"]
+	if !exists {
+		return "draft-07", nil
+	}
+	dialect, ok := rawDialect.(string)
+	if !ok || dialect == "" {
+		return "", fmt.Errorf("$schema must declare a supported JSON Schema dialect")
+	}
+	normalized := strings.ToLower(strings.TrimSuffix(dialect, "#"))
+	normalized = strings.Replace(normalized, "https://", "http://", 1)
+	switch normalized {
+	case "http://json-schema.org/draft-07/schema":
+		return "draft-07", nil
+	case "http://json-schema.org/draft/2019-09/schema":
+		return "2019-09", nil
+	case "http://json-schema.org/draft/2020-12/schema":
+		return "2020-12", nil
+	default:
+		return "", fmt.Errorf("unsupported JSON Schema dialect: %s", dialect)
+	}
+}
+
+func (s *GtsStore) detectChainDialectMismatch(schemaID string, gid *gtsid.ID) error {
+	rootID := buildIDFromSegments(gid.Segments[:1])
+	root := s.Get(rootID)
+	if root == nil {
+		return nil
+	}
+	rootDialect, err := schemaDialect(root.Content)
+	if err != nil {
+		return err
+	}
+
+	for i := range gid.Segments {
+		chainID := buildIDFromSegments(gid.Segments[:i+1])
+		entity := s.Get(chainID)
+		if entity == nil {
+			continue
+		}
+		chainDialect, dialectErr := schemaDialect(entity.Content)
+		if dialectErr != nil {
+			return dialectErr
+		}
+		if chainDialect != rootDialect {
+			return fmt.Errorf("GTS derivation chain mixes JSON Schema dialects: root type '%s' uses %s but '%s' uses %s; every type in a chained $id hierarchy must use the root type's dialect", rootID, rootDialect, chainID, chainDialect)
+		}
+	}
+
+	visited := make(map[string]bool)
+	queue := []string{schemaID}
+	for len(queue) > 0 {
+		currentID := queue[0]
+		queue = queue[1:]
+		if visited[currentID] {
+			continue
+		}
+		visited[currentID] = true
+		entity := s.Get(currentID)
+		if entity == nil {
+			continue
+		}
+		for _, ref := range entity.GtsRefs {
+			if ref.ID == currentID || !strings.Contains(ref.SourcePath, "$ref") || strings.Contains(ref.SourcePath, "x-gts-ref") {
+				continue
+			}
+			target := s.Get(ref.ID)
+			if target == nil || !target.IsTypeSchema {
+				continue
+			}
+			targetDialect, dialectErr := schemaDialect(target.Content)
+			if dialectErr != nil {
+				return dialectErr
+			}
+			if targetDialect != rootDialect {
+				return fmt.Errorf("GTS derivation mixes JSON Schema dialects: root type '%s' uses %s but $ref target '%s' uses %s; every type in the chain and its transitive gts:// $ref targets must use the root type's dialect", rootID, rootDialect, ref.ID, targetDialect)
+			}
+			queue = append(queue, ref.ID)
+		}
+	}
+	return nil
+}
+
 // ValidateSchemaChain validates each derived schema against its base across the chain (OP#12).
 func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResult {
 	gid, err := gtsid.New(schemaID)
@@ -43,6 +126,10 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 			OK:     false,
 			Error:  fmt.Sprintf("Invalid GTS ID: %v", err),
 		}
+	}
+
+	if err := s.detectChainDialectMismatch(schemaID, gid); err != nil {
+		return &ValidateSchemaChainResult{TypeID: schemaID, OK: false, Error: err.Error()}
 	}
 
 	if _, err := s.resolveSchemaRefsChecked(schemaID); err != nil {
