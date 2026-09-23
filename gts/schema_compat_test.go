@@ -806,6 +806,30 @@ func TestSchemaDialectRejectsUnsupportedURIs(t *testing.T) {
 	}
 }
 
+func TestValidateSchemaChain_LocalRefDialectMismatch(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.embedded.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+		"properties": map[string]any{
+			"legacy": map[string]any{"$ref": "#/$defs/legacy"},
+		},
+		"$defs": map[string]any{
+			"legacy": map[string]any{
+				"$id":     "legacy",
+				"$schema": "http://json-schema.org/draft-07/schema#",
+				"type":    "string",
+			},
+		},
+	})
+
+	result := store.ValidateSchemaChain("gts.x.chain.ns.embedded.v1~")
+	if result.OK || !strings.Contains(result.Error, "local $ref target") {
+		t.Fatalf("expected local ref dialect failure, got: %+v", result)
+	}
+}
+
 func TestValidateSchemaChain_MixedDialectChain(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -57,6 +58,65 @@ func schemaDialect(schema map[string]any) (string, error) {
 	}
 }
 
+func resolveLocalSchemaRef(root any, ref string) any {
+	if ref == "#" {
+		return root
+	}
+	if !strings.HasPrefix(ref, "#/") {
+		return nil
+	}
+	current := root
+	for _, encoded := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
+		segment := strings.ReplaceAll(strings.ReplaceAll(encoded, "~1", "/"), "~0", "~")
+		switch node := current.(type) {
+		case map[string]any:
+			current = node[segment]
+		case []any:
+			index, err := strconv.Atoi(segment)
+			if err != nil || index < 0 || index >= len(node) {
+				return nil
+			}
+			current = node[index]
+		default:
+			return nil
+		}
+		if current == nil {
+			return nil
+		}
+	}
+	return current
+}
+
+func detectLocalRefDialectMismatch(root map[string]any, rootID, rootDialect string) error {
+	var mismatch error
+	var visit func(map[string]any)
+	visit = func(schema map[string]any) {
+		if mismatch != nil {
+			return
+		}
+		if ref, ok := schema["$ref"].(string); ok && strings.HasPrefix(ref, "#") {
+			if target, targetOK := resolveLocalSchemaRef(root, ref).(map[string]any); targetOK {
+				if _, declaresDialect := target["$schema"]; declaresDialect {
+					targetDialect, err := schemaDialect(target)
+					if err != nil {
+						mismatch = err
+						return
+					}
+					if targetDialect != rootDialect {
+						mismatch = fmt.Errorf("GTS schema reference graph mixes JSON Schema dialects: root type '%s' uses %s but local $ref target '%s' uses %s", rootID, rootDialect, ref, targetDialect)
+						return
+					}
+				}
+			}
+		}
+		visitSchemaChildren(schema, "", func(child map[string]any, _ string) {
+			visit(child)
+		})
+	}
+	visit(root)
+	return mismatch
+}
+
 func (s *GtsStore) detectChainDialectMismatch(schemaID string, gid *gtsid.ID) error {
 	rootID := buildIDFromSegments(gid.Segments[:1])
 	root := s.Get(rootID)
@@ -66,6 +126,12 @@ func (s *GtsStore) detectChainDialectMismatch(schemaID string, gid *gtsid.ID) er
 	rootDialect, err := schemaDialect(root.Content)
 	if err != nil {
 		return err
+	}
+	current := s.Get(schemaID)
+	if current != nil {
+		if err := detectLocalRefDialectMismatch(current.Content, rootID, rootDialect); err != nil {
+			return err
+		}
 	}
 
 	for i := range gid.Segments {
