@@ -245,6 +245,22 @@ func (s *GtsStore) RegisterSchema(typeID string, schema map[string]any) error {
 		return fmt.Errorf("schema content must be valid JSON: %w", err)
 	}
 
+	dialect, ok := schema["$schema"].(string)
+	if !ok || strings.TrimSpace(dialect) == "" {
+		return fmt.Errorf("GTS Type Schema must contain a top-level $schema field")
+	}
+	embeddedID, ok := schema["$id"].(string)
+	if !ok || !strings.HasPrefix(embeddedID, gtsid.URIPrefix+gtsid.Prefix) {
+		return fmt.Errorf("GTS Type Schema must contain a top-level $id in gts:// form")
+	}
+	normalizedID := gtsid.NormalizeID(embeddedID)
+	if !gtsid.IsValid(normalizedID) || !gtsid.IsTypeID(normalizedID) {
+		return fmt.Errorf("invalid GTS Type Schema $id: %q", embeddedID)
+	}
+	if normalizedID != typeID {
+		return fmt.Errorf("embedded $id %q must match external type_id %q", embeddedID, typeID)
+	}
+
 	// Parse to validate
 	gtsID, err := gtsid.New(typeID)
 	if err != nil {

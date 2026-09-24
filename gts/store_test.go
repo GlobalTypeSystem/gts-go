@@ -10,6 +10,17 @@ import (
 	"testing"
 )
 
+func canonicalTestSchema(typeID string, content map[string]any) map[string]any {
+	schema := map[string]any{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"$id":     "gts://" + typeID,
+	}
+	for key, value := range content {
+		schema[key] = value
+	}
+	return schema
+}
+
 // ── Error type tests ────────────────────────────────────────────────────────
 
 func TestStoreErrorMessages(t *testing.T) {
@@ -65,9 +76,9 @@ func TestGtsStore_Get_NotFound(t *testing.T) {
 
 func TestGtsStore_RegisterSchema(t *testing.T) {
 	store := NewGtsStore(nil)
-	schema := map[string]any{
+	schema := canonicalTestSchema("gts.x.test.ns.type.v1~", map[string]any{
 		"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}},
-	}
+	})
 	if err := store.RegisterSchema("gts.x.test.ns.type.v1~", schema); err != nil {
 		t.Fatalf("RegisterSchema: %v", err)
 	}
@@ -85,6 +96,27 @@ func TestGtsStore_RegisterSchema_InvalidID(t *testing.T) {
 	err := store.RegisterSchema("gts.x.test.ns.type.v1", map[string]any{})
 	if err == nil {
 		t.Fatal("expected error for ID not ending with ~")
+	}
+}
+
+func TestGtsStore_RegisterSchema_CanonicalIdentity(t *testing.T) {
+	store := NewGtsStore(nil)
+	typeID := "gts.x.test.ns.canonical.v1~"
+	tests := []struct {
+		name   string
+		schema map[string]any
+		match  string
+	}{
+		{"missing $schema", map[string]any{"$id": "gts://" + typeID}, "$schema"},
+		{"missing $id", map[string]any{"$schema": "http://json-schema.org/draft-07/schema#"}, "$id"},
+		{"mismatched $id", canonicalTestSchema("gts.x.test.ns.other.v1~", nil), "must match"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := store.RegisterSchema(typeID, tt.schema); err == nil || !strings.Contains(err.Error(), tt.match) {
+				t.Fatalf("RegisterSchema error = %v, want containing %q", err, tt.match)
+			}
+		})
 	}
 }
 
@@ -106,7 +138,7 @@ func TestGtsStore_RejectsCyclicContent(t *testing.T) {
 
 func TestGtsStore_GetSchemaContent(t *testing.T) {
 	store := NewGtsStore(nil)
-	schema := map[string]any{"type": "object"}
+	schema := canonicalTestSchema("gts.x.test.ns.type.v1~", map[string]any{"type": "object"})
 	_ = store.RegisterSchema("gts.x.test.ns.type.v1~", schema)
 
 	content, err := store.GetSchemaContent("gts.x.test.ns.type.v1~")
@@ -128,8 +160,8 @@ func TestGtsStore_GetSchemaContent_NotFound(t *testing.T) {
 
 func TestGtsStore_Items(t *testing.T) {
 	store := NewGtsStore(nil)
-	_ = store.RegisterSchema("gts.x.test.ns.a.v1~", map[string]any{"type": "object"})
-	_ = store.RegisterSchema("gts.x.test.ns.b.v1~", map[string]any{"type": "object"})
+	_ = store.RegisterSchema("gts.x.test.ns.a.v1~", canonicalTestSchema("gts.x.test.ns.a.v1~", map[string]any{"type": "object"}))
+	_ = store.RegisterSchema("gts.x.test.ns.b.v1~", canonicalTestSchema("gts.x.test.ns.b.v1~", map[string]any{"type": "object"}))
 	items := store.Items()
 	if len(items) != 2 {
 		t.Errorf("expected 2 items, got %d", len(items))
@@ -141,7 +173,7 @@ func TestGtsStore_Count(t *testing.T) {
 	if store.Count() != 0 {
 		t.Errorf("expected 0, got %d", store.Count())
 	}
-	_ = store.RegisterSchema("gts.x.test.ns.a.v1~", map[string]any{})
+	_ = store.RegisterSchema("gts.x.test.ns.a.v1~", canonicalTestSchema("gts.x.test.ns.a.v1~", nil))
 	if store.Count() != 1 {
 		t.Errorf("expected 1, got %d", store.Count())
 	}
@@ -149,7 +181,7 @@ func TestGtsStore_Count(t *testing.T) {
 
 func TestGtsStore_Unregister(t *testing.T) {
 	store := NewGtsStore(nil)
-	_ = store.RegisterSchema("gts.x.test.ns.a.v1~", map[string]any{})
+	_ = store.RegisterSchema("gts.x.test.ns.a.v1~", canonicalTestSchema("gts.x.test.ns.a.v1~", nil))
 	store.Unregister("gts.x.test.ns.a.v1~")
 	if store.Get("gts.x.test.ns.a.v1~") != nil {
 		t.Error("expected nil after unregister")
@@ -158,9 +190,9 @@ func TestGtsStore_Unregister(t *testing.T) {
 
 func TestGtsStore_List(t *testing.T) {
 	store := NewGtsStore(nil)
-	_ = store.RegisterSchema("gts.x.test.ns.a.v1~", map[string]any{})
-	_ = store.RegisterSchema("gts.x.test.ns.b.v1~", map[string]any{})
-	_ = store.RegisterSchema("gts.x.test.ns.c.v1~", map[string]any{})
+	_ = store.RegisterSchema("gts.x.test.ns.a.v1~", canonicalTestSchema("gts.x.test.ns.a.v1~", nil))
+	_ = store.RegisterSchema("gts.x.test.ns.b.v1~", canonicalTestSchema("gts.x.test.ns.b.v1~", nil))
+	_ = store.RegisterSchema("gts.x.test.ns.c.v1~", canonicalTestSchema("gts.x.test.ns.c.v1~", nil))
 
 	r := store.List(2)
 	if r.Count != 2 {

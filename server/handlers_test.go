@@ -11,14 +11,25 @@ import (
 	"github.com/GlobalTypeSystem/gts-go/gts"
 )
 
+func canonicalSchema(typeID string, content map[string]any) map[string]any {
+	schema := map[string]any{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"$id":     "gts://" + typeID,
+	}
+	for key, value := range content {
+		schema[key] = value
+	}
+	return schema
+}
+
 func TestValidateJSON(t *testing.T) {
 	store := gts.NewGtsStore(nil)
 	typeID := "gts.x.test6json._.validate_json.v1~"
-	if err := store.RegisterSchema(typeID, map[string]any{
+	if err := store.RegisterSchema(typeID, canonicalSchema(typeID, map[string]any{
 		"type":       "object",
 		"required":   []any{"name"},
 		"properties": map[string]any{"name": map[string]any{"type": "string"}},
-	}); err != nil {
+	})); err != nil {
 		t.Fatal(err)
 	}
 	s := NewServer(store, "", 0, 0)
@@ -146,10 +157,10 @@ func TestAddSchemaConflict(t *testing.T) {
 		return w.Code
 	}
 
-	if code := post(`{"type_id":"gts.x.test._.bar.v1~","schema":{"type":"object"}}`); code != http.StatusOK {
+	if code := post(`{"type_id":"gts.x.test._.bar.v1~","schema":{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://gts.x.test._.bar.v1~","type":"object"}}`); code != http.StatusOK {
 		t.Fatalf("initial add-schema status = %d, want 200", code)
 	}
-	if code := post(`{"type_id":"gts.x.test._.bar.v1~","schema":{"type":"string"}}`); code != http.StatusConflict {
+	if code := post(`{"type_id":"gts.x.test._.bar.v1~","schema":{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://gts.x.test._.bar.v1~","type":"string"}}`); code != http.StatusConflict {
 		t.Fatalf("changed add-schema status = %d, want 409", code)
 	}
 }
@@ -173,7 +184,7 @@ func TestServerClosesConnections(t *testing.T) {
 func TestValidateSchemaRejectsInstanceID(t *testing.T) {
 	store := gts.NewGtsStore(nil)
 	typeID := "gts.x.server.ns.type.v1~"
-	if err := store.RegisterSchema(typeID, map[string]any{"$id": "gts://" + typeID, "type": "object"}); err != nil {
+	if err := store.RegisterSchema(typeID, canonicalSchema(typeID, map[string]any{"type": "object"})); err != nil {
 		t.Fatal(err)
 	}
 	instanceID := "gts.x.server.ns.type.v1~x.server._.instance.v1"

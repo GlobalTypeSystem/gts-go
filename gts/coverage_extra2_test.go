@@ -276,7 +276,7 @@ func TestRefValidator_ValidateRef(t *testing.T) {
 
 func TestQuery_InvalidPattern(t *testing.T) {
 	store := NewGtsStore(nil)
-	_ = store.RegisterSchema("gts.x.test.ns.type.v1~", map[string]any{"type": "object"})
+	_ = store.RegisterSchema("gts.x.test.ns.type.v1~", canonicalTestSchema("gts.x.test.ns.type.v1~", map[string]any{"type": "object"}))
 	r := store.Query("**invalid**", 10)
 	// Should return results or error depending on pattern
 	_ = r // just ensure no panic

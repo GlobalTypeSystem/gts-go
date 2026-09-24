@@ -61,15 +61,15 @@ func TestAllowEntityUpdatesReplacesChangedEntity(t *testing.T) {
 func TestRegisterSchemaChangedContentIsConflict(t *testing.T) {
 	store := NewGtsStore(nil)
 	typeID := "gts.x.test._.legacy.v1~"
-	if err := store.RegisterSchema(typeID, map[string]any{"type": "object"}); err != nil {
+	if err := store.RegisterSchema(typeID, canonicalTestSchema(typeID, map[string]any{"type": "object"})); err != nil {
 		t.Fatalf("first RegisterSchema failed: %v", err)
 	}
 	// Identical re-registration is idempotent.
-	if err := store.RegisterSchema(typeID, map[string]any{"type": "object"}); err != nil {
+	if err := store.RegisterSchema(typeID, canonicalTestSchema(typeID, map[string]any{"type": "object"})); err != nil {
 		t.Fatalf("identical RegisterSchema should be idempotent, got: %v", err)
 	}
 
-	err := store.RegisterSchema(typeID, map[string]any{"type": "string"})
+	err := store.RegisterSchema(typeID, canonicalTestSchema(typeID, map[string]any{"type": "string"}))
 	var conflict *EntityConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("expected EntityConflictError, got: %v", err)
@@ -79,10 +79,10 @@ func TestRegisterSchemaChangedContentIsConflict(t *testing.T) {
 func TestRegisterSchemaAllowEntityUpdates(t *testing.T) {
 	store := NewGtsStoreWithConfig(nil, &RegistryConfig{AllowEntityUpdates: true})
 	typeID := "gts.x.test._.legacy.v1~"
-	if err := store.RegisterSchema(typeID, map[string]any{"type": "object"}); err != nil {
+	if err := store.RegisterSchema(typeID, canonicalTestSchema(typeID, map[string]any{"type": "object"})); err != nil {
 		t.Fatalf("first RegisterSchema failed: %v", err)
 	}
-	if err := store.RegisterSchema(typeID, map[string]any{"type": "string"}); err != nil {
+	if err := store.RegisterSchema(typeID, canonicalTestSchema(typeID, map[string]any{"type": "string"})); err != nil {
 		t.Fatalf("update should be allowed, got: %v", err)
 	}
 }
