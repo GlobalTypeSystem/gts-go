@@ -7,6 +7,7 @@ package gts
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/GlobalTypeSystem/gts-go/gtsid"
@@ -134,7 +135,7 @@ func castInstance(
 
 	// Apply casting rules to transform the instance
 	casted, added, removed, incompatibilityReasons := castInstanceToSchema(
-		copyMap(fromInstanceContent),
+		deepCopyMap(fromInstanceContent),
 		targetSchema,
 		"",
 	)
@@ -195,7 +196,7 @@ func castInstanceToSchema(
 	additional := getAdditionalProperties(schema)
 
 	// Start from current values
-	result := copyMap(instance)
+	result := deepCopyMap(instance)
 
 	// 1) Ensure required properties exist (fill defaults if provided)
 	for reqProp := range required {
@@ -203,7 +204,7 @@ func castInstanceToSchema(
 			propSchema := getMap(targetProps, reqProp)
 			if propSchema != nil {
 				if defaultVal, hasDefault := propSchema["default"]; hasDefault {
-					result[reqProp] = copyValue(defaultVal)
+					result[reqProp] = deepCopyValue(defaultVal)
 					path := buildPath(basePath, reqProp)
 					added = append(added, path)
 				} else {
@@ -226,7 +227,7 @@ func castInstanceToSchema(
 		}
 		if _, exists := result[prop]; !exists {
 			if defaultVal, hasDefault := propSchema["default"]; hasDefault {
-				result[prop] = copyValue(defaultVal)
+				result[prop] = deepCopyValue(defaultVal)
 				path := buildPath(basePath, prop)
 				added = append(added, path)
 			}
@@ -377,12 +378,15 @@ func validateWithGtsIDTolerance(instance, schema map[string]any, store *GtsStore
 	// Set up custom loader for GTS ID references
 	compiler.UseLoader(&gtsURLLoader{store: store})
 
-	// Pre-load all schemas from the store
-	for id, entity := range store.Items() {
+	// Pre-load all schemas from the store. forEachEntity iterates under the read
+	// lock without deep-cloning the whole store; stored entities are immutable
+	// once registered and the compiler treats resources as read-only.
+	store.forEachEntity(func(id string, entity *JsonEntity) bool {
 		if entity.IsTypeSchema {
 			_ = compiler.AddResource(id, entity.Content)
 		}
-	}
+		return true
+	})
 
 	// Add the modified schema as a resource
 	schemaID := "_cast_validation"
@@ -455,35 +459,8 @@ func buildPath(base, prop string) string {
 	return base + "." + prop
 }
 
-// copyMap creates a deep copy of a map
-func copyMap(m map[string]any) map[string]any {
-	if m == nil {
-		return nil
-	}
-	result := make(map[string]any)
-	for k, v := range m {
-		result[k] = copyValue(v)
-	}
-	return result
-}
-
-// copyValue creates a deep copy of any value
-func copyValue(v any) any {
-	switch val := v.(type) {
-	case map[string]any:
-		return copyMap(val)
-	case []any:
-		result := make([]any, len(val))
-		for i, item := range val {
-			result[i] = copyValue(item)
-		}
-		return result
-	default:
-		return v
-	}
-}
-
-// deduplicate removes duplicates from string slice and sorts
+// deduplicate removes duplicates from a string slice and sorts the result for
+// stable output.
 func deduplicate(slice []string) []string {
 	seen := make(map[string]bool)
 	result := []string{}
@@ -493,13 +470,6 @@ func deduplicate(slice []string) []string {
 			result = append(result, item)
 		}
 	}
-	// Sort for consistent output
-	for i := 0; i < len(result); i++ {
-		for j := i + 1; j < len(result); j++ {
-			if result[i] > result[j] {
-				result[i], result[j] = result[j], result[i]
-			}
-		}
-	}
+	slices.Sort(result)
 	return result
 }

@@ -19,8 +19,10 @@ package gts
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -33,6 +35,10 @@ type ValidateSchemaChainResult struct {
 	TypeID string `json:"type_id"`
 	OK     bool   `json:"ok"`
 	Error  string `json:"error,omitempty"`
+	// MissingSchema is true when the failure was caused by a referenced schema
+	// (a base/parent in the chain) not being registered. Callers use this typed
+	// signal instead of matching on the human-readable Error text.
+	MissingSchema bool `json:"-"`
 }
 
 func schemaDialect(schema map[string]any) (string, error) {
@@ -194,6 +200,20 @@ func (s *GtsStore) detectChainDialectMismatch(schemaID string, gid *gtsid.ID) er
 	return nil
 }
 
+// missingSchemaError marks a resolveSchemaRefsChecked failure caused by an
+// unregistered schema. It preserves the original human-readable wording while
+// letting callers detect the cause via errors.As instead of substring matching.
+type missingSchemaError struct{ id string }
+
+func (e *missingSchemaError) Error() string { return fmt.Sprintf("schema '%s' not found", e.id) }
+
+// isMissingSchemaError reports whether err (or any error it wraps) is a
+// missingSchemaError.
+func isMissingSchemaError(err error) bool {
+	var missing *missingSchemaError
+	return errors.As(err, &missing)
+}
+
 // ValidateSchemaChain validates each derived schema against its base across the chain (OP#12).
 func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResult {
 	gid, err := gtsid.New(schemaID)
@@ -212,9 +232,10 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 	if _, err := s.resolveSchemaRefsChecked(schemaID); err != nil {
 		if len(gid.Segments) >= 2 || !strings.Contains(err.Error(), "circular $ref") {
 			return &ValidateSchemaChainResult{
-				TypeID: schemaID,
-				OK:     false,
-				Error:  fmt.Sprintf("Schema '%s' has %v", schemaID, err),
+				TypeID:        schemaID,
+				OK:            false,
+				Error:         fmt.Sprintf("Schema '%s' has %v", schemaID, err),
+				MissingSchema: isMissingSchemaError(err),
 			}
 		}
 	}
@@ -245,17 +266,19 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 		baseContent, err := s.resolveSchemaRefsChecked(baseID)
 		if err != nil {
 			return &ValidateSchemaChainResult{
-				TypeID: schemaID,
-				OK:     false,
-				Error:  fmt.Sprintf("Schema '%s' has %v", baseID, err),
+				TypeID:        schemaID,
+				OK:            false,
+				Error:         fmt.Sprintf("Schema '%s' has %v", baseID, err),
+				MissingSchema: isMissingSchemaError(err),
 			}
 		}
 		derivedContent, err := s.resolveSchemaRefsChecked(derivedID)
 		if err != nil {
 			return &ValidateSchemaChainResult{
-				TypeID: schemaID,
-				OK:     false,
-				Error:  fmt.Sprintf("Schema '%s' has %v", derivedID, err),
+				TypeID:        schemaID,
+				OK:            false,
+				Error:         fmt.Sprintf("Schema '%s' has %v", derivedID, err),
+				MissingSchema: isMissingSchemaError(err),
 			}
 		}
 
@@ -994,15 +1017,6 @@ func jsonValueType(v any) string {
 	return ""
 }
 
-func stringSliceContains(slice []string, s string) bool {
-	for _, item := range slice {
-		if item == s {
-			return true
-		}
-	}
-	return false
-}
-
 func anySliceContains(slice []any, val any) bool {
 	for _, item := range slice {
 		if jsonEqual(item, val) {
@@ -1028,7 +1042,7 @@ const maxSchemaRefExpansions = 10_000
 func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, error) {
 	entity := s.Get(schemaID)
 	if entity == nil {
-		return nil, fmt.Errorf("schema '%s' not found", schemaID)
+		return nil, &missingSchemaError{id: schemaID}
 	}
 	if !entity.IsTypeSchema {
 		return nil, fmt.Errorf("entity '%s' is not a schema", schemaID)
@@ -1193,7 +1207,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 						if req, ok := resolvedMap["required"].([]any); ok {
 							for _, rv := range req {
 								if str, ok := rv.(string); ok {
-									if !stringSliceContains(mergedRequired, str) {
+									if !slices.Contains(mergedRequired, str) {
 										mergedRequired = append(mergedRequired, str)
 									}
 								}
@@ -1254,7 +1268,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				if parentReq, ok := v["required"].([]any); ok {
 					for _, rv := range parentReq {
 						if str, ok := rv.(string); ok {
-							if !stringSliceContains(mergedRequired, str) {
+							if !slices.Contains(mergedRequired, str) {
 								mergedRequired = append(mergedRequired, str)
 							}
 						}

@@ -13,6 +13,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
@@ -141,13 +142,68 @@ func DefaultRegistryConfig() *RegistryConfig {
 //
 // writerMu serializes mutations and registration transactions. mu protects byID;
 // validation callbacks run without mu while writerMu prevents another writer from
-// interleaving with snapshot/register/validate/rollback.
+// interleaving with snapshot/register/validate/rollback. readerMu serializes
+// on-demand reads from the backing reader; it is intentionally distinct from
+// writerMu so that a validation callback running inside a writerMu-held
+// transaction can still fault entities in via Get without self-deadlocking.
+//
+// schemaCache memoizes compiled JSON schemas (see validate.go). It is cleared
+// whenever byID changes so a cached schema is never reused across a mutation
+// that could alter it or any schema it resolves. schemaCacheGen guards the
+// cache against an invalidation that races an in-flight compile: every entry is
+// tagged with the generation observed when its compile began, and a read reuses
+// it only while that generation is still current (see compileSchema).
 type GtsStore struct {
-	writerMu sync.Mutex
-	mu       sync.RWMutex
-	byID     map[string]*JsonEntity
-	reader   GtsReader
-	config   *RegistryConfig
+	writerMu       sync.Mutex
+	readerMu       sync.Mutex
+	mu             sync.RWMutex
+	byID           map[string]*JsonEntity
+	reader         GtsReader
+	config         *RegistryConfig
+	schemaCache    sync.Map
+	schemaCacheGen atomic.Uint64
+}
+
+// invalidateSchemaCache drops every memoized compiled schema and advances the
+// cache generation. Bumping the generation is what makes invalidation safe
+// against a concurrent compile: an entry produced from now-stale dependencies
+// carries an older generation and is rejected on read even if its Store lands
+// after this Clear. Callers hold no particular lock; sync.Map and atomic.Uint64
+// are safe for concurrent use.
+func (s *GtsStore) invalidateSchemaCache() {
+	// Advance the generation before clearing so a compile that reads the new
+	// generation cannot also observe a not-yet-cleared entry.
+	s.schemaCacheGen.Add(1)
+	s.schemaCache.Clear()
+}
+
+// forEachEntity invokes fn for every entity while holding the read lock. fn MUST
+// NOT call back into the store (Get/Register/…): mu is held for reading and
+// re-entrant locking can deadlock. Return false from fn to stop iteration.
+func (s *GtsStore) forEachEntity(fn func(id string, entity *JsonEntity) bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for id, entity := range s.byID {
+		if !fn(id, entity) {
+			return
+		}
+	}
+}
+
+// entityIDs returns a snapshot of every registered entity ID. Unlike Items it
+// does not clone entity content, so it is cheap for callers that only need the
+// keys (e.g. wildcard matching) and then look up the few that matter. Because
+// the lock is released before the caller iterates, the returned IDs are safe to
+// pass back into the store (Get/…) — unlike forEachEntity, whose callback runs
+// under the read lock.
+func (s *GtsStore) entityIDs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]string, 0, len(s.byID))
+	for id := range s.byID {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // NewGtsStore creates a new GtsStore, optionally populating it from a reader
@@ -239,6 +295,7 @@ func (s *GtsStore) registerLocked(entity *JsonEntity) error {
 	s.mu.Lock()
 	s.byID[key] = entity
 	s.mu.Unlock()
+	s.invalidateSchemaCache()
 	if s.config.Verbose {
 		log.Printf("Registered entity: %s (type-schema: %v, refs: %d)", key, entity.IsTypeSchema, len(entity.GtsRefs))
 	}
@@ -272,6 +329,7 @@ func (s *GtsStore) RegisterWithValidation(entity *JsonEntity, validate func(id s
 			delete(s.byID, key)
 		}
 		s.mu.Unlock()
+		s.invalidateSchemaCache()
 		return err
 	}
 	return nil
@@ -324,6 +382,7 @@ func (s *GtsStore) RegisterSchema(typeID string, schema map[string]any) error {
 		return &EntityConflictError{EntityID: typeID}
 	}
 	s.byID[typeID] = entity
+	s.invalidateSchemaCache()
 	return nil
 }
 
@@ -341,8 +400,11 @@ func (s *GtsStore) Get(entityID string) *JsonEntity {
 		return nil
 	}
 
-	s.writerMu.Lock()
-	defer s.writerMu.Unlock()
+	// readerMu (not writerMu) serializes on-demand reader faults. Using a
+	// dedicated lock keeps Get callable from validation callbacks that already
+	// hold writerMu, avoiding a self-deadlock.
+	s.readerMu.Lock()
+	defer s.readerMu.Unlock()
 	s.mu.RLock()
 	entity = s.byID[entityID]
 	s.mu.RUnlock()
@@ -358,6 +420,11 @@ func (s *GtsStore) Get(entityID string) *JsonEntity {
 	s.mu.Lock()
 	s.byID[entityID] = stored
 	s.mu.Unlock()
+	// Only a newly-visible type schema can affect a compiled result; faulting in
+	// an instance cannot, so it must not flush every memoized schema.
+	if stored.IsTypeSchema {
+		s.invalidateSchemaCache()
+	}
 	return cloneJsonEntity(stored)
 }
 
@@ -392,6 +459,7 @@ func (s *GtsStore) Unregister(entityID string) {
 	s.mu.Lock()
 	delete(s.byID, entityID)
 	s.mu.Unlock()
+	s.invalidateSchemaCache()
 }
 
 // Count returns the number of entities in the store

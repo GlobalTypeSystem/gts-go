@@ -709,7 +709,10 @@ func (v *dependencyValidationState) validateEntity(entityID string) error {
 }
 
 func (v *dependencyValidationState) hasValidWildcardMatch(pattern string) bool {
-	for entityID := range v.store.Items() {
+	// validateEntity calls back into the store (Get), so iterate over an ID
+	// snapshot rather than under forEachEntity's read lock. entityIDs avoids the
+	// whole-store content clone that Items would perform here.
+	for _, entityID := range v.store.entityIDs() {
 		if gtsid.Match(entityID, pattern).Match && v.validateEntity(entityID) == nil {
 			return true
 		}

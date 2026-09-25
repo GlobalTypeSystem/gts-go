@@ -57,29 +57,28 @@ func (s *GtsStore) Query(expr string, limit int) *QueryResult {
 		return result
 	}
 
-	// Filter entities
-	for _, entity := range s.Items() {
+	// Filter entities. forEachEntity iterates under the read lock without
+	// cloning the whole store; matching is read-only, and only the entities that
+	// actually match are deep-copied into the result set.
+	s.forEachEntity(func(_ string, entity *JsonEntity) bool {
 		if len(result.Results) >= limit {
-			break
+			return false
 		}
-
 		// Skip entities without valid content or GTS ID
 		if len(entity.Content) == 0 || entity.GtsID == nil {
-			continue
+			return true
 		}
-
 		// Check if ID matches the pattern
 		if !s.matchesIDPattern(entity.GtsID, basePattern, isWildcard) {
-			continue
+			return true
 		}
-
 		// Check filters
 		if !s.matchesFilters(entity.Content, filters) {
-			continue
+			return true
 		}
-
-		result.Results = append(result.Results, entity.Content)
-	}
+		result.Results = append(result.Results, deepCopyMap(entity.Content))
+		return true
+	})
 
 	result.Count = len(result.Results)
 	return result

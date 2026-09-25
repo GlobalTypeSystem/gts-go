@@ -340,25 +340,37 @@ func (s *GtsStore) validateJSONSchema(schema map[string]any) error {
 	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
 		return fmt.Errorf("JSON Schema validation failed: %v", err)
 	}
-	for id, entity := range s.Items() {
+	s.forEachEntity(func(id string, entity *JsonEntity) bool {
 		if resourceID := gtsid.ToCompileURI(id); entity.IsTypeSchema && resourceID != schemaID {
 			_ = compiler.AddResource(resourceID, normalizeSchemaForCompile(entity.Content))
 		}
-	}
+		return true
+	})
 	if _, err := compiler.Compile(schemaID); err != nil {
 		return fmt.Errorf("JSON Schema validation failed: %v", err)
 	}
 	return nil
 }
 
+// adaptTypeMismatchMessage augments a raw JSON Schema validation message with the
+// spec-mandated "is not of type 'string'" phrasing (gts-spec OP#6). This is an
+// intentional, isolated adaptation of the underlying jsonschema library's
+// wording: the library does not expose a typed error kind we can match on for
+// this case, so a library upgrade that rewords "got number, want string" would
+// require updating this single helper. Keeping it in one place makes that
+// coupling explicit rather than scattering substring checks through the flow.
+func adaptTypeMismatchMessage(message string) string {
+	if strings.Contains(message, "got number, want string") {
+		return message + ": is not of type 'string'"
+	}
+	return message
+}
+
 func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) *JSONValidationResult {
 	entity := NewJsonEntity(content, DefaultGtsConfig())
 	result := &JSONValidationResult{IsTypeSchema: entity.IsTypeSchema}
 	fail := func(message string) *JSONValidationResult {
-		if strings.Contains(message, "got number, want string") {
-			message += ": is not of type 'string'"
-		}
-		result.Error = message
+		result.Error = adaptTypeMismatchMessage(message)
 		return result
 	}
 	if typeID != "" {
@@ -391,6 +403,7 @@ func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) 
 		previous, existed := s.byID[entity.GtsID.ID]
 		s.byID[entity.GtsID.ID] = cloneJsonEntity(entity)
 		s.mu.Unlock()
+		s.invalidateSchemaCache()
 		validation := s.ValidateSchemaChain(entity.GtsID.ID)
 		s.mu.Lock()
 		if existed {
@@ -399,9 +412,10 @@ func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) 
 			delete(s.byID, entity.GtsID.ID)
 		}
 		s.mu.Unlock()
+		s.invalidateSchemaCache()
 		s.writerMu.Unlock()
 		if !validation.OK {
-			if strings.Contains(validation.Error, "has schema") && strings.Contains(validation.Error, "not found") {
+			if validation.MissingSchema {
 				return fail("Parent GTS Type Schema not found")
 			}
 			return fail(validation.Error)
@@ -434,6 +448,77 @@ func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) 
 	return result
 }
 
+// compiledSchemaEntry is a memoized compilation result. A failed compile is
+// cached too so repeated validation against a broken schema doesn't recompile.
+// gen is the schemaCacheGen observed when this compile began; a reader trusts
+// the entry only while gen is still current (see compileSchema).
+type compiledSchemaEntry struct {
+	schema *jsonschema.Schema
+	err    error
+	gen    uint64
+}
+
+// compileSchema returns a compiled JSON Schema for schemaID, reusing a cached
+// result when available. The cache is cleared on every store mutation
+// (invalidateSchemaCache), so a cached entry is only reused while the schema and
+// every schema it can resolve are unchanged. The key additionally includes a
+// content hash of the (normalized) schema so callers that compile different
+// content under the same $id (e.g. transient validation) never collide.
+//
+// A compile can run concurrently with a mutation (validation does not hold
+// writerMu). To keep such a compile from publishing a result built from
+// now-stale dependencies, the generation is captured before the compile begins:
+// a cached entry is reused only when its generation still matches, and the entry
+// is published only when no invalidation intervened. An entry that loses either
+// race is simply recomputed on the next call.
+//
+// rawSchema is the pre-normalization schema; it is walked to discover external
+// gts:// $ref dependencies to preload as compiler resources.
+func (s *GtsStore) compileSchema(schemaID string, normalizedSchema, rawSchema map[string]any) (*jsonschema.Schema, error) {
+	gen := s.schemaCacheGen.Load()
+	key := schemaID + "\x00" + contentHash(normalizedSchema)
+	if cached, ok := s.schemaCache.Load(key); ok {
+		if entry := cached.(*compiledSchemaEntry); entry.gen == gen {
+			return entry.schema, entry.err
+		}
+	}
+
+	// Create a custom compiler with GTS reference resolution.
+	compiler := jsonschema.NewCompiler()
+	// Use ECMA-262 compatible regexp engine for pattern validation. Go's stdlib
+	// regexp uses RE2 which rejects lookaheads ((?!, (?=) valid in JSON Schema.
+	compiler.UseRegexpEngine(ecmaRegexpEngine)
+	// Register x-gts-ref as a proper vocabulary so the library treats it as a real
+	// keyword with validation semantics. This prevents oneOf/anyOf/allOf branches
+	// containing only x-gts-ref from being treated as empty match-all schemas.
+	compiler.RegisterVocabulary(newXGtsRefVocabulary(s))
+	// Assert JSON Schema format keywords (uuid, email, date-time, …) so format
+	// violations are reported as validation errors (gts-spec OP#6).
+	compiler.AssertFormat()
+	// Set up custom loader for GTS ID references (matches Python's resolve_gts_ref handler).
+	compiler.UseLoader(&gtsURLLoader{store: s})
+
+	entry := &compiledSchemaEntry{gen: gen}
+	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
+		entry.err = fmt.Errorf("add schema resource: %v", err)
+	} else {
+		s.addSchemaDependencyResources(compiler, rawSchema, schemaID)
+		compiled, err := compiler.Compile(schemaID)
+		if err != nil {
+			entry.err = fmt.Errorf("compile schema: %v", err)
+		} else {
+			entry.schema = compiled
+		}
+	}
+	// Publish only if no invalidation intervened during the compile. If one did,
+	// this entry reflects a stale view; skip storing it (a later call recompiles)
+	// rather than caching a result the generation guard would reject anyway.
+	if s.schemaCacheGen.Load() == gen {
+		s.schemaCache.Store(key, entry)
+	}
+	return entry.schema, entry.err
+}
+
 // validateWithSchema performs the actual JSON Schema validation
 func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string]any) error {
 	if _, err := schemaDialect(schema); err != nil {
@@ -442,42 +527,15 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 	// Rewrite $id to the absolute compile-URI form for JSON Schema validation
 	normalizedSchema := normalizeSchemaForCompile(schema)
 
-	// Create a custom compiler with GTS reference resolution
-	compiler := jsonschema.NewCompiler()
-
-	// Use ECMA-262 compatible regexp engine for pattern validation.
-	// Go's stdlib regexp uses RE2 which rejects lookaheads ((?!, (?=)
-	// that are valid in JSON Schema patterns.
-	compiler.UseRegexpEngine(ecmaRegexpEngine)
-
-	// Register x-gts-ref as a proper vocabulary so the library treats it as a real
-	// keyword with validation semantics. This prevents oneOf/anyOf/allOf branches
-	// containing only x-gts-ref from being treated as empty match-all schemas.
-	compiler.RegisterVocabulary(newXGtsRefVocabulary(s))
-
-	// Assert JSON Schema format keywords (uuid, email, date-time, …) so
-	// format violations are reported as validation errors (gts-spec OP#6).
-	compiler.AssertFormat()
-
-	// Set up custom loader for GTS ID references (matches Python's resolve_gts_ref handler)
-	compiler.UseLoader(&gtsURLLoader{store: s})
-
 	// Get schema ID for compilation (already in compile-URI form from normalization)
 	schemaID, ok := normalizedSchema["$id"].(string)
 	if !ok || schemaID == "" {
 		return fmt.Errorf("schema must have a valid $id field")
 	}
 
-	// Add the main schema to the compiler under its compile-URI id
-	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
-		return fmt.Errorf("add schema resource: %v", err)
-	}
-	s.addSchemaDependencyResources(compiler, schema, schemaID)
-
-	// Compile the schema using its compile-URI id
-	compiledSchema, err := compiler.Compile(schemaID)
+	compiledSchema, err := s.compileSchema(schemaID, normalizedSchema, schema)
 	if err != nil {
-		return fmt.Errorf("compile schema: %v", err)
+		return err
 	}
 
 	// Validate the instance

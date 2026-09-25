@@ -6,6 +6,7 @@ Released under Apache License 2.0
 package gts
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -499,5 +500,49 @@ func TestECMARegexpEngine(t *testing.T) {
 	regexp := matcher.(*regexp2RE)
 	if regexp.re.MatchTimeout != time.Second {
 		t.Errorf("expected one-second regexp timeout, got %s", regexp.re.MatchTimeout)
+	}
+}
+
+// TestCompileSchema_GenerationGuard verifies the compiled-schema cache rejects an
+// entry left over from before an invalidation, closing the race where a compile
+// that ran concurrently with a store mutation publishes a stale result.
+func TestCompileSchema_GenerationGuard(t *testing.T) {
+	store := NewGtsStore(nil)
+	schema := map[string]any{
+		"$id":     "gts://gts.x.core.cache.thing.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type":    "object",
+	}
+	normalized := normalizeSchemaForCompile(schema)
+	schemaID, _ := normalized["$id"].(string)
+	key := schemaID + "\x00" + contentHash(normalized)
+
+	// First compile populates the cache at the current generation.
+	if c, err := store.compileSchema(schemaID, normalized, schema); err != nil || c == nil {
+		t.Fatalf("initial compile failed: %v", err)
+	}
+	if _, ok := store.schemaCache.Load(key); !ok {
+		t.Fatal("expected the successful compile to be cached")
+	}
+
+	// A mutation advances the generation and clears the cache.
+	genBefore := store.schemaCacheGen.Load()
+	store.invalidateSchemaCache()
+	if store.schemaCacheGen.Load() != genBefore+1 {
+		t.Fatalf("invalidation must advance the generation: %d -> %d", genBefore, store.schemaCacheGen.Load())
+	}
+
+	// Simulate a compile that lost the Store/Clear race: an entry carrying the
+	// pre-mutation generation lands in the map. It must not be reused.
+	store.schemaCache.Store(key, &compiledSchemaEntry{
+		err: errors.New("stale cache entry (test)"),
+		gen: store.schemaCacheGen.Load() - 1,
+	})
+	c, err := store.compileSchema(schemaID, normalized, schema)
+	if err != nil {
+		t.Fatalf("stale-generation entry must be ignored, got: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected a fresh compile after the stale entry was rejected")
 	}
 }
