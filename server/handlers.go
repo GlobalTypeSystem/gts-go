@@ -372,38 +372,60 @@ func (s *Server) handleAddEntities(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleAddSchema(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		TypeID     string         `json:"type_id"`
-		Schema     map[string]any `json:"schema"`
-		TypeSchema map[string]any `json:"type_schema"`
-	}
-	if err := s.readJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid JSON")
-		return
-	}
-
-	if req.Schema == nil {
-		req.Schema = req.TypeSchema
-	}
-	err := s.store.RegisterSchema(req.TypeID, req.Schema)
-	if err != nil {
-		status := http.StatusOK
-		if isConflict(err) {
-			status = http.StatusConflict
-		}
-		s.writeJSON(w, status, map[string]any{
-			"ok":      false,
-			"type_id": req.TypeID,
-			"error":   err.Error(),
+// handleAddSchemas registers a batch of GTS Type Schemas. The request body is
+// a JSON array of GTS Type Schema objects; each entry's GTS Type Identifier is
+// derived from its embedded $id (there is no external type_id field). The
+// response is an aggregate {ok, results:[...]} body where the top-level ok is
+// true only when every entry registered successfully.
+func (s *Server) handleAddSchemas(w http.ResponseWriter, r *http.Request) {
+	var schemas []map[string]any
+	if err := s.readJSON(r, &schemas); err != nil {
+		s.writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"ok":    false,
+			"error": "Request body must be a JSON array of GTS Type Schemas",
 		})
 		return
 	}
 
+	results := make([]map[string]any, 0, len(schemas))
+	allOK := true
+	for _, schema := range schemas {
+		result := s.registerTypeSchema(schema)
+		if ok, _ := result["ok"].(bool); !ok {
+			allOK = false
+		}
+		results = append(results, result)
+	}
+
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"type_id": req.TypeID,
+		"ok":      allOK,
+		"results": results,
 	})
+}
+
+// registerTypeSchema registers a single GTS Type Schema, deriving its GTS Type
+// Identifier from the embedded $id, and returns a per-item result map.
+func (s *Server) registerTypeSchema(schema map[string]any) map[string]any {
+	embeddedID, ok := schema["$id"].(string)
+	if !ok || strings.TrimSpace(embeddedID) == "" {
+		return map[string]any{
+			"ok":      false,
+			"type_id": nil,
+			"error":   "GTS Type Schema must contain a top-level $id in gts:// form",
+		}
+	}
+	typeID := gtsid.NormalizeID(embeddedID)
+	if err := s.store.RegisterSchema(typeID, schema); err != nil {
+		return map[string]any{
+			"ok":      false,
+			"type_id": typeID,
+			"error":   err.Error(),
+		}
+	}
+	return map[string]any{
+		"ok":      true,
+		"type_id": typeID,
+	}
 }
 
 // Operation Handlers
