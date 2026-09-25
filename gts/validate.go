@@ -266,6 +266,52 @@ func normalizeSchemaForCompile(schema map[string]any) map[string]any {
 	return normalized
 }
 
+func collectExternalSchemaRefs(node any, refs map[string]struct{}) {
+	switch value := node.(type) {
+	case map[string]any:
+		if raw, ok := value["$ref"].(string); ok && !strings.HasPrefix(raw, "#") {
+			target, _, _ := strings.Cut(raw, "#")
+			id := gtsid.NormalizeID(target)
+			if gtsid.IsValid(id) {
+				refs[id] = struct{}{}
+			}
+		}
+		for _, child := range value {
+			collectExternalSchemaRefs(child, refs)
+		}
+	case []any:
+		for _, child := range value {
+			collectExternalSchemaRefs(child, refs)
+		}
+	}
+}
+
+func (s *GtsStore) addSchemaDependencyResources(compiler *jsonschema.Compiler, schema map[string]any, rootID string) {
+	refs := make(map[string]struct{})
+	collectExternalSchemaRefs(schema, refs)
+	loaded := map[string]struct{}{gtsid.NormalizeID(rootID): {}}
+	for len(refs) > 0 {
+		var id string
+		for candidate := range refs {
+			id = candidate
+			delete(refs, candidate)
+			break
+		}
+		if _, exists := loaded[id]; exists {
+			continue
+		}
+		loaded[id] = struct{}{}
+		entity := s.Get(id)
+		if entity == nil || !entity.IsTypeSchema {
+			continue
+		}
+		resource := normalizeSchemaForCompile(entity.Content)
+		if compiler.AddResource(gtsid.ToCompileURI(id), resource) == nil {
+			collectExternalSchemaRefs(entity.Content, refs)
+		}
+	}
+}
+
 type JSONValidationResult struct {
 	OK           bool   `json:"ok"`
 	IsTypeSchema bool   `json:"is_type_schema"`
@@ -426,20 +472,7 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
 		return fmt.Errorf("add schema resource: %v", err)
 	}
-
-	// Pre-load all schemas from the store (matches Python's store dict pre-population).
-	// Store IDs are bare (canonical) GTS ids; register each under its compile-URI form
-	// so the resource URL and embedded $id agree and relative $ref values resolve.
-	for id, entity := range s.Items() {
-		resourceID := gtsid.ToCompileURI(id)
-		if entity.IsTypeSchema && resourceID != schemaID {
-			resource := normalizeSchemaForCompile(entity.Content)
-			if err := compiler.AddResource(resourceID, resource); err != nil {
-				// Ignore errors - gtsURLLoader will handle dynamic resolution
-				continue
-			}
-		}
-	}
+	s.addSchemaDependencyResources(compiler, schema, schemaID)
 
 	// Compile the schema using its compile-URI id
 	compiledSchema, err := compiler.Compile(schemaID)

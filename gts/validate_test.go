@@ -454,6 +454,40 @@ func TestValidateTransientJSON_RejectsMixedDialectSchemaGraph(t *testing.T) {
 	}
 }
 
+func TestValidateWithSchemaLoadsReferencedSchemasOnDemand(t *testing.T) {
+	store := NewGtsStore(nil)
+	baseID := "gts.x.validate.ns.ondemand.v1~"
+	derivedID := "gts.x.validate.ns.ondemand.v1~x.validate.ns.child.v1~"
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://" + baseID,
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"$defs": map[string]any{
+			"named": map[string]any{
+				"type":     "object",
+				"required": []any{"name"},
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string"},
+				},
+			},
+		},
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://" + derivedID,
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://" + baseID + "#/$defs/named"},
+		},
+	})
+
+	derived := store.Get(derivedID)
+	if err := store.validateWithSchema(map[string]any{"name": "ok"}, derived.Content); err != nil {
+		t.Fatalf("expected on-demand reference resolution to pass: %v", err)
+	}
+	if err := store.validateWithSchema(map[string]any{}, derived.Content); err == nil {
+		t.Fatal("expected referenced required constraint to fail")
+	}
+}
+
 func TestECMARegexpEngine(t *testing.T) {
 	matcher, err := ecmaRegexpEngine("^(?!x).*$")
 	if err != nil {
