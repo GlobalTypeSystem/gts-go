@@ -294,7 +294,7 @@ func (s *GtsStore) validateJSONSchema(schema map[string]any) error {
 	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
 		return fmt.Errorf("JSON Schema validation failed: %v", err)
 	}
-	for id, entity := range s.byID {
+	for id, entity := range s.Items() {
 		if resourceID := gtsid.ToCompileURI(id); entity.IsTypeSchema && resourceID != schemaID {
 			_ = compiler.AddResource(resourceID, normalizeSchemaForCompile(entity.Content))
 		}
@@ -340,16 +340,20 @@ func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) 
 		if entity.GtsID == nil {
 			return fail("Unable to detect GTS ID in schema")
 		}
+		s.writerMu.Lock()
 		s.mu.Lock()
 		previous, existed := s.byID[entity.GtsID.ID]
-		s.byID[entity.GtsID.ID] = entity
+		s.byID[entity.GtsID.ID] = cloneJsonEntity(entity)
+		s.mu.Unlock()
 		validation := s.ValidateSchemaChain(entity.GtsID.ID)
+		s.mu.Lock()
 		if existed {
 			s.byID[entity.GtsID.ID] = previous
 		} else {
 			delete(s.byID, entity.GtsID.ID)
 		}
 		s.mu.Unlock()
+		s.writerMu.Unlock()
 		if !validation.OK {
 			if strings.Contains(validation.Error, "has schema") && strings.Contains(validation.Error, "not found") {
 				return fail("Parent GTS Type Schema not found")
@@ -426,7 +430,7 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 	// Pre-load all schemas from the store (matches Python's store dict pre-population).
 	// Store IDs are bare (canonical) GTS ids; register each under its compile-URI form
 	// so the resource URL and embedded $id agree and relative $ref values resolve.
-	for id, entity := range s.byID {
+	for id, entity := range s.Items() {
 		resourceID := gtsid.ToCompileURI(id)
 		if entity.IsTypeSchema && resourceID != schemaID {
 			resource := normalizeSchemaForCompile(entity.Content)

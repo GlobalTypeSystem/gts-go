@@ -1072,6 +1072,23 @@ func TestValidateSchemaChain_CircularRef(t *testing.T) {
 	}
 }
 
+func TestResolveRefs_ExpansionBudget(t *testing.T) {
+	store := NewGtsStore(nil)
+	targetID := "gts.x.budget.ns.target.v1~"
+	mustRegister(t, store, map[string]any{
+		"$id":  "gts://" + targetID,
+		"type": "object",
+	})
+	branches := make([]any, maxSchemaRefExpansions+1)
+	for i := range branches {
+		branches[i] = map[string]any{"$ref": "gts://" + targetID}
+	}
+	_, err := store.resolveRefs(map[string]any{"allOf": branches})
+	if err == nil || !strings.Contains(err.Error(), "expansion exceeds limit") {
+		t.Fatalf("resolveRefs error = %v", err)
+	}
+}
+
 // =============================================================================
 // comparePropertyConstraints — nested object recursion
 // =============================================================================

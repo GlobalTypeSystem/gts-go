@@ -85,6 +85,36 @@ func contentHash(content map[string]any) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func cloneJsonEntity(entity *JsonEntity) *JsonEntity {
+	if entity == nil {
+		return nil
+	}
+	clone := *entity
+	if entity.Content != nil {
+		clone.Content = deepCopyMap(entity.Content)
+	}
+	if entity.GtsID != nil {
+		clone.GtsID, _ = gtsid.New(entity.GtsID.ID)
+	}
+	clone.GtsRefs = make([]*GtsReference, len(entity.GtsRefs))
+	for i, ref := range entity.GtsRefs {
+		if ref != nil {
+			copied := *ref
+			clone.GtsRefs[i] = &copied
+		}
+	}
+	if entity.File != nil {
+		copied := *entity.File
+		copied.Content = deepCopyValue(entity.File.Content)
+		clone.File = &copied
+	}
+	if entity.ListSequence != nil {
+		sequence := *entity.ListSequence
+		clone.ListSequence = &sequence
+	}
+	return &clone
+}
+
 // RegistryConfig configures the GtsStore behavior
 type RegistryConfig struct {
 	// ValidateGtsReferences enables validation of GTS references on entity registration
@@ -109,16 +139,15 @@ func DefaultRegistryConfig() *RegistryConfig {
 
 // GtsStore manages a collection of JSON entities and schemas with optional GTS reference validation.
 //
-// mu serializes writers (Register, RegisterSchema, Unregister, RegisterWithValidation)
-// so that snapshot/register/validate/rollback flows cannot interleave with other
-// writers for the same id. Readers (Get, Items, List, Count, validators) intentionally
-// do not acquire mu — validators are invoked via RegisterWithValidation while mu is
-// already held by the same goroutine, so taking it again would deadlock.
+// writerMu serializes mutations and registration transactions. mu protects byID;
+// validation callbacks run without mu while writerMu prevents another writer from
+// interleaving with snapshot/register/validate/rollback.
 type GtsStore struct {
-	mu     sync.Mutex
-	byID   map[string]*JsonEntity
-	reader GtsReader
-	config *RegistryConfig
+	writerMu sync.Mutex
+	mu       sync.RWMutex
+	byID     map[string]*JsonEntity
+	reader   GtsReader
+	config   *RegistryConfig
 }
 
 // NewGtsStore creates a new GtsStore, optionally populating it from a reader
@@ -132,10 +161,11 @@ func NewGtsStoreWithConfig(reader GtsReader, config *RegistryConfig) *GtsStore {
 		config = DefaultRegistryConfig()
 	}
 
+	configCopy := *config
 	store := &GtsStore{
 		byID:   make(map[string]*JsonEntity),
 		reader: reader,
-		config: config,
+		config: &configCopy,
 	}
 
 	// Populate from reader if provided
@@ -167,20 +197,23 @@ func (s *GtsStore) populateFromReader() {
 				}
 				continue
 			}
-			s.byID[key] = entity
+			s.byID[key] = cloneJsonEntity(entity)
 		}
 	}
 }
 
 // Register adds a JsonEntity to the store with optional GTS reference validation.
 func (s *GtsStore) Register(entity *JsonEntity) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
 	return s.registerLocked(entity)
 }
 
-// registerLocked is the lock-free body of Register. Callers must hold s.mu.
+// registerLocked is the writer-serialized body of Register. Callers must hold writerMu.
 func (s *GtsStore) registerLocked(entity *JsonEntity) error {
+	if entity == nil {
+		return fmt.Errorf("entity must not be nil")
+	}
 	key := entity.EffectiveID()
 	if key == "" {
 		return fmt.Errorf("entity must have a gts_id or a non-empty id field")
@@ -188,9 +221,12 @@ func (s *GtsStore) registerLocked(entity *JsonEntity) error {
 	if err := validateJSONContent(entity.Content); err != nil {
 		return fmt.Errorf("entity content must be valid JSON: %w", err)
 	}
+	entity = cloneJsonEntity(entity)
 
-	if previous, ok := s.byID[key]; ok && !s.config.AllowEntityUpdates &&
-		contentHash(previous.Content) != contentHash(entity.Content) {
+	s.mu.RLock()
+	previous, exists := s.byID[key]
+	s.mu.RUnlock()
+	if exists && !s.config.AllowEntityUpdates && contentHash(previous.Content) != contentHash(entity.Content) {
 		return &EntityConflictError{EntityID: key}
 	}
 
@@ -200,36 +236,42 @@ func (s *GtsStore) registerLocked(entity *JsonEntity) error {
 		}
 	}
 
+	s.mu.Lock()
 	s.byID[key] = entity
+	s.mu.Unlock()
 	if s.config.Verbose {
 		log.Printf("Registered entity: %s (type-schema: %v, refs: %d)", key, entity.IsTypeSchema, len(entity.GtsRefs))
 	}
 	return nil
 }
 
-// RegisterWithValidation atomically registers entity, runs validate, and rolls back on
-// failure. The entire snapshot/register/validate/rollback critical section runs under
-// s.mu, so concurrent writers for the same id cannot interleave between the snapshot
-// and the rollback. validate is invoked while s.mu is held; it must not call back into
-// the store's writer methods (Register, Unregister, RegisterSchema, RegisterWithValidation)
-// or it will deadlock. Validators that only read the store are safe.
+// RegisterWithValidation registers entity, runs validate, and rolls back on failure.
+// writerMu prevents concurrent writers from interleaving with the transaction while
+// validation performs synchronized reads through the regular store API. The callback
+// must not call writer methods.
 func (s *GtsStore) RegisterWithValidation(entity *JsonEntity, validate func(id string) error) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if entity == nil {
+		return fmt.Errorf("entity must not be nil")
+	}
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
 
 	key := entity.EffectiveID()
+	s.mu.RLock()
 	previous, hadPrevious := s.byID[key]
-
+	s.mu.RUnlock()
 	if err := s.registerLocked(entity); err != nil {
 		return err
 	}
 
 	if err := validate(key); err != nil {
+		s.mu.Lock()
 		if hadPrevious {
 			s.byID[key] = previous
 		} else {
 			delete(s.byID, key)
 		}
+		s.mu.Unlock()
 		return err
 	}
 	return nil
@@ -269,10 +311,12 @@ func (s *GtsStore) RegisterSchema(typeID string, schema map[string]any) error {
 
 	entity := &JsonEntity{
 		GtsID:        gtsID,
-		Content:      schema,
+		Content:      deepCopyMap(schema),
 		IsTypeSchema: true,
 	}
 
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if previous, ok := s.byID[typeID]; ok && !s.config.AllowEntityUpdates &&
@@ -286,21 +330,35 @@ func (s *GtsStore) RegisterSchema(typeID string, schema map[string]any) error {
 // Get retrieves a JsonEntity by its ID
 // If not found in cache, attempts to fetch from reader
 func (s *GtsStore) Get(entityID string) *JsonEntity {
-	// Check cache first
-	if entity, ok := s.byID[entityID]; ok {
-		return entity
+	s.mu.RLock()
+	entity := s.byID[entityID]
+	s.mu.RUnlock()
+	if entity != nil {
+		return cloneJsonEntity(entity)
 	}
 
-	// Try to fetch from reader
-	if s.reader != nil {
-		entity := s.reader.ReadByID(entityID)
-		if entity != nil {
-			s.byID[entityID] = entity
-			return entity
-		}
+	if s.reader == nil {
+		return nil
 	}
 
-	return nil
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
+	s.mu.RLock()
+	entity = s.byID[entityID]
+	s.mu.RUnlock()
+	if entity != nil {
+		return cloneJsonEntity(entity)
+	}
+
+	entity = s.reader.ReadByID(entityID)
+	if entity == nil {
+		return nil
+	}
+	stored := cloneJsonEntity(entity)
+	s.mu.Lock()
+	s.byID[entityID] = stored
+	s.mu.Unlock()
+	return cloneJsonEntity(stored)
 }
 
 // GetSchemaContent retrieves schema content as a map (legacy method)
@@ -317,19 +375,29 @@ func (s *GtsStore) GetSchemaContent(typeID string) (map[string]any, error) {
 
 // Items returns all entity ID and entity pairs
 func (s *GtsStore) Items() map[string]*JsonEntity {
-	return s.byID
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make(map[string]*JsonEntity, len(s.byID))
+	for id, entity := range s.byID {
+		items[id] = cloneJsonEntity(entity)
+	}
+	return items
 }
 
 // Unregister removes an entity from the store by its effective ID.
 // Used to roll back registrations that fail post-register validation.
 func (s *GtsStore) Unregister(entityID string) {
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	delete(s.byID, entityID)
+	s.mu.Unlock()
 }
 
 // Count returns the number of entities in the store
 func (s *GtsStore) Count() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return len(s.byID)
 }
 
@@ -349,6 +417,8 @@ type ListResult struct {
 
 // List returns a list of entities up to the specified limit
 func (s *GtsStore) List(limit int) *ListResult {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	total := len(s.byID)
 	entities := []EntityInfo{}
 

@@ -1020,6 +1020,8 @@ func jsonEqual(a, b any) bool {
 
 // ── Ref resolution ────────────────────────────────────────────────────────────
 
+const maxSchemaRefExpansions = 10_000
+
 // resolveSchemaRefsChecked resolves $ref references in a named schema, detecting cycles.
 // Content is deep-copied and $$ref keys are normalized to $ref before resolution
 // (the $$ prefix is the httprunner convention for escaping $ in JSON keys).
@@ -1045,7 +1047,12 @@ func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, er
 func (s *GtsStore) resolveRefs(schema map[string]any) (map[string]any, error) {
 	visited := make(map[string]bool)
 	cycleFound := false
-	resolved := s.resolveRefsInner(schema, visited, &cycleFound)
+	expansions := 0
+	budgetExceeded := false
+	resolved := s.resolveRefsInner(schema, visited, &cycleFound, &expansions, &budgetExceeded)
+	if budgetExceeded {
+		return nil, fmt.Errorf("schema reference expansion exceeds limit of %d", maxSchemaRefExpansions)
+	}
 	if cycleFound {
 		return nil, fmt.Errorf("circular $ref detected")
 	}
@@ -1080,7 +1087,7 @@ func findUnresolvedRef(schema any) string {
 	return ""
 }
 
-func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFound *bool) any {
+func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFound *bool, expansions *int, budgetExceeded *bool) any {
 	switch v := schema.(type) {
 	case map[string]any:
 		// Handle $ref
@@ -1088,7 +1095,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			if strings.HasPrefix(refVal, LocalRefPrefix) { // local refs kept as-is
 				result := make(map[string]any)
 				for k, val := range v {
-					result[k] = s.resolveRefsInner(val, visited, cycleFound)
+					result[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 				}
 				return result
 			}
@@ -1099,7 +1106,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				result := make(map[string]any)
 				for k, val := range v {
 					if k != "$ref" {
-						result[k] = s.resolveRefsInner(val, visited, cycleFound)
+						result[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 					}
 				}
 				if len(result) == 0 {
@@ -1110,8 +1117,13 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 
 			entity := s.Get(canonical)
 			if entity != nil && entity.IsTypeSchema {
+				*expansions++
+				if *expansions > maxSchemaRefExpansions {
+					*budgetExceeded = true
+					return schema
+				}
 				visited[canonical] = true
-				resolved := s.resolveRefsInner(entity.Content, visited, cycleFound)
+				resolved := s.resolveRefsInner(entity.Content, visited, cycleFound, expansions, budgetExceeded)
 				delete(visited, canonical)
 
 				if resolvedMap, ok := resolved.(map[string]any); ok {
@@ -1133,7 +1145,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 					}
 					for k, val := range v {
 						if k != "$ref" {
-							merged[k] = s.resolveRefsInner(val, visited, cycleFound)
+							merged[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 						}
 					}
 					return merged
@@ -1146,7 +1158,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				if k == "$ref" {
 					result[k] = val
 				} else {
-					result[k] = s.resolveRefsInner(val, visited, cycleFound)
+					result[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 				}
 			}
 			return result
@@ -1167,7 +1179,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				// along the chain) are allowed — re-merging the same base is
 				// idempotent. True cycles are caught by DFS-path detection in
 				// the $ref branch below.
-				resolved := s.resolveRefsInner(item, visited, cycleFound)
+				resolved := s.resolveRefsInner(item, visited, cycleFound, expansions, budgetExceeded)
 				if resolvedMap, ok := resolved.(map[string]any); ok {
 					if _, stillHasRef := resolvedMap["$ref"]; stillHasRef {
 						resolvedAllOf = append(resolvedAllOf, resolved)
@@ -1223,7 +1235,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 						// $ref unresolved and trip findUnresolvedRef, even though
 						// OP#12 ignores x-gts-* keys. (OP#13 still resolves trait
 						// schemas separately from the raw content.)
-						merged[k] = s.resolveRefsInner(val, visited, cycleFound)
+						merged[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 					}
 				}
 				for k, val := range mergedOther { // parent keys take precedence
@@ -1264,14 +1276,14 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 
 		result := make(map[string]any)
 		for k, val := range v {
-			result[k] = s.resolveRefsInner(val, visited, cycleFound)
+			result[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 		}
 		return result
 
 	case []any:
 		result := make([]any, len(v))
 		for i, item := range v {
-			result[i] = s.resolveRefsInner(item, visited, cycleFound)
+			result[i] = s.resolveRefsInner(item, visited, cycleFound, expansions, budgetExceeded)
 		}
 		return result
 

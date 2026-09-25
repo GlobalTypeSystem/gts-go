@@ -378,7 +378,7 @@ func validateWithGtsIDTolerance(instance, schema map[string]any, store *GtsStore
 	compiler.UseLoader(&gtsURLLoader{store: store})
 
 	// Pre-load all schemas from the store
-	for id, entity := range store.byID {
+	for id, entity := range store.Items() {
 		if entity.IsTypeSchema {
 			_ = compiler.AddResource(id, entity.Content)
 		}

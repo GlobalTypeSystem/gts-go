@@ -58,7 +58,7 @@ func (s *GtsStore) Query(expr string, limit int) *QueryResult {
 	}
 
 	// Filter entities
-	for _, entity := range s.byID {
+	for _, entity := range s.Items() {
 		if len(result.Results) >= limit {
 			break
 		}

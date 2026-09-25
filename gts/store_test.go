@@ -6,7 +6,9 @@ Released under Apache License 2.0
 package gts
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -64,6 +66,58 @@ func TestGtsStore_RegisterAndGet(t *testing.T) {
 	}
 	if got.Content["type"] != "object" {
 		t.Errorf("unexpected content: %v", got.Content)
+	}
+}
+
+func TestGtsStore_DefensiveCopies(t *testing.T) {
+	store := NewGtsStore(nil)
+	typeID := "gts.x.test.ns.copy.v1~"
+	schema := canonicalTestSchema(typeID, map[string]any{"properties": map[string]any{"name": map[string]any{"type": "string"}}})
+	entity := NewJsonEntity(schema, DefaultGtsConfig())
+	if err := store.Register(entity); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	schema["type"] = "array"
+	entity.Content["title"] = "mutated"
+	first := store.Get(typeID)
+	if first.Content["type"] == "array" || first.Content["title"] == "mutated" {
+		t.Fatal("registration retained caller-owned content")
+	}
+	first.Content["type"] = "number"
+	items := store.Items()
+	items[typeID].Content["type"] = "boolean"
+	delete(items, typeID)
+	second := store.Get(typeID)
+	if second == nil || second.Content["type"] == "number" || second.Content["type"] == "boolean" {
+		t.Fatal("read API exposed mutable store state")
+	}
+}
+
+func TestGtsStore_ConcurrentAccess(t *testing.T) {
+	store := NewGtsStore(nil)
+	var wg sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		worker := worker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				id := fmt.Sprintf("gts.x.test.ns.concurrent_%d_%d.v1~", worker, i)
+				if err := store.RegisterSchema(id, canonicalTestSchema(id, map[string]any{"type": "object"})); err != nil {
+					t.Errorf("RegisterSchema: %v", err)
+					return
+				}
+				_ = store.Get(id)
+				_ = store.Items()
+				_ = store.List(10)
+				_ = store.Count()
+			}
+		}()
+	}
+	wg.Wait()
+	if store.Count() != 800 {
+		t.Fatalf("Count = %d, want 800", store.Count())
 	}
 }
 
