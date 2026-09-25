@@ -320,9 +320,23 @@ func validateTraitsAgainstSchema(traitSchema map[string]any, effectiveTraits map
 
 	// Remove x-gts-ref and x-gts-traits from schema before validation
 	cleanSchema := removeXGtsFields(traitSchema)
-	if dialect, ok := hostSchema["$schema"].(string); ok {
-		cleanSchema["$schema"] = dialect
+	hostDialect, err := schemaDialect(hostSchema)
+	if err != nil {
+		errors = append(errors, fmt.Sprintf("invalid host schema dialect: %v", err))
+		return errors
 	}
+	if _, declared := cleanSchema["$schema"]; declared {
+		traitDialect, err := schemaDialect(cleanSchema)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("invalid trait schema dialect: %v", err))
+			return errors
+		}
+		if traitDialect != hostDialect {
+			errors = append(errors, fmt.Sprintf("trait schema dialect %s differs from host dialect %s", traitDialect, hostDialect))
+			return errors
+		}
+	}
+	cleanSchema["$schema"] = canonicalSchemaDialectURI(hostDialect)
 
 	schemaID := "gts://internal/trait-schema"
 	if err := compiler.AddResource(schemaID, cleanSchema); err != nil {

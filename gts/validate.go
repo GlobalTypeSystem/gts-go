@@ -369,6 +369,9 @@ func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) 
 	if !schema.IsTypeSchema {
 		return fail("explicit type must be GTS Type schema")
 	}
+	if validation := s.ValidateSchemaChain(entity.TypeID); !validation.OK {
+		return fail(validation.Error)
+	}
 	schemaContent := normalizeSchemaForCompile(schema.Content)
 	if _, ok := schemaContent["$id"]; !ok {
 		schemaContent["$id"] = entity.TypeID

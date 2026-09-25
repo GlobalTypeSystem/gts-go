@@ -58,6 +58,17 @@ func schemaDialect(schema map[string]any) (string, error) {
 	}
 }
 
+func canonicalSchemaDialectURI(dialect string) string {
+	switch dialect {
+	case "2019-09":
+		return "https://json-schema.org/draft/2019-09/schema"
+	case "2020-12":
+		return "https://json-schema.org/draft/2020-12/schema"
+	default:
+		return "http://json-schema.org/draft-07/schema#"
+	}
+}
+
 func resolveLocalSchemaRef(root any, ref string) any {
 	if ref == "#" {
 		return root

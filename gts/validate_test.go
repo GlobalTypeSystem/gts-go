@@ -430,6 +430,30 @@ func TestValidateInstance_NoSchemaID(t *testing.T) {
 	}
 }
 
+func TestValidateTransientJSON_RejectsMixedDialectSchemaGraph(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.validate.ns.foreign.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.validate.ns.host.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.validate.ns.foreign.v1~"},
+		},
+	})
+
+	result := store.ValidateTransientJSON(map[string]any{
+		"id":   "gts.x.validate.ns.host.v1~x.validate.ns.item.v1",
+		"type": "gts.x.validate.ns.host.v1~",
+	}, "")
+	if result.OK || result.Error == "" {
+		t.Fatalf("expected mixed-dialect schema graph failure, got: %+v", result)
+	}
+}
+
 func TestECMARegexpEngine(t *testing.T) {
 	matcher, err := ecmaRegexpEngine("^(?!x).*$")
 	if err != nil {

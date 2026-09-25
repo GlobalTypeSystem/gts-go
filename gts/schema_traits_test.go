@@ -5,7 +5,10 @@ Released under Apache License 2.0
 
 package gts
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // =============================================================================
 // walkSchema / normalizeDollarRefs / removeXGtsFields
@@ -622,6 +625,25 @@ func TestValidateSchemaTraits_UsesHostDialect(t *testing.T) {
 	result := store.ValidateSchemaTraits("gts.x.traits.ns.draft7_tuple.v1~")
 	if !result.OK {
 		t.Fatalf("expected Draft-07 tuple trait schema to validate, got: %s", result.Error)
+	}
+}
+
+func TestValidateSchemaTraits_RejectsConflictingTraitResourceDialect(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegisterTraits(t, store, map[string]any{
+		"$id":     "gts://gts.x.traits.ns.conflicting_resource.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+		"x-gts-traits-schema": map[string]any{
+			"$id":     "https://example.com/legacy-traits",
+			"$schema": "http://json-schema.org/draft-07/schema#",
+			"type":    "object",
+		},
+	})
+
+	result := store.ValidateSchemaTraits("gts.x.traits.ns.conflicting_resource.v1~")
+	if result.OK || !strings.Contains(result.Error, "differs from host dialect") {
+		t.Fatalf("expected conflicting trait resource dialect failure, got: %+v", result)
 	}
 }
 
