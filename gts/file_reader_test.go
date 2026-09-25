@@ -52,6 +52,35 @@ func TestGtsFileReader_SingleFile(t *testing.T) {
 	}
 }
 
+// TestGtsFileReader_YAMLFile verifies that .yaml/.yml files are parsed as YAML
+// and yield the same JSON-compatible types as JSON input.
+func TestGtsFileReader_YAMLFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	testFile := filepath.Join(tmpDir, "test.yaml")
+	yamlDoc := "gtsId: gts.vendor.package.namespace.type.v0~a.b.c.d.v1\nname: Test Entity\ncount: 3\n"
+	if err := os.WriteFile(testFile, []byte(yamlDoc), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	reader := NewGtsFileReaderFromPath(testFile, nil)
+	entity := reader.Next()
+	if entity == nil {
+		t.Fatal("Expected entity from YAML file, got nil")
+	}
+	if entity.GtsID == nil || entity.GtsID.ID != "gts.vendor.package.namespace.type.v0~a.b.c.d.v1" {
+		t.Errorf("Expected GtsID from YAML, got %v", entity.GtsID)
+	}
+	// YAML numbers must decode to float64 (JSON semantics), not int, so the
+	// rest of the library's map[string]any assumptions hold.
+	if _, ok := entity.Content["count"].(float64); !ok {
+		t.Errorf("Expected YAML number to decode as float64, got %T", entity.Content["count"])
+	}
+	if reader.Next() != nil {
+		t.Error("Expected no more entities")
+	}
+}
+
 // TestGtsFileReader_ArrayOfEntities tests reading a JSON array
 func TestGtsFileReader_ArrayOfEntities(t *testing.T) {
 	tmpDir := t.TempDir()

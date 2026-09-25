@@ -35,7 +35,7 @@ Other GTS spec [Reference Implementation](https://github.com/globaltypesystem/gt
 - [x] **CLI** - command-line interface for all GTS operations
 - [x] **Web server** - a non-production web-server with REST API for the operations processing and testing
 - [x] **x-gts-ref support** - to support special GTS entity reference annotation in schemas
-- [ ] **YAML support** - to support YAML files (*.yml, *.yaml) as input files
+- [x] **YAML support** - to support YAML files (*.yml, *.yaml) as input files
 - [ ] **TypeSpec support** - add [typespec.io](https://typespec.io/) files (*.tsp) support
 - [ ] **UUID for instances** - to support UUID as ID in JSON instances
 

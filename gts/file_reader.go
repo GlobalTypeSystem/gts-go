@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"sigs.k8s.io/yaml"
 )
 
 var (
@@ -76,6 +78,8 @@ func (r *GtsFileReader) collectFiles() {
 		".json":  true,
 		".jsonc": true,
 		".gts":   true,
+		".yaml":  true,
+		".yml":   true,
 	}
 
 	seen := make(map[string]bool)
@@ -147,7 +151,11 @@ func (r *GtsFileReader) collectFiles() {
 	r.files = collected
 }
 
-// loadJSONFile loads JSON content from a file
+// loadJSONFile loads entity content from a file. JSON, JSONC and .gts files are
+// parsed as JSON; .yaml/.yml files are parsed as YAML. YAML is decoded via
+// sigs.k8s.io/yaml, which routes through encoding/json so YAML documents yield
+// the same map[string]any / float64 / []any shapes as the JSON path — the rest
+// of the library relies on those concrete types.
 func (r *GtsFileReader) loadJSONFile(filePath string) (any, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -155,8 +163,15 @@ func (r *GtsFileReader) loadJSONFile(filePath string) (any, error) {
 	}
 
 	var content any
-	if err := json.Unmarshal(data, &content); err != nil {
-		return nil, err
+	switch strings.ToLower(filepath.Ext(filePath)) {
+	case ".yaml", ".yml":
+		if err := yaml.Unmarshal(data, &content); err != nil {
+			return nil, err
+		}
+	default:
+		if err := json.Unmarshal(data, &content); err != nil {
+			return nil, err
+		}
 	}
 
 	return content, nil
