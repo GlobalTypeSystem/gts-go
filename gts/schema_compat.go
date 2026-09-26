@@ -144,13 +144,15 @@ func (s *GtsStore) detectChainDialectMismatch(schemaID string, gid *gtsid.ID) er
 	if err != nil {
 		return err
 	}
-	current := s.Get(schemaID)
-	if current != nil {
-		if err := detectLocalRefDialectMismatch(current.Content, rootID, rootDialect); err != nil {
-			return err
-		}
-	}
 
+	// Seed the reference walk with every type in the derivation chain, not just
+	// the leaf. A leaf-only walk would miss a cross-dialect $ref that lives on an
+	// ancestor the leaf does not itself reference; a type is only as valid as the
+	// types it builds on, so the whole chain plus its transitive gts:// $ref
+	// closure must share the root's dialect (spec §11.0/§12, matching the Rust
+	// reference which validates each related type in the closure).
+	visited := make(map[string]bool)
+	queue := make([]string, 0, len(gid.Segments))
 	for i := range gid.Segments {
 		chainID := buildIDFromSegments(gid.Segments[:i+1])
 		entity := s.Get(chainID)
@@ -164,10 +166,9 @@ func (s *GtsStore) detectChainDialectMismatch(schemaID string, gid *gtsid.ID) er
 		if chainDialect != rootDialect {
 			return fmt.Errorf("GTS derivation chain mixes JSON Schema dialects: root type '%s' uses %s but '%s' uses %s; every type in a chained $id hierarchy must use the root type's dialect", rootID, rootDialect, chainID, chainDialect)
 		}
+		queue = append(queue, chainID)
 	}
 
-	visited := make(map[string]bool)
-	queue := []string{schemaID}
 	for len(queue) > 0 {
 		currentID := queue[0]
 		queue = queue[1:]
@@ -178,6 +179,9 @@ func (s *GtsStore) detectChainDialectMismatch(schemaID string, gid *gtsid.ID) er
 		entity := s.Get(currentID)
 		if entity == nil {
 			continue
+		}
+		if err := detectLocalRefDialectMismatch(entity.Content, rootID, rootDialect); err != nil {
+			return err
 		}
 		for _, ref := range entity.GtsRefs {
 			if ref.ID == currentID || !strings.Contains(ref.SourcePath, "$ref") || strings.Contains(ref.SourcePath, "x-gts-ref") {

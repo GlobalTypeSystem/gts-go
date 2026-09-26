@@ -877,6 +877,40 @@ func TestValidateSchemaChain_TransitiveRefDialectMismatch(t *testing.T) {
 	}
 }
 
+func TestValidateSchemaChain_AncestorRefDialectMismatch(t *testing.T) {
+	// Issue C: the cross-dialect $ref lives on an ancestor (the chain root), and
+	// the descendant derives by chained-id re-declaration without referencing the
+	// ancestor or the foreign target. A leaf-only reference walk would accept the
+	// descendant; validating the whole chain closure must reject it.
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.anc.foreign.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.anc.base.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type":    "object",
+		"properties": map[string]any{
+			"ext": map[string]any{"$ref": "gts://gts.x.chain.anc.foreign.v1~"},
+		},
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.anc.base.v1~x.chain.anc.child.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type":    "object",
+		"properties": map[string]any{
+			"label": map[string]any{"type": "string"},
+		},
+	})
+
+	result := store.ValidateSchemaChain("gts.x.chain.anc.base.v1~x.chain.anc.child.v1~")
+	if result.OK || !strings.Contains(result.Error, "gts.x.chain.anc.foreign.v1~") {
+		t.Fatalf("expected ancestor ref dialect failure, got: %+v", result)
+	}
+}
+
 func TestValidateSchemaChain_TwoLevel_TypeChange(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{
