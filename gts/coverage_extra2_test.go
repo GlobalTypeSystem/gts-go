@@ -442,8 +442,7 @@ func TestInvalidWildcardError(t *testing.T) {
 // ── validate.go — newXGtsRefVocabulary ──────────────────────────────────────
 
 func TestNewXGtsRefVocabulary(t *testing.T) {
-	store := NewGtsStore(nil)
-	vocab := newXGtsRefVocabulary(store)
+	vocab := newXGtsRefVocabulary("")
 	if vocab == nil {
 		t.Fatal("expected vocabulary")
 	}
@@ -533,8 +532,7 @@ func TestGtsStore_ValidateInstanceWithXGtsRef_SchemaNotTypeSchema(t *testing.T) 
 // ── validate.go newXGtsRefVocabulary Compile coverage ───────────────────────
 
 func TestNewXGtsRefVocabulary_Compile(t *testing.T) {
-	store := NewGtsStore(nil)
-	vocab := newXGtsRefVocabulary(store)
+	vocab := newXGtsRefVocabulary("")
 
 	// Compile with x-gts-ref present
 	ext, err := vocab.Compile(nil, map[string]any{"x-gts-ref": "gts.x.test.*"})
