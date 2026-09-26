@@ -430,7 +430,9 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 				Reason:     fmt.Sprintf("Value '%s' does not match pattern '%s'", value, pattern),
 			}
 		}
-	} else if !strings.HasPrefix(value, pattern) {
+	} else if !strings.HasPrefix(value, pattern) || !matchesAtSegmentBoundary(value, pattern) {
+		// Prefix matching alone ignores segment boundaries: an exact constraint such as
+		// "gts.a.b.c.d.v1~x.y.z.w.v1" would otherwise also accept "…w.v12" or "…w.v1.5".
 		return &XGtsRefValidationError{
 			FieldPath:  fieldPath,
 			Value:      value,
@@ -456,4 +458,15 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 	}
 
 	return nil
+}
+
+// matchesAtSegmentBoundary reports whether value, already known to be
+// prefixed by an exact (non-wildcard) pattern, matches it on a segment
+// boundary. Type patterns (ending with '~') admit derived identifiers; any
+// other (exact) pattern requires a full match or a '~' boundary immediately
+// after the pattern, so "…w.v1" does not spuriously accept "…w.v12"/"…w.v1.5".
+func matchesAtSegmentBoundary(value, pattern string) bool {
+	return len(value) == len(pattern) ||
+		strings.HasSuffix(pattern, gtsid.TypeMarker) ||
+		value[len(pattern)] == gtsid.TypeMarker[0]
 }
