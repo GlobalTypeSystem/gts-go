@@ -15,7 +15,7 @@ import (
 // XGtsRefValidationError represents a validation error for x-gts-ref constraints
 type XGtsRefValidationError struct {
 	FieldPath  string
-	Value      interface{}
+	Value      any
 	RefPattern string
 	Reason     string
 }
@@ -69,7 +69,7 @@ func (v *XGtsRefValidator) ReferencedWildcardPatterns() []string {
 }
 
 // ValidateInstance validates an instance against x-gts-ref constraints in schema
-func (v *XGtsRefValidator) ValidateInstance(instance map[string]interface{}, schema map[string]interface{}, instancePath string, selectedTypeIDs ...string) []*XGtsRefValidationError {
+func (v *XGtsRefValidator) ValidateInstance(instance map[string]any, schema map[string]any, instancePath string, selectedTypeIDs ...string) []*XGtsRefValidationError {
 	if err := validateJSONContent(instance); err != nil {
 		return invalidJSONRefErrors(instancePath, err)
 	}
@@ -88,7 +88,7 @@ func (v *XGtsRefValidator) ValidateInstance(instance map[string]interface{}, sch
 }
 
 // ValidateSchema validates x-gts-ref fields in a schema definition
-func (v *XGtsRefValidator) ValidateSchema(schema map[string]interface{}, schemaPath string) []*XGtsRefValidationError {
+func (v *XGtsRefValidator) ValidateSchema(schema map[string]any, schemaPath string) []*XGtsRefValidationError {
 	if err := validateJSONContent(schema); err != nil {
 		return invalidJSONRefErrors(schemaPath, err)
 	}
@@ -99,7 +99,7 @@ func (v *XGtsRefValidator) ValidateSchema(schema map[string]interface{}, schemaP
 }
 
 // visitInstance recursively visits instance nodes and validates x-gts-ref constraints
-func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string]interface{}, path, selectedTypeID string, errors *[]*XGtsRefValidationError) {
+func (v *XGtsRefValidator) visitInstance(instance any, schema map[string]any, path, selectedTypeID string, errors *[]*XGtsRefValidationError) {
 	if schema == nil {
 		return
 	}
@@ -115,15 +115,15 @@ func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string
 
 	// Recurse into object properties
 	if schemaType, ok := schema["type"].(string); ok && schemaType == "object" {
-		if properties, hasProps := schema["properties"].(map[string]interface{}); hasProps {
-			if instanceMap, ok := instance.(map[string]interface{}); ok {
+		if properties, hasProps := schema["properties"].(map[string]any); hasProps {
+			if instanceMap, ok := instance.(map[string]any); ok {
 				for propName, propSchema := range properties {
 					if propValue, hasProp := instanceMap[propName]; hasProp {
 						propPath := propName
 						if path != "" {
 							propPath = path + "." + propName
 						}
-						if propSchemaMap, ok := propSchema.(map[string]interface{}); ok {
+						if propSchemaMap, ok := propSchema.(map[string]any); ok {
 							v.visitInstance(propValue, propSchemaMap, propPath, selectedTypeID, errors)
 						}
 					}
@@ -134,18 +134,18 @@ func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string
 
 	// Recurse into array items
 	if schemaType, ok := schema["type"].(string); ok && schemaType == "array" {
-		if instanceArray, ok := instance.([]interface{}); ok {
-			if prefixItems, ok := schema["prefixItems"].([]interface{}); ok {
+		if instanceArray, ok := instance.([]any); ok {
+			if prefixItems, ok := schema["prefixItems"].([]any); ok {
 				for idx, itemSchema := range prefixItems {
 					if idx >= len(instanceArray) {
 						break
 					}
-					if schemaMap, ok := itemSchema.(map[string]interface{}); ok {
+					if schemaMap, ok := itemSchema.(map[string]any); ok {
 						itemPath := fmt.Sprintf("%s[%d]", path, idx)
 						v.visitInstance(instanceArray[idx], schemaMap, itemPath, selectedTypeID, errors)
 					}
 				}
-				if items, ok := schema["items"].(map[string]interface{}); ok {
+				if items, ok := schema["items"].(map[string]any); ok {
 					for idx := len(prefixItems); idx < len(instanceArray); idx++ {
 						itemPath := fmt.Sprintf("%s[%d]", path, idx)
 						v.visitInstance(instanceArray[idx], items, itemPath, selectedTypeID, errors)
@@ -154,22 +154,22 @@ func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string
 				return
 			}
 			switch items := schema["items"].(type) {
-			case map[string]interface{}:
+			case map[string]any:
 				for idx, item := range instanceArray {
 					itemPath := fmt.Sprintf("%s[%d]", path, idx)
 					v.visitInstance(item, items, itemPath, selectedTypeID, errors)
 				}
-			case []interface{}:
+			case []any:
 				for idx, itemSchema := range items {
 					if idx >= len(instanceArray) {
 						break
 					}
-					if schemaMap, ok := itemSchema.(map[string]interface{}); ok {
+					if schemaMap, ok := itemSchema.(map[string]any); ok {
 						itemPath := fmt.Sprintf("%s[%d]", path, idx)
 						v.visitInstance(instanceArray[idx], schemaMap, itemPath, selectedTypeID, errors)
 					}
 				}
-				if additionalItems, ok := schema["additionalItems"].(map[string]interface{}); ok {
+				if additionalItems, ok := schema["additionalItems"].(map[string]any); ok {
 					for idx := len(items); idx < len(instanceArray); idx++ {
 						itemPath := fmt.Sprintf("%s[%d]", path, idx)
 						v.visitInstance(instanceArray[idx], additionalItems, itemPath, selectedTypeID, errors)
@@ -180,7 +180,7 @@ func (v *XGtsRefValidator) visitInstance(instance interface{}, schema map[string
 	}
 }
 
-func visitSchemaChildren(schema map[string]interface{}, path string, visit func(map[string]interface{}, string)) {
+func visitSchemaChildren(schema map[string]any, path string, visit func(map[string]any, string)) {
 	for key, value := range schema {
 		nestedPath := key
 		if path != "" {
@@ -188,34 +188,34 @@ func visitSchemaChildren(schema map[string]interface{}, path string, visit func(
 		}
 		switch key {
 		case "properties", "patternProperties", "definitions", "$defs", "dependentSchemas", "dependencies":
-			if named, ok := value.(map[string]interface{}); ok {
+			if named, ok := value.(map[string]any); ok {
 				for name, child := range named {
-					if childSchema, ok := child.(map[string]interface{}); ok {
+					if childSchema, ok := child.(map[string]any); ok {
 						visit(childSchema, nestedPath+"/"+name)
 					}
 				}
 			}
 		case "allOf", "anyOf", "oneOf", "prefixItems":
-			if children, ok := value.([]interface{}); ok {
+			if children, ok := value.([]any); ok {
 				for index, child := range children {
-					if childSchema, ok := child.(map[string]interface{}); ok {
+					if childSchema, ok := child.(map[string]any); ok {
 						visit(childSchema, fmt.Sprintf("%s[%d]", nestedPath, index))
 					}
 				}
 			}
 		case "items":
 			switch children := value.(type) {
-			case map[string]interface{}:
+			case map[string]any:
 				visit(children, nestedPath)
-			case []interface{}:
+			case []any:
 				for index, child := range children {
-					if childSchema, ok := child.(map[string]interface{}); ok {
+					if childSchema, ok := child.(map[string]any); ok {
 						visit(childSchema, fmt.Sprintf("%s[%d]", nestedPath, index))
 					}
 				}
 			}
 		case "not", "if", "then", "else", "contains", "additionalProperties", "additionalItems", "propertyNames", "unevaluatedProperties", "unevaluatedItems", KeyXGtsTraitsSchema:
-			if childSchema, ok := value.(map[string]interface{}); ok {
+			if childSchema, ok := value.(map[string]any); ok {
 				visit(childSchema, nestedPath)
 			}
 		}
@@ -223,7 +223,7 @@ func visitSchemaChildren(schema map[string]interface{}, path string, visit func(
 }
 
 // visitSchema recursively visits schema nodes
-func (v *XGtsRefValidator) visitSchema(schema map[string]interface{}, path string, errors *[]*XGtsRefValidationError) {
+func (v *XGtsRefValidator) visitSchema(schema map[string]any, path string, errors *[]*XGtsRefValidationError) {
 	if schema == nil {
 		return
 	}
@@ -239,13 +239,13 @@ func (v *XGtsRefValidator) visitSchema(schema map[string]interface{}, path strin
 		}
 	}
 
-	visitSchemaChildren(schema, path, func(child map[string]interface{}, childPath string) {
+	visitSchemaChildren(schema, path, func(child map[string]any, childPath string) {
 		v.visitSchema(child, childPath, errors)
 	})
 }
 
 // validateRefValue validates an instance value against its x-gts-ref constraint
-func (v *XGtsRefValidator) validateRefValue(value string, refPattern interface{}, fieldPath, selectedTypeID string) *XGtsRefValidationError {
+func (v *XGtsRefValidator) validateRefValue(value string, refPattern any, fieldPath, selectedTypeID string) *XGtsRefValidationError {
 	refPatternStr, ok := refPattern.(string)
 	if !ok {
 		return &XGtsRefValidationError{
@@ -271,7 +271,7 @@ func (v *XGtsRefValidator) validateRefValue(value string, refPattern interface{}
 }
 
 // validateRefPattern validates an x-gts-ref pattern in a schema definition
-func (v *XGtsRefValidator) validateRefPattern(refPattern interface{}, fieldPath string) *XGtsRefValidationError {
+func (v *XGtsRefValidator) validateRefPattern(refPattern any, fieldPath string) *XGtsRefValidationError {
 	refPatternStr, ok := refPattern.(string)
 	if !ok {
 		return &XGtsRefValidationError{
@@ -333,7 +333,7 @@ func (v *XGtsRefValidator) validateGtsIDOrPattern(pattern, fieldPath string) *XG
 
 // ValidateSchemaRefExistence checks concrete, wildcard, and /$id constraints
 // against the registry when the selected mode requires it.
-func (v *XGtsRefValidator) ValidateSchemaRefExistence(schema map[string]interface{}, schemaPath string, selectedTypeIDs ...string) []*XGtsRefValidationError {
+func (v *XGtsRefValidator) ValidateSchemaRefExistence(schema map[string]any, schemaPath string, selectedTypeIDs ...string) []*XGtsRefValidationError {
 	if err := validateJSONContent(schema); err != nil {
 		return invalidJSONRefErrors(schemaPath, err)
 	}
@@ -352,7 +352,7 @@ func (v *XGtsRefValidator) ValidateSchemaRefExistence(schema map[string]interfac
 }
 
 // visitSchemaRefExistence recursively checks concrete x-gts-ref targets exist.
-func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]interface{}, path, selectedTypeID string, errors *[]*XGtsRefValidationError) {
+func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]any, path, selectedTypeID string, errors *[]*XGtsRefValidationError) {
 	if schema == nil {
 		return
 	}
@@ -370,12 +370,16 @@ func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]interface{}
 				}
 				if gtsid.HasWildcard(targetID) {
 					matched := false
-					for entityID := range v.store.Items() {
+					// The scan only reads entity IDs and never calls back into
+					// the store, so it can run under the read lock via
+					// forEachEntity (stopping at the first match).
+					v.store.forEachEntity(func(entityID string, _ *JsonEntity) bool {
 						if gtsid.Match(entityID, targetID).Match {
 							matched = true
-							break
+							return false
 						}
-					}
+						return true
+					})
 					if !matched {
 						*errors = append(*errors, &XGtsRefValidationError{
 							FieldPath: refPath, Value: refStr, RefPattern: targetID,
@@ -396,7 +400,7 @@ func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]interface{}
 		}
 	}
 
-	visitSchemaChildren(schema, path, func(child map[string]interface{}, childPath string) {
+	visitSchemaChildren(schema, path, func(child map[string]any, childPath string) {
 		v.visitSchemaRefExistence(child, childPath, selectedTypeID, errors)
 	})
 }
@@ -426,7 +430,9 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 				Reason:     fmt.Sprintf("Value '%s' does not match pattern '%s'", value, pattern),
 			}
 		}
-	} else if !strings.HasPrefix(value, pattern) {
+	} else if !strings.HasPrefix(value, pattern) || !matchesAtSegmentBoundary(value, pattern) {
+		// Prefix matching alone ignores segment boundaries: an exact constraint such as
+		// "gts.a.b.c.d.v1~x.y.z.w.v1" would otherwise also accept "…w.v12" or "…w.v1.5".
 		return &XGtsRefValidationError{
 			FieldPath:  fieldPath,
 			Value:      value,
@@ -452,4 +458,15 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 	}
 
 	return nil
+}
+
+// matchesAtSegmentBoundary reports whether value, already known to be
+// prefixed by an exact (non-wildcard) pattern, matches it on a segment
+// boundary. Type patterns (ending with '~') admit derived identifiers; any
+// other (exact) pattern requires a full match or a '~' boundary immediately
+// after the pattern, so "…w.v1" does not spuriously accept "…w.v12"/"…w.v1.5".
+func matchesAtSegmentBoundary(value, pattern string) bool {
+	return len(value) == len(pattern) ||
+		strings.HasSuffix(pattern, gtsid.TypeMarker) ||
+		value[len(pattern)] == gtsid.TypeMarker[0]
 }

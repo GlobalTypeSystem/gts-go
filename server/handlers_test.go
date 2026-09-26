@@ -11,14 +11,25 @@ import (
 	"github.com/GlobalTypeSystem/gts-go/gts"
 )
 
+func canonicalSchema(typeID string, content map[string]any) map[string]any {
+	schema := map[string]any{
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"$id":     "gts://" + typeID,
+	}
+	for key, value := range content {
+		schema[key] = value
+	}
+	return schema
+}
+
 func TestValidateJSON(t *testing.T) {
 	store := gts.NewGtsStore(nil)
 	typeID := "gts.x.test6json._.validate_json.v1~"
-	if err := store.RegisterSchema(typeID, map[string]any{
+	if err := store.RegisterSchema(typeID, canonicalSchema(typeID, map[string]any{
 		"type":       "object",
 		"required":   []any{"name"},
 		"properties": map[string]any{"name": map[string]any{"type": "string"}},
-	}); err != nil {
+	})); err != nil {
 		t.Fatal(err)
 	}
 	s := NewServer(store, "", 0, 0)
@@ -139,18 +150,37 @@ func TestRejectedRevalidationPreservesStoredSchema(t *testing.T) {
 
 func TestAddSchemaConflict(t *testing.T) {
 	s := NewServer(gts.NewGtsStore(nil), "", 0, 0)
-	post := func(schema string) int {
-		r := httptest.NewRequest(http.MethodPost, "/type-schemas", bytes.NewBufferString(schema))
+	post := func(body string) (int, map[string]any) {
+		r := httptest.NewRequest(http.MethodPost, "/type-schemas", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		s.mux.ServeHTTP(w, r)
-		return w.Code
+		var resp map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		return w.Code, resp
+	}
+	firstResult := func(resp map[string]any) map[string]any {
+		results, _ := resp["results"].([]any)
+		if len(results) == 0 {
+			t.Fatalf("missing results in response: %v", resp)
+		}
+		first, _ := results[0].(map[string]any)
+		return first
 	}
 
-	if code := post(`{"type_id":"gts.x.test._.bar.v1~","schema":{"type":"object"}}`); code != http.StatusOK {
-		t.Fatalf("initial add-schema status = %d, want 200", code)
+	code, resp := post(`[{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://gts.x.test._.bar.v1~","type":"object"}]`)
+	if code != http.StatusOK || resp["ok"] != true {
+		t.Fatalf("initial add-schema status = %d resp = %v, want 200 ok", code, resp)
 	}
-	if code := post(`{"type_id":"gts.x.test._.bar.v1~","schema":{"type":"string"}}`); code != http.StatusConflict {
-		t.Fatalf("changed add-schema status = %d, want 409", code)
+	if got := firstResult(resp)["type_id"]; got != "gts.x.test._.bar.v1~" {
+		t.Fatalf("initial add-schema type_id = %v", got)
+	}
+
+	code, resp = post(`[{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://gts.x.test._.bar.v1~","type":"string"}]`)
+	if code != http.StatusOK {
+		t.Fatalf("changed add-schema status = %d, want 200", code)
+	}
+	if resp["ok"] != false || firstResult(resp)["ok"] != false {
+		t.Fatalf("changed add-schema should report a per-item conflict, resp = %v", resp)
 	}
 }
 
@@ -173,7 +203,7 @@ func TestServerClosesConnections(t *testing.T) {
 func TestValidateSchemaRejectsInstanceID(t *testing.T) {
 	store := gts.NewGtsStore(nil)
 	typeID := "gts.x.server.ns.type.v1~"
-	if err := store.RegisterSchema(typeID, map[string]any{"$id": "gts://" + typeID, "type": "object"}); err != nil {
+	if err := store.RegisterSchema(typeID, canonicalSchema(typeID, map[string]any{"type": "object"})); err != nil {
 		t.Fatal(err)
 	}
 	instanceID := "gts.x.server.ns.type.v1~x.server._.instance.v1"

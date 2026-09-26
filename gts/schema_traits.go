@@ -310,7 +310,7 @@ func applyDefaults(traitSchema map[string]any, traits map[string]any, depth int)
 }
 
 // validateTraitsAgainstSchema validates the effective traits object against the effective trait schema.
-func validateTraitsAgainstSchema(traitSchema map[string]any, effectiveTraits map[string]any, checkUnresolved bool) []string {
+func validateTraitsAgainstSchema(traitSchema map[string]any, effectiveTraits map[string]any, hostSchema map[string]any, checkUnresolved bool) []string {
 	var errors []string
 
 	// Use jsonschema library for standard JSON Schema validation
@@ -320,6 +320,23 @@ func validateTraitsAgainstSchema(traitSchema map[string]any, effectiveTraits map
 
 	// Remove x-gts-ref and x-gts-traits from schema before validation
 	cleanSchema := removeXGtsFields(traitSchema)
+	hostDialect, err := schemaDialect(hostSchema)
+	if err != nil {
+		errors = append(errors, fmt.Sprintf("invalid host schema dialect: %v", err))
+		return errors
+	}
+	if _, declared := cleanSchema["$schema"]; declared {
+		traitDialect, err := schemaDialect(cleanSchema)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("invalid trait schema dialect: %v", err))
+			return errors
+		}
+		if traitDialect != hostDialect {
+			errors = append(errors, fmt.Sprintf("trait schema dialect %s differs from host dialect %s", traitDialect, hostDialect))
+			return errors
+		}
+	}
+	cleanSchema["$schema"] = canonicalSchemaDialectURI(hostDialect)
 
 	schemaID := "gts://internal/trait-schema"
 	if err := compiler.AddResource(schemaID, cleanSchema); err != nil {
@@ -542,7 +559,9 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string, modes ...GtsRefValidati
 	// x-gts-ref reference resolution is a SEPARATE §9.7.5 rule that does NOT
 	// exempt abstract types, so it still runs below.
 	isAbstract := false
+	hostSchema := map[string]any{}
 	if leafEntity := s.Get(schemaID); leafEntity != nil {
+		hostSchema = leafEntity.Content
 		if ab, isBool := leafEntity.Content[KeyXGtsAbstract].(bool); isBool && ab {
 			isAbstract = true
 		}
@@ -561,9 +580,9 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string, modes ...GtsRefValidati
 		abstractTraitSchema := walkSchema(effectiveTraitSchema, nil, func(k string) bool {
 			return k == "required"
 		})
-		errs = validateTraitsAgainstSchema(abstractTraitSchema, effectiveTraits, false)
+		errs = validateTraitsAgainstSchema(abstractTraitSchema, effectiveTraits, hostSchema, false)
 	} else {
-		errs = validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, true)
+		errs = validateTraitsAgainstSchema(effectiveTraitSchema, effectiveTraits, hostSchema, true)
 	}
 
 	// x-gts-ref reference resolution runs for ALL types, including abstract
@@ -690,7 +709,10 @@ func (v *dependencyValidationState) validateEntity(entityID string) error {
 }
 
 func (v *dependencyValidationState) hasValidWildcardMatch(pattern string) bool {
-	for entityID := range v.store.Items() {
+	// validateEntity calls back into the store (Get), so iterate over an ID
+	// snapshot rather than under forEachEntity's read lock. entityIDs avoids the
+	// whole-store content clone that Items would perform here.
+	for _, entityID := range v.store.entityIDs() {
 		if gtsid.Match(entityID, pattern).Match && v.validateEntity(entityID) == nil {
 			return true
 		}

@@ -428,12 +428,12 @@ func TestStructuralEnumAdditionRemoval(t *testing.T) {
 func TestCheckInclusion_TypeLessObjectAndArray(t *testing.T) {
 	objectOld := map[string]any{"required": []any{"id"}}
 	objectNew := map[string]any{"required": []any{"id", "source"}}
-	if result := checkInclusion(objectOld, objectNew); result == nil || *result {
+	if result := checkInclusion(objectOld, objectNew, 0); result == nil || *result {
 		t.Error("type-less required property addition must reject old objects")
 	}
 	arrayOld := map[string]any{"items": map[string]any{"type": "string"}}
 	arrayNew := map[string]any{"items": map[string]any{"type": "string", "maxLength": float64(10)}}
-	if result := checkInclusion(arrayOld, arrayNew); result == nil || *result {
+	if result := checkInclusion(arrayOld, arrayNew, 0); result == nil || *result {
 		t.Error("type-less item constraint must reject old arrays")
 	}
 }

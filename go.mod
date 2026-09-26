@@ -9,3 +9,5 @@ require github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 require golang.org/x/text v0.36.0
 
 require github.com/dlclark/regexp2 v1.11.0
+
+require sigs.k8s.io/yaml v1.4.0

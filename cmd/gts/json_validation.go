@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -367,8 +368,9 @@ func (v *GtsJsonValidator) validateInstances(store *gts.GtsStore) {
 		if key == "" {
 			continue
 		}
-		// Skip rejected duplicates: only validate the registered entity
-		if store.Get(key) != entity {
+		// Skip rejected duplicates: only validate content retained by the registry.
+		stored := store.Get(key)
+		if stored == nil || !reflect.DeepEqual(stored.Content, entity.Content) {
 			continue
 		}
 		gtsIDStr := ""

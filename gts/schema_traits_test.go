@@ -5,7 +5,10 @@ Released under Apache License 2.0
 
 package gts
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // =============================================================================
 // walkSchema / normalizeDollarRefs / removeXGtsFields
@@ -491,7 +494,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 			"required": []any{"color"},
 		}
 		traits := map[string]any{"color": "red", "count": 3.0}
-		errs := validateTraitsAgainstSchema(traitSchema, traits, false)
+		errs := validateTraitsAgainstSchema(traitSchema, traits, map[string]any{}, false)
 		if len(errs) != 0 {
 			t.Errorf("expected no errors, got %v", errs)
 		}
@@ -505,7 +508,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 			},
 			"required": []any{"color"},
 		}
-		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, false)
+		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, map[string]any{}, false)
 		if len(errs) == 0 {
 			t.Error("expected error for missing required trait")
 		}
@@ -519,7 +522,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 			},
 		}
 		traits := map[string]any{"count": "not-a-number"}
-		errs := validateTraitsAgainstSchema(traitSchema, traits, false)
+		errs := validateTraitsAgainstSchema(traitSchema, traits, map[string]any{}, false)
 		if len(errs) == 0 {
 			t.Error("expected error for wrong type")
 		}
@@ -533,7 +536,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 			},
 			"required": []any{"unresolved"},
 		}
-		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, true)
+		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, map[string]any{}, true)
 		if len(errs) == 0 {
 			t.Error("expected error for unresolved required trait without default")
 		}
@@ -548,7 +551,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 				"note": map[string]any{"type": "string"},
 			},
 		}
-		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, true)
+		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, map[string]any{}, true)
 		if len(errs) != 0 {
 			t.Errorf("optional unresolved property must not fail completeness, got %v", errs)
 		}
@@ -564,7 +567,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 			},
 			"required": []any{"color"},
 		}
-		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{"color": "blue"}, true)
+		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{"color": "blue"}, map[string]any{}, true)
 		if len(errs) != 0 {
 			t.Errorf("required property satisfied by default should not fail, got %v", errs)
 		}
@@ -598,6 +601,49 @@ func TestValidateSchemaTraits_MissingSchema(t *testing.T) {
 	result := store.ValidateSchemaTraits("gts.x.traits.ns.missing.v1~")
 	if result.OK {
 		t.Error("expected failure for missing schema")
+	}
+}
+
+func TestValidateSchemaTraits_UsesHostDialect(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegisterTraits(t, store, map[string]any{
+		"$id":     "gts://gts.x.traits.ns.draft7_tuple.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type":    "object",
+		"x-gts-traits-schema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"pair": map[string]any{
+					"type":  "array",
+					"items": []any{map[string]any{"type": "string"}},
+				},
+			},
+		},
+		"x-gts-traits": map[string]any{"pair": []any{"ok"}},
+	})
+
+	result := store.ValidateSchemaTraits("gts.x.traits.ns.draft7_tuple.v1~")
+	if !result.OK {
+		t.Fatalf("expected Draft-07 tuple trait schema to validate, got: %s", result.Error)
+	}
+}
+
+func TestValidateSchemaTraits_RejectsConflictingTraitResourceDialect(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegisterTraits(t, store, map[string]any{
+		"$id":     "gts://gts.x.traits.ns.conflicting_resource.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+		"x-gts-traits-schema": map[string]any{
+			"$id":     "https://example.com/legacy-traits",
+			"$schema": "http://json-schema.org/draft-07/schema#",
+			"type":    "object",
+		},
+	})
+
+	result := store.ValidateSchemaTraits("gts.x.traits.ns.conflicting_resource.v1~")
+	if result.OK || !strings.Contains(result.Error, "differs from host dialect") {
+		t.Fatalf("expected conflicting trait resource dialect failure, got: %+v", result)
 	}
 }
 

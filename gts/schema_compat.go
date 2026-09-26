@@ -19,8 +19,11 @@ package gts
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -32,6 +35,187 @@ type ValidateSchemaChainResult struct {
 	TypeID string `json:"type_id"`
 	OK     bool   `json:"ok"`
 	Error  string `json:"error,omitempty"`
+	// MissingSchema is true when the failure was caused by a referenced schema
+	// (a base/parent in the chain) not being registered. Callers use this typed
+	// signal instead of matching on the human-readable Error text.
+	MissingSchema bool `json:"-"`
+}
+
+func schemaDialect(schema map[string]any) (string, error) {
+	rawDialect, exists := schema["$schema"]
+	if !exists {
+		return "draft-07", nil
+	}
+	dialect, ok := rawDialect.(string)
+	if !ok || dialect == "" {
+		return "", fmt.Errorf("$schema must declare a supported JSON Schema dialect")
+	}
+	normalized := strings.ToLower(strings.TrimSuffix(dialect, "#"))
+	normalized = strings.Replace(normalized, "https://", "http://", 1)
+	switch normalized {
+	case "http://json-schema.org/draft-07/schema":
+		return "draft-07", nil
+	case "http://json-schema.org/draft/2019-09/schema":
+		return "2019-09", nil
+	case "http://json-schema.org/draft/2020-12/schema":
+		return "2020-12", nil
+	default:
+		return "", fmt.Errorf("unsupported JSON Schema dialect: %s", dialect)
+	}
+}
+
+func canonicalSchemaDialectURI(dialect string) string {
+	switch dialect {
+	case "2019-09":
+		return "https://json-schema.org/draft/2019-09/schema"
+	case "2020-12":
+		return "https://json-schema.org/draft/2020-12/schema"
+	default:
+		return "http://json-schema.org/draft-07/schema#"
+	}
+}
+
+func resolveLocalSchemaRef(root any, ref string) any {
+	if ref == "#" {
+		return root
+	}
+	if !strings.HasPrefix(ref, "#/") {
+		return nil
+	}
+	current := root
+	for _, encoded := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
+		segment := strings.ReplaceAll(strings.ReplaceAll(encoded, "~1", "/"), "~0", "~")
+		switch node := current.(type) {
+		case map[string]any:
+			current = node[segment]
+		case []any:
+			index, err := strconv.Atoi(segment)
+			if err != nil || index < 0 || index >= len(node) {
+				return nil
+			}
+			current = node[index]
+		default:
+			return nil
+		}
+		if current == nil {
+			return nil
+		}
+	}
+	return current
+}
+
+func detectLocalRefDialectMismatch(root map[string]any, rootID, rootDialect string) error {
+	var mismatch error
+	var visit func(map[string]any)
+	visit = func(schema map[string]any) {
+		if mismatch != nil {
+			return
+		}
+		if ref, ok := schema["$ref"].(string); ok && strings.HasPrefix(ref, "#") {
+			if target, targetOK := resolveLocalSchemaRef(root, ref).(map[string]any); targetOK {
+				if _, declaresDialect := target["$schema"]; declaresDialect {
+					targetDialect, err := schemaDialect(target)
+					if err != nil {
+						mismatch = err
+						return
+					}
+					if targetDialect != rootDialect {
+						mismatch = fmt.Errorf("GTS schema reference graph mixes JSON Schema dialects: root type '%s' uses %s but local $ref target '%s' uses %s", rootID, rootDialect, ref, targetDialect)
+						return
+					}
+				}
+			}
+		}
+		visitSchemaChildren(schema, "", func(child map[string]any, _ string) {
+			visit(child)
+		})
+	}
+	visit(root)
+	return mismatch
+}
+
+func (s *GtsStore) detectChainDialectMismatch(schemaID string, gid *gtsid.ID) error {
+	rootID := buildIDFromSegments(gid.Segments[:1])
+	root := s.Get(rootID)
+	if root == nil {
+		return nil
+	}
+	rootDialect, err := schemaDialect(root.Content)
+	if err != nil {
+		return err
+	}
+
+	// Seed the reference walk with every type in the derivation chain, not just
+	// the leaf. A leaf-only walk would miss a cross-dialect $ref that lives on an
+	// ancestor the leaf does not itself reference; a type is only as valid as the
+	// types it builds on, so the whole chain plus its transitive gts:// $ref
+	// closure must share the root's dialect (spec §11.0/§12, matching the Rust
+	// reference which validates each related type in the closure).
+	visited := make(map[string]bool)
+	queue := make([]string, 0, len(gid.Segments))
+	for i := range gid.Segments {
+		chainID := buildIDFromSegments(gid.Segments[:i+1])
+		entity := s.Get(chainID)
+		if entity == nil {
+			continue
+		}
+		chainDialect, dialectErr := schemaDialect(entity.Content)
+		if dialectErr != nil {
+			return dialectErr
+		}
+		if chainDialect != rootDialect {
+			return fmt.Errorf("GTS derivation chain mixes JSON Schema dialects: root type '%s' uses %s but '%s' uses %s; every type in a chained $id hierarchy must use the root type's dialect", rootID, rootDialect, chainID, chainDialect)
+		}
+		queue = append(queue, chainID)
+	}
+
+	for len(queue) > 0 {
+		currentID := queue[0]
+		queue = queue[1:]
+		if visited[currentID] {
+			continue
+		}
+		visited[currentID] = true
+		entity := s.Get(currentID)
+		if entity == nil {
+			continue
+		}
+		if err := detectLocalRefDialectMismatch(entity.Content, rootID, rootDialect); err != nil {
+			return err
+		}
+		for _, ref := range entity.GtsRefs {
+			if ref.ID == currentID || !strings.Contains(ref.SourcePath, "$ref") || strings.Contains(ref.SourcePath, "x-gts-ref") {
+				continue
+			}
+			target := s.Get(ref.ID)
+			if target == nil || !target.IsTypeSchema {
+				continue
+			}
+			targetDialect, dialectErr := schemaDialect(target.Content)
+			if dialectErr != nil {
+				return dialectErr
+			}
+			if targetDialect != rootDialect {
+				return fmt.Errorf("GTS derivation mixes JSON Schema dialects: root type '%s' uses %s but $ref target '%s' uses %s; every type in the chain and its transitive gts:// $ref targets must use the root type's dialect", rootID, rootDialect, ref.ID, targetDialect)
+			}
+			queue = append(queue, ref.ID)
+		}
+	}
+	return nil
+}
+
+// missingSchemaError marks a resolveSchemaRefsChecked failure caused by an
+// unregistered schema. It preserves the original human-readable wording while
+// letting callers detect the cause via errors.As instead of substring matching.
+type missingSchemaError struct{ id string }
+
+func (e *missingSchemaError) Error() string { return fmt.Sprintf("schema '%s' not found", e.id) }
+
+// isMissingSchemaError reports whether err (or any error it wraps) is a
+// missingSchemaError.
+func isMissingSchemaError(err error) bool {
+	var missing *missingSchemaError
+	return errors.As(err, &missing)
 }
 
 // ValidateSchemaChain validates each derived schema against its base across the chain (OP#12).
@@ -45,12 +229,17 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 		}
 	}
 
+	if err := s.detectChainDialectMismatch(schemaID, gid); err != nil {
+		return &ValidateSchemaChainResult{TypeID: schemaID, OK: false, Error: err.Error()}
+	}
+
 	if _, err := s.resolveSchemaRefsChecked(schemaID); err != nil {
 		if len(gid.Segments) >= 2 || !strings.Contains(err.Error(), "circular $ref") {
 			return &ValidateSchemaChainResult{
-				TypeID: schemaID,
-				OK:     false,
-				Error:  fmt.Sprintf("Schema '%s' has %v", schemaID, err),
+				TypeID:        schemaID,
+				OK:            false,
+				Error:         fmt.Sprintf("Schema '%s' has %v", schemaID, err),
+				MissingSchema: isMissingSchemaError(err),
 			}
 		}
 	}
@@ -81,17 +270,19 @@ func (s *GtsStore) ValidateSchemaChain(schemaID string) *ValidateSchemaChainResu
 		baseContent, err := s.resolveSchemaRefsChecked(baseID)
 		if err != nil {
 			return &ValidateSchemaChainResult{
-				TypeID: schemaID,
-				OK:     false,
-				Error:  fmt.Sprintf("Schema '%s' has %v", baseID, err),
+				TypeID:        schemaID,
+				OK:            false,
+				Error:         fmt.Sprintf("Schema '%s' has %v", baseID, err),
+				MissingSchema: isMissingSchemaError(err),
 			}
 		}
 		derivedContent, err := s.resolveSchemaRefsChecked(derivedID)
 		if err != nil {
 			return &ValidateSchemaChainResult{
-				TypeID: schemaID,
-				OK:     false,
-				Error:  fmt.Sprintf("Schema '%s' has %v", derivedID, err),
+				TypeID:        schemaID,
+				OK:            false,
+				Error:         fmt.Sprintf("Schema '%s' has %v", derivedID, err),
+				MissingSchema: isMissingSchemaError(err),
 			}
 		}
 
@@ -830,15 +1021,6 @@ func jsonValueType(v any) string {
 	return ""
 }
 
-func stringSliceContains(slice []string, s string) bool {
-	for _, item := range slice {
-		if item == s {
-			return true
-		}
-	}
-	return false
-}
-
 func anySliceContains(slice []any, val any) bool {
 	for _, item := range slice {
 		if jsonEqual(item, val) {
@@ -856,13 +1038,15 @@ func jsonEqual(a, b any) bool {
 
 // ── Ref resolution ────────────────────────────────────────────────────────────
 
+const maxSchemaRefExpansions = 10_000
+
 // resolveSchemaRefsChecked resolves $ref references in a named schema, detecting cycles.
 // Content is deep-copied and $$ref keys are normalized to $ref before resolution
 // (the $$ prefix is the httprunner convention for escaping $ in JSON keys).
 func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, error) {
 	entity := s.Get(schemaID)
 	if entity == nil {
-		return nil, fmt.Errorf("schema '%s' not found", schemaID)
+		return nil, &missingSchemaError{id: schemaID}
 	}
 	if !entity.IsTypeSchema {
 		return nil, fmt.Errorf("entity '%s' is not a schema", schemaID)
@@ -881,7 +1065,12 @@ func (s *GtsStore) resolveSchemaRefsChecked(schemaID string) (map[string]any, er
 func (s *GtsStore) resolveRefs(schema map[string]any) (map[string]any, error) {
 	visited := make(map[string]bool)
 	cycleFound := false
-	resolved := s.resolveRefsInner(schema, visited, &cycleFound)
+	expansions := 0
+	budgetExceeded := false
+	resolved := s.resolveRefsInner(schema, visited, &cycleFound, &expansions, &budgetExceeded)
+	if budgetExceeded {
+		return nil, fmt.Errorf("schema reference expansion exceeds limit of %d", maxSchemaRefExpansions)
+	}
 	if cycleFound {
 		return nil, fmt.Errorf("circular $ref detected")
 	}
@@ -916,7 +1105,7 @@ func findUnresolvedRef(schema any) string {
 	return ""
 }
 
-func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFound *bool) any {
+func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFound *bool, expansions *int, budgetExceeded *bool) any {
 	switch v := schema.(type) {
 	case map[string]any:
 		// Handle $ref
@@ -924,7 +1113,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 			if strings.HasPrefix(refVal, LocalRefPrefix) { // local refs kept as-is
 				result := make(map[string]any)
 				for k, val := range v {
-					result[k] = s.resolveRefsInner(val, visited, cycleFound)
+					result[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 				}
 				return result
 			}
@@ -935,7 +1124,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				result := make(map[string]any)
 				for k, val := range v {
 					if k != "$ref" {
-						result[k] = s.resolveRefsInner(val, visited, cycleFound)
+						result[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 					}
 				}
 				if len(result) == 0 {
@@ -946,8 +1135,13 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 
 			entity := s.Get(canonical)
 			if entity != nil && entity.IsTypeSchema {
+				*expansions++
+				if *expansions > maxSchemaRefExpansions {
+					*budgetExceeded = true
+					return schema
+				}
 				visited[canonical] = true
-				resolved := s.resolveRefsInner(entity.Content, visited, cycleFound)
+				resolved := s.resolveRefsInner(entity.Content, visited, cycleFound, expansions, budgetExceeded)
 				delete(visited, canonical)
 
 				if resolvedMap, ok := resolved.(map[string]any); ok {
@@ -969,7 +1163,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 					}
 					for k, val := range v {
 						if k != "$ref" {
-							merged[k] = s.resolveRefsInner(val, visited, cycleFound)
+							merged[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 						}
 					}
 					return merged
@@ -982,7 +1176,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				if k == "$ref" {
 					result[k] = val
 				} else {
-					result[k] = s.resolveRefsInner(val, visited, cycleFound)
+					result[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 				}
 			}
 			return result
@@ -1003,7 +1197,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				// along the chain) are allowed — re-merging the same base is
 				// idempotent. True cycles are caught by DFS-path detection in
 				// the $ref branch below.
-				resolved := s.resolveRefsInner(item, visited, cycleFound)
+				resolved := s.resolveRefsInner(item, visited, cycleFound, expansions, budgetExceeded)
 				if resolvedMap, ok := resolved.(map[string]any); ok {
 					if _, stillHasRef := resolvedMap["$ref"]; stillHasRef {
 						resolvedAllOf = append(resolvedAllOf, resolved)
@@ -1017,7 +1211,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 						if req, ok := resolvedMap["required"].([]any); ok {
 							for _, rv := range req {
 								if str, ok := rv.(string); ok {
-									if !stringSliceContains(mergedRequired, str) {
+									if !slices.Contains(mergedRequired, str) {
 										mergedRequired = append(mergedRequired, str)
 									}
 								}
@@ -1059,7 +1253,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 						// $ref unresolved and trip findUnresolvedRef, even though
 						// OP#12 ignores x-gts-* keys. (OP#13 still resolves trait
 						// schemas separately from the raw content.)
-						merged[k] = s.resolveRefsInner(val, visited, cycleFound)
+						merged[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 					}
 				}
 				for k, val := range mergedOther { // parent keys take precedence
@@ -1078,7 +1272,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				if parentReq, ok := v["required"].([]any); ok {
 					for _, rv := range parentReq {
 						if str, ok := rv.(string); ok {
-							if !stringSliceContains(mergedRequired, str) {
+							if !slices.Contains(mergedRequired, str) {
 								mergedRequired = append(mergedRequired, str)
 							}
 						}
@@ -1100,14 +1294,14 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 
 		result := make(map[string]any)
 		for k, val := range v {
-			result[k] = s.resolveRefsInner(val, visited, cycleFound)
+			result[k] = s.resolveRefsInner(val, visited, cycleFound, expansions, budgetExceeded)
 		}
 		return result
 
 	case []any:
 		result := make([]any, len(v))
 		for i, item := range v {
-			result[i] = s.resolveRefsInner(item, visited, cycleFound)
+			result[i] = s.resolveRefsInner(item, visited, cycleFound, expansions, budgetExceeded)
 		}
 		return result
 
