@@ -308,7 +308,8 @@ func (s *Server) addEntityResult(
 		// observes an entity that has not passed validation - and no store-wide
 		// write lock is held across validation, so concurrent reads are not
 		// blocked.
-		if err := s.store.Stage(entity); err != nil {
+		token, err := s.store.Stage(entity)
+		if err != nil {
 			status := http.StatusUnprocessableEntity
 			if isConflict(err) {
 				status = http.StatusConflict
@@ -320,14 +321,24 @@ func (s *Server) addEntityResult(
 			}, status
 		}
 		if result := s.store.ValidateEntity(responseID, mode); !result.OK {
-			s.store.Discard(responseID)
+			s.store.Discard(token)
 			return map[string]any{
 				"ok":             false,
 				"error":          result.Error,
 				"is_type_schema": entity.IsTypeSchema,
 			}, http.StatusUnprocessableEntity
 		}
-		s.store.Commit(responseID)
+		if err := s.store.Commit(token); err != nil {
+			status := http.StatusUnprocessableEntity
+			if isConflict(err) {
+				status = http.StatusConflict
+			}
+			return map[string]any{
+				"ok":             false,
+				"error":          err.Error(),
+				"is_type_schema": entity.IsTypeSchema,
+			}, status
+		}
 		return ok, http.StatusOK
 	}
 
@@ -459,8 +470,18 @@ func (s *Server) stageAndValidateBatch(
 		index    int
 		typeID   string
 		entityID string
+		token    string
 	}
-	var pending []stagedEntry
+	var survivors []stagedEntry
+	// pending tracks every still-staged token so a panic anywhere below discards
+	// the leftovers instead of leaking unvalidated entries into the staging
+	// overlay. Tokens are removed as they are committed or discarded.
+	pending := map[string]struct{}{}
+	defer func() {
+		for token := range pending {
+			s.store.Discard(token)
+		}
+	}()
 
 	// Phase 1: stage.
 	for i, schema := range schemas {
@@ -474,36 +495,52 @@ func (s *Server) stageAndValidateBatch(
 			results[i] = map[string]any{"ok": false, "type_id": typeID, "error": errBody["error"]}
 			continue
 		}
-		if err := s.store.Stage(entity); err != nil {
+		token, err := s.store.Stage(entity)
+		if err != nil {
 			results[i] = map[string]any{"ok": false, "type_id": typeID, "error": err.Error()}
 			continue
 		}
-		pending = append(pending, stagedEntry{index: i, typeID: typeID, entityID: responseID})
+		pending[token] = struct{}{}
+		survivors = append(survivors, stagedEntry{index: i, typeID: typeID, entityID: responseID, token: token})
 	}
 
-	// Phase 2: validate against the fully-staged set before publishing anything.
-	type verdict struct {
-		entry stagedEntry
-		err   string
-	}
-	verdicts := make([]verdict, 0, len(pending))
-	for _, entry := range pending {
-		if res := s.store.ValidateEntity(entry.entityID, mode); res.OK {
-			verdicts = append(verdicts, verdict{entry: entry})
-		} else {
-			verdicts = append(verdicts, verdict{entry: entry, err: res.Error})
+	// Phase 2: validate the staged entries, discarding failures and RE-validating
+	// the survivors against the now-smaller staged set until a round produces no
+	// new failures. This stops an entry that only validated because a sibling was
+	// staged (e.g. its parent or $ref target) from being committed after that
+	// sibling has itself been discarded.
+	for {
+		var stillGood []stagedEntry
+		var failed []stagedEntry
+		failErr := map[int]string{}
+		for _, entry := range survivors {
+			if res := s.store.ValidateEntity(entry.entityID, mode); res.OK {
+				stillGood = append(stillGood, entry)
+			} else {
+				failed = append(failed, entry)
+				failErr[entry.index] = res.Error
+			}
 		}
+		if len(failed) == 0 {
+			break
+		}
+		for _, entry := range failed {
+			s.store.Discard(entry.token)
+			delete(pending, entry.token)
+			results[entry.index] = map[string]any{"ok": false, "type_id": entry.typeID, "error": failErr[entry.index]}
+		}
+		survivors = stillGood
 	}
 
-	// Phase 3: publish the entries that passed, discard the ones that failed.
-	for _, v := range verdicts {
-		if v.err == "" {
-			s.store.Commit(v.entry.entityID)
-			results[v.entry.index] = map[string]any{"ok": true, "type_id": v.entry.typeID}
+	// Phase 3: publish the entries that passed. A commit can still report a
+	// conflict if a concurrent batch committed the same id with different content.
+	for _, entry := range survivors {
+		if err := s.store.Commit(entry.token); err != nil {
+			results[entry.index] = map[string]any{"ok": false, "type_id": entry.typeID, "error": err.Error()}
 		} else {
-			s.store.Discard(v.entry.entityID)
-			results[v.entry.index] = map[string]any{"ok": false, "type_id": v.entry.typeID, "error": v.err}
+			results[entry.index] = map[string]any{"ok": true, "type_id": entry.typeID}
 		}
+		delete(pending, entry.token)
 	}
 }
 

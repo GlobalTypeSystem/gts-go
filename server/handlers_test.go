@@ -285,6 +285,82 @@ func TestAddSchemasValidateStagingOrderIndependentAndAtomic(t *testing.T) {
 	}
 }
 
+// TestAddSchemasValidateDoesNotCommitDependentOfDiscarded verifies a survivor
+// is never published when a sibling it depends on is itself discarded. Under
+// any-present ref validation, entry B carries an x-gts-ref to A, and A carries
+// an x-gts-ref to a type that is never registered. Validated against the fully
+// staged set, B passes (A is present) while A fails (its target is missing) -
+// a single-pass implementation would then commit B with a dangling reference to
+// the discarded A. The iterative discard-then-revalidate must reject B too, so
+// neither is retrievable afterwards.
+func TestAddSchemasValidateDoesNotCommitDependentOfDiscarded(t *testing.T) {
+	s := NewServer(gts.NewGtsStore(nil), "", 0, 0)
+	do := func(method, target, body string) (int, map[string]any) {
+		r := httptest.NewRequest(method, target, bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, r)
+		var resp map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		return w.Code, resp
+	}
+	itemOK := func(resp map[string]any, i int) bool {
+		results, _ := resp["results"].([]any)
+		item, _ := results[i].(map[string]any)
+		ok, _ := item["ok"].(bool)
+		return ok
+	}
+	d7 := `"$schema":"http://json-schema.org/draft-07/schema#"`
+
+	// A (index 0) is invalid: its x-gts-ref target is never registered.
+	// B (index 1) is structurally valid but x-gts-refs A.
+	_, resp := do(http.MethodPost, "/type-schemas?validate=true&gts-ref-validation=any-present", `[`+
+		`{`+d7+`,"$id":"gts://gts.x.dep._.a.v1~","type":"object","properties":{"r":{"type":"string","x-gts-ref":"gts.x.dep._.missing.v1~"}}},`+
+		`{`+d7+`,"$id":"gts://gts.x.dep._.b.v1~","type":"object","properties":{"x":{"type":"string","x-gts-ref":"gts.x.dep._.a.v1~"}}}]`)
+	if resp["ok"] != false || itemOK(resp, 0) || itemOK(resp, 1) {
+		t.Fatalf("neither the invalid A nor its dependent B may be committed, got %v", resp)
+	}
+	if _, a := do(http.MethodGet, "/entities/gts.x.dep._.a.v1~", ""); a["ok"] != false {
+		t.Fatalf("invalid A must not be registered, got %v", a)
+	}
+	if _, b := do(http.MethodGet, "/entities/gts.x.dep._.b.v1~", ""); b["ok"] != false {
+		t.Fatalf("B (dependent on a discarded sibling) must not be registered, got %v", b)
+	}
+}
+
+// TestAddSchemasValidateDuplicateIDInBatch verifies a batch that carries the
+// same $id twice with different content does not silently keep only the last
+// entry: the conflicting second commit is reported as not-ok rather than
+// overwriting the first.
+func TestAddSchemasValidateDuplicateIDInBatch(t *testing.T) {
+	s := NewServer(gts.NewGtsStore(nil), "", 0, 0)
+	do := func(method, target, body string) (int, map[string]any) {
+		r := httptest.NewRequest(method, target, bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, r)
+		var resp map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		return w.Code, resp
+	}
+	itemOK := func(resp map[string]any, i int) bool {
+		results, _ := resp["results"].([]any)
+		item, _ := results[i].(map[string]any)
+		ok, _ := item["ok"].(bool)
+		return ok
+	}
+	d7 := `"$schema":"http://json-schema.org/draft-07/schema#"`
+
+	_, resp := do(http.MethodPost, "/type-schemas?validate=true", `[`+
+		`{`+d7+`,"$id":"gts://gts.x.dup._.t.v1~","type":"object","title":"a"},`+
+		`{`+d7+`,"$id":"gts://gts.x.dup._.t.v1~","type":"object","title":"b"}]`)
+	// One entry commits (Added), the conflicting duplicate is rejected.
+	if resp["ok"] != false {
+		t.Fatalf("a batch with a conflicting duplicate id must report ok=false, got %v", resp)
+	}
+	if itemOK(resp, 0) == itemOK(resp, 1) {
+		t.Fatalf("exactly one of the duplicate entries must commit, got %v", resp)
+	}
+}
+
 // TestAddSchemasValidateStagingConcurrentReadsNeverSeeInvalid is a concurrency
 // probe: while a validate=true batch containing a deliberately-invalid entry is
 // in flight, several goroutines hammer GET /entities/<invalid-id> and assert
