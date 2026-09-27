@@ -184,6 +184,54 @@ func TestAddSchemaConflict(t *testing.T) {
 	}
 }
 
+// TestAddSchemasHonorsValidate verifies POST /type-schemas applies ?validate /
+// ?gts-ref-validation to every batch entry exactly like POST /entities: an
+// entry whose gts:// $ref targets an unregistered type is a forward reference
+// (accepted without validate, rejected with validate), and a bogus
+// gts-ref-validation refuses the whole batch with 422.
+func TestAddSchemasHonorsValidate(t *testing.T) {
+	s := NewServer(gts.NewGtsStore(nil), "", 0, 0)
+	post := func(target, body string) (int, map[string]any) {
+		r := httptest.NewRequest(http.MethodPost, target, bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, r)
+		var resp map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		return w.Code, resp
+	}
+	firstOK := func(resp map[string]any) bool {
+		results, _ := resp["results"].([]any)
+		if len(results) == 0 {
+			t.Fatalf("missing results in response: %v", resp)
+		}
+		first, _ := results[0].(map[string]any)
+		ok, _ := first["ok"].(bool)
+		return ok
+	}
+	schema := func(typeID string) string {
+		return `[{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://` + typeID +
+			`","type":"object","properties":{"a":{"$ref":"gts://gts.x.batchval._.missing.v1~"}}}]`
+	}
+
+	// Without validate, the forward reference registers.
+	code, resp := post("/type-schemas", schema("gts.x.batchval._.fwd.v1~"))
+	if code != http.StatusOK || resp["ok"] != true || !firstOK(resp) {
+		t.Fatalf("forward-ref batch without validate = %d %v, want 200 ok", code, resp)
+	}
+
+	// With validate=true, the unresolved reference is rejected per entry.
+	code, resp = post("/type-schemas?validate=true", schema("gts.x.batchval._.needsref.v1~"))
+	if code != http.StatusOK || resp["ok"] != false || firstOK(resp) {
+		t.Fatalf("unresolved-ref batch with validate = %d %v, want 200 not-ok", code, resp)
+	}
+
+	// A bogus gts-ref-validation refuses the whole batch with 422.
+	code, _ = post("/type-schemas?gts-ref-validation=bogus", schema("gts.x.batchval._.badmode.v1~"))
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("bogus gts-ref-validation status = %d, want 422", code)
+	}
+}
+
 func TestServerClosesConnections(t *testing.T) {
 	s := NewServer(nil, "", 0, 0)
 	testServer := httptest.NewServer(s.mux)
