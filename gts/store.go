@@ -240,8 +240,8 @@ func NewGtsStoreWithConfig(reader GtsReader, config *RegistryConfig) *GtsStore {
 		byID:        make(map[string]*JsonEntity),
 		staged:      make(map[string]*stagedEntry),
 		stagedByKey: make(map[string]*JsonEntity),
-		reader: reader,
-		config: &configCopy,
+		reader:      reader,
+		config:      &configCopy,
 	}
 
 	// Populate from reader if provided
