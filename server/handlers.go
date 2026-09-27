@@ -51,7 +51,9 @@ func (s *Server) handleGetEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entity := s.store.Get(id)
+	// Public reads only ever see committed entities; a staged (in-flight,
+	// not-yet-validated) entity must not be observable here.
+	entity := s.store.GetCommitted(id)
 	if entity == nil {
 		s.writeJSON(w, http.StatusOK, map[string]any{
 			"ok":    false,
@@ -95,16 +97,17 @@ func (s *Server) handleAddEntity(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, status, body)
 }
 
-// addEntityResult runs the full single-entity registration + validation
-// pipeline and returns the JSON response body and HTTP status. Both
-// POST /entities and each POST /type-schemas batch entry go through this one
-// path, so batch registration honors ?validate / ?gts-ref-validation exactly
-// as the single-entity endpoint does.
-func (s *Server) addEntityResult(
+// prepareEntity runs every structural check that does NOT require touching the
+// store (canonical $schema/$id shape, schema $ref / x-gts-ref structure,
+// modifier and trait-keyword placement) and builds the JsonEntity. On success
+// it returns the entity and its effective id with a nil error body; on failure
+// it returns the error body and HTTP status to send. It never registers or
+// stages anything, so callers are free to register directly, or stage-then-
+// validate, as the request semantics require.
+func (s *Server) prepareEntity(
 	content map[string]any,
 	validate bool,
-	mode gts.GtsRefValidationMode,
-) (map[string]any, int) {
+) (*gts.JsonEntity, string, map[string]any, int) {
 	// Only the canonical JSON Schema keywords $schema/$id are recognized.
 	hasSchemaField := false
 	if schemaVal, ok := content["$schema"]; ok && schemaVal != nil {
@@ -114,7 +117,7 @@ func (s *Server) addEntityResult(
 	if hasSchemaField {
 		idField, exists := content["$id"]
 		if !exists || idField == nil {
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok":             false,
 				"error":          "Unable to detect GTS ID in schema",
 				"is_type_schema": true,
@@ -122,7 +125,7 @@ func (s *Server) addEntityResult(
 		}
 		idStr, ok := idField.(string)
 		if !ok {
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok":             false,
 				"error":          "JSON Schema $id field must be a string",
 				"is_type_schema": true,
@@ -130,14 +133,14 @@ func (s *Server) addEntityResult(
 		}
 		idStr = strings.TrimSpace(idStr)
 		if idStr == "" {
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok":             false,
 				"error":          "JSON Schema $id field cannot be empty",
 				"is_type_schema": true,
 			}, http.StatusUnprocessableEntity
 		}
 		if !gtsid.HasURIPrefix(idStr) && !gtsid.HasPrefix(idStr) {
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok":             false,
 				"error":          "JSON Schema $id must be a valid GTS identifier (optionally using gts:// prefix)",
 				"is_type_schema": true,
@@ -145,7 +148,7 @@ func (s *Server) addEntityResult(
 		}
 		normalizedID := gtsid.NormalizeID(idStr)
 		if gtsid.HasWildcard(normalizedID) {
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok":             false,
 				"error":          "Wildcards are not allowed in schema IDs, only in patterns for access control",
 				"is_type_schema": true,
@@ -153,14 +156,14 @@ func (s *Server) addEntityResult(
 		}
 		isBaseSchemaID := strings.Count(normalizedID, gtsid.TypeMarker) == 1 && gtsid.IsTypeID(normalizedID)
 		if isBaseSchemaID && !gtsid.HasURIPrefix(idStr) {
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok":             false,
 				"error":          "JSON Schema $id field must use gts:// URI prefix for base schemas",
 				"is_type_schema": true,
 			}, http.StatusUnprocessableEntity
 		}
 		if !gtsid.IsValid(normalizedID) {
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok":             false,
 				"error":          "JSON Schema $id must be a well-formed GTS identifier",
 				"is_type_schema": true,
@@ -179,7 +182,7 @@ func (s *Server) addEntityResult(
 		if validate {
 			status = http.StatusUnprocessableEntity
 		}
-		return map[string]any{
+		return nil, "", map[string]any{
 			"ok":             false,
 			"error":          "Unable to detect GTS ID in instance entity",
 			"is_type_schema": entity.IsTypeSchema,
@@ -198,7 +201,7 @@ func (s *Server) addEntityResult(
 					tildeParts := strings.Split(idStr, gtsid.TypeMarker)
 					// If it's a base schema (only 2 parts: prefix and empty after ~), require gts://
 					if len(tildeParts) == 2 && tildeParts[1] == "" {
-						return map[string]any{
+						return nil, "", map[string]any{
 							"ok":             false,
 							"error":          "JSON Schema $id field must use gts:// URI prefix for GTS identifiers, not plain gts. prefix",
 							"is_type_schema": true,
@@ -207,7 +210,7 @@ func (s *Server) addEntityResult(
 				}
 				// Check for wildcards in any GTS schema IDs
 				if (gtsid.HasURIPrefix(idStr) || gtsid.HasPrefix(idStr)) && gtsid.HasWildcard(idStr) {
-					return map[string]any{
+					return nil, "", map[string]any{
 						"ok":             false,
 						"error":          "Wildcards are not allowed in schema IDs, only in patterns for access control",
 						"is_type_schema": true,
@@ -224,7 +227,7 @@ func (s *Server) addEntityResult(
 			for _, err := range refErrors {
 				errorMsgs = append(errorMsgs, err.Error())
 			}
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok":             false,
 				"error":          fmt.Sprintf("$ref validation failed: %s", strings.Join(errorMsgs, "; ")),
 				"is_type_schema": true,
@@ -239,7 +242,7 @@ func (s *Server) addEntityResult(
 			for _, err := range xGtsRefErrors {
 				errorMsgs = append(errorMsgs, err.Error())
 			}
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok":             false,
 				"error":          fmt.Sprintf("x-gts-ref validation failed: %s", strings.Join(errorMsgs, "; ")),
 				"is_type_schema": true,
@@ -253,19 +256,19 @@ func (s *Server) addEntityResult(
 	// (gts-spec §9.7.1/§9.11).
 	if entity.IsTypeSchema {
 		if err := gts.ValidateSchemaExtensions(entity.Content); err != nil {
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok": false, "error": err.Error(), "is_type_schema": true,
 			}, http.StatusUnprocessableEntity
 		}
 		if err := gts.ValidateSchemaModifiers(entity.Content); err != nil {
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok":             false,
 				"error":          err.Error(),
 				"is_type_schema": true,
 			}, http.StatusUnprocessableEntity
 		}
 		if err := gts.ValidateTraitPlacement(entity.Content); err != nil {
-			return map[string]any{
+			return nil, "", map[string]any{
 				"ok":             false,
 				"error":          err.Error(),
 				"is_type_schema": true,
@@ -273,14 +276,39 @@ func (s *Server) addEntityResult(
 		}
 	}
 
+	return entity, responseID, nil, 0
+}
+
+// addEntityResult runs the full single-entity registration + validation
+// pipeline and returns the JSON response body and HTTP status. Both
+// POST /entities and each POST /type-schemas batch entry go through the same
+// prepare/stage/validate/commit steps, so batch registration honors ?validate
+// / ?gts-ref-validation exactly as the single-entity endpoint does.
+func (s *Server) addEntityResult(
+	content map[string]any,
+	validate bool,
+	mode gts.GtsRefValidationMode,
+) (map[string]any, int) {
+	entity, responseID, errBody, errStatus := s.prepareEntity(content, validate)
+	if errBody != nil {
+		return errBody, errStatus
+	}
+
+	ok := map[string]any{
+		"ok":             true,
+		"gts_id":         responseID,
+		"id":             responseID,
+		"type_id":        entity.TypeID,
+		"is_type_schema": entity.IsTypeSchema,
+	}
+
 	if validate {
-		err := s.store.RegisterWithValidation(entity, func(id string) error {
-			if result := s.store.ValidateEntity(id, mode); !result.OK {
-				return errors.New(result.Error)
-			}
-			return nil
-		})
-		if err != nil {
+		// Stage the entity (invisible to public reads) and validate it before
+		// publishing. A failure discards the staged entity, so a reader never
+		// observes an entity that has not passed validation - and no store-wide
+		// write lock is held across validation, so concurrent reads are not
+		// blocked.
+		if err := s.store.Stage(entity); err != nil {
 			status := http.StatusUnprocessableEntity
 			if isConflict(err) {
 				status = http.StatusConflict
@@ -291,17 +319,19 @@ func (s *Server) addEntityResult(
 				"is_type_schema": entity.IsTypeSchema,
 			}, status
 		}
-		return map[string]any{
-			"ok":             true,
-			"gts_id":         responseID,
-			"id":             responseID,
-			"type_id":        entity.TypeID,
-			"is_type_schema": entity.IsTypeSchema,
-		}, http.StatusOK
+		if result := s.store.ValidateEntity(responseID, mode); !result.OK {
+			s.store.Discard(responseID)
+			return map[string]any{
+				"ok":             false,
+				"error":          result.Error,
+				"is_type_schema": entity.IsTypeSchema,
+			}, http.StatusUnprocessableEntity
+		}
+		s.store.Commit(responseID)
+		return ok, http.StatusOK
 	}
 
-	err := s.store.Register(entity)
-	if err != nil {
+	if err := s.store.Register(entity); err != nil {
 		status := http.StatusOK
 		if isConflict(err) {
 			status = http.StatusConflict
@@ -312,14 +342,7 @@ func (s *Server) addEntityResult(
 			"is_type_schema": entity.IsTypeSchema,
 		}, status
 	}
-
-	return map[string]any{
-		"ok":             true,
-		"gts_id":         responseID,
-		"id":             responseID,
-		"type_id":        entity.TypeID,
-		"is_type_schema": entity.IsTypeSchema,
-	}, http.StatusOK
+	return ok, http.StatusOK
 }
 
 func (s *Server) handleAddEntities(w http.ResponseWriter, r *http.Request) {
@@ -395,34 +418,101 @@ func (s *Server) handleAddSchemas(w http.ResponseWriter, r *http.Request) {
 	}
 	validate := validationRequested(r)
 
-	results := make([]map[string]any, 0, len(schemas))
+	results := make([]map[string]any, len(schemas))
+	if validate {
+		s.stageAndValidateBatch(schemas, mode, results)
+	} else {
+		for i, schema := range schemas {
+			results[i] = s.registerTypeSchema(schema, false, mode)
+		}
+	}
+
 	allOK := true
-	for _, schema := range schemas {
-		result := s.registerTypeSchema(schema, validate, mode)
+	for _, result := range results {
 		if ok, _ := result["ok"].(bool); !ok {
 			allOK = false
 		}
-		results = append(results, result)
 	}
-
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      allOK,
 		"results": results,
 	})
 }
 
-// registerTypeSchema registers a single GTS Type Schema, deriving its GTS Type
-// Identifier from the embedded $id, and returns a per-item result map. The
-// embedded $schema / $id presence checks are batch-specific; the actual
-// registration and (when requested) validation reuse the single-entity path so
-// each entry behaves exactly like a POST /entities call.
-func (s *Server) registerTypeSchema(
-	schema map[string]any,
-	validate bool,
+// stageAndValidateBatch runs a validate=true batch in two phases so the outcome
+// is order-independent and nothing invalid is ever published:
+//
+//  1. Stage every structurally-valid entry (invisible to public reads).
+//  2. Validate every staged entry against the fully-staged set, so an entry can
+//     resolve intra-batch references/ancestors regardless of position.
+//  3. Commit the entries that passed and discard the ones that failed.
+//
+// Because staged entries are never visible to public reads, a concurrent reader
+// never observes an entry that has not (yet) passed validation, and no
+// store-wide write lock is held across validation.
+func (s *Server) stageAndValidateBatch(
+	schemas []map[string]any,
 	mode gts.GtsRefValidationMode,
-) map[string]any {
+	results []map[string]any,
+) {
+	type stagedEntry struct {
+		index    int
+		typeID   string
+		entityID string
+	}
+	var pending []stagedEntry
+
+	// Phase 1: stage.
+	for i, schema := range schemas {
+		typeID, idErr := typeSchemaIdentity(schema)
+		if idErr != nil {
+			results[i] = idErr
+			continue
+		}
+		entity, responseID, errBody, _ := s.prepareEntity(schema, true)
+		if errBody != nil {
+			results[i] = map[string]any{"ok": false, "type_id": typeID, "error": errBody["error"]}
+			continue
+		}
+		if err := s.store.Stage(entity); err != nil {
+			results[i] = map[string]any{"ok": false, "type_id": typeID, "error": err.Error()}
+			continue
+		}
+		pending = append(pending, stagedEntry{index: i, typeID: typeID, entityID: responseID})
+	}
+
+	// Phase 2: validate against the fully-staged set before publishing anything.
+	type verdict struct {
+		entry stagedEntry
+		err   string
+	}
+	verdicts := make([]verdict, 0, len(pending))
+	for _, entry := range pending {
+		if res := s.store.ValidateEntity(entry.entityID, mode); res.OK {
+			verdicts = append(verdicts, verdict{entry: entry})
+		} else {
+			verdicts = append(verdicts, verdict{entry: entry, err: res.Error})
+		}
+	}
+
+	// Phase 3: publish the entries that passed, discard the ones that failed.
+	for _, v := range verdicts {
+		if v.err == "" {
+			s.store.Commit(v.entry.entityID)
+			results[v.entry.index] = map[string]any{"ok": true, "type_id": v.entry.typeID}
+		} else {
+			s.store.Discard(v.entry.entityID)
+			results[v.entry.index] = map[string]any{"ok": false, "type_id": v.entry.typeID, "error": v.err}
+		}
+	}
+}
+
+// typeSchemaIdentity validates the batch-specific requirement that every entry
+// is an object carrying a canonical $schema and a gts:// $id, and returns the
+// derived GTS Type Identifier. On failure it returns the per-item error result.
+func typeSchemaIdentity(schema map[string]any) (string, map[string]any) {
 	if dialect, ok := schema["$schema"].(string); !ok || strings.TrimSpace(dialect) == "" {
-		return map[string]any{
+		return "", map[string]any{
 			"ok":      false,
 			"type_id": nil,
 			"error":   "GTS Type Schema must contain a top-level $schema field",
@@ -430,7 +520,7 @@ func (s *Server) registerTypeSchema(
 	}
 	embeddedID, ok := schema["$id"].(string)
 	if !ok || !strings.HasPrefix(embeddedID, gtsid.URIPrefix+gtsid.Prefix) {
-		return map[string]any{
+		return "", map[string]any{
 			"ok":      false,
 			"type_id": nil,
 			"error":   "GTS Type Schema must contain a top-level $id in gts:// form",
@@ -438,11 +528,26 @@ func (s *Server) registerTypeSchema(
 	}
 	typeID := gtsid.NormalizeID(embeddedID)
 	if !gtsid.IsValid(typeID) || !gtsid.IsTypeID(typeID) {
-		return map[string]any{
+		return "", map[string]any{
 			"ok":      false,
 			"type_id": typeID,
 			"error":   fmt.Sprintf("invalid GTS Type Schema $id: %q", embeddedID),
 		}
+	}
+	return typeID, nil
+}
+
+// registerTypeSchema registers a single GTS Type Schema WITHOUT full validation
+// (the ?validate=false batch path), deriving its GTS Type Identifier from the
+// embedded $id and returning a per-item result map.
+func (s *Server) registerTypeSchema(
+	schema map[string]any,
+	validate bool,
+	mode gts.GtsRefValidationMode,
+) map[string]any {
+	typeID, idErr := typeSchemaIdentity(schema)
+	if idErr != nil {
+		return idErr
 	}
 
 	body, _ := s.addEntityResult(schema, validate, mode)

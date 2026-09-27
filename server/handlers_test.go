@@ -3,9 +3,13 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/GlobalTypeSystem/gts-go/gts"
@@ -229,6 +233,149 @@ func TestAddSchemasHonorsValidate(t *testing.T) {
 	code, _ = post("/type-schemas?gts-ref-validation=bogus", schema("gts.x.batchval._.badmode.v1~"))
 	if code != http.StatusUnprocessableEntity {
 		t.Fatalf("bogus gts-ref-validation status = %d, want 422", code)
+	}
+}
+
+// TestAddSchemasValidateStagingOrderIndependentAndAtomic verifies the two-phase
+// staged batch: a validated batch resolves an intra-batch reference even when
+// the referrer precedes its target (order-independent), and a mixed batch
+// commits only the entries that pass - the invalid one is never published, so a
+// follow-up GET for it returns not-found.
+func TestAddSchemasValidateStagingOrderIndependentAndAtomic(t *testing.T) {
+	s := NewServer(gts.NewGtsStore(nil), "", 0, 0)
+	do := func(method, target, body string) (int, map[string]any) {
+		r := httptest.NewRequest(method, target, bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, r)
+		var resp map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		return w.Code, resp
+	}
+	itemOK := func(resp map[string]any, i int) bool {
+		results, _ := resp["results"].([]any)
+		if i >= len(results) {
+			t.Fatalf("missing results[%d] in %v", i, resp)
+		}
+		item, _ := results[i].(map[string]any)
+		ok, _ := item["ok"].(bool)
+		return ok
+	}
+	d7 := `"$schema":"http://json-schema.org/draft-07/schema#"`
+
+	// Referrer BEFORE target in one validated batch: both must register.
+	_, resp := do(http.MethodPost, "/type-schemas?validate=true", `[`+
+		`{`+d7+`,"$id":"gts://gts.x.border._.referrer.v1~","type":"object","properties":{"child":{"$ref":"gts://gts.x.border._.target.v1~"}}},`+
+		`{`+d7+`,"$id":"gts://gts.x.border._.target.v1~","type":"object"}]`)
+	if resp["ok"] != true || !itemOK(resp, 0) || !itemOK(resp, 1) {
+		t.Fatalf("order-independent batch should fully register, got %v", resp)
+	}
+
+	// Mixed batch: valid commits, invalid (unresolved ref) does not.
+	_, resp = do(http.MethodPost, "/type-schemas?validate=true", `[`+
+		`{`+d7+`,"$id":"gts://gts.x.border._.good.v1~","type":"object"},`+
+		`{`+d7+`,"$id":"gts://gts.x.border._.bad.v1~","type":"object","properties":{"a":{"$ref":"gts://gts.x.border._.missing.v1~"}}}]`)
+	if resp["ok"] != false || !itemOK(resp, 0) || itemOK(resp, 1) {
+		t.Fatalf("mixed batch should commit only the valid entry, got %v", resp)
+	}
+	if code, good := do(http.MethodGet, "/entities/gts.x.border._.good.v1~", ""); code != http.StatusOK || good["ok"] != true {
+		t.Fatalf("valid entry must be retrievable, got %d %v", code, good)
+	}
+	if _, bad := do(http.MethodGet, "/entities/gts.x.border._.bad.v1~", ""); bad["ok"] != false {
+		t.Fatalf("invalid entry must not be registered, got %v", bad)
+	}
+}
+
+// TestAddSchemasValidateStagingConcurrentReadsNeverSeeInvalid is a concurrency
+// probe: while a validate=true batch containing a deliberately-invalid entry is
+// in flight, several goroutines hammer GET /entities/<invalid-id> and assert
+// the invalid entity is NEVER observable. A staged (not-yet-committed) or a
+// register-then-rollback entry would be caught here. The cycle is repeated many
+// times to widen the window. The store uses a read/write lock with a staging
+// overlay, so these reads run genuinely concurrently with the batch writer.
+func TestAddSchemasValidateStagingConcurrentReadsNeverSeeInvalid(t *testing.T) {
+	s := NewServer(gts.NewGtsStore(nil), "", 0, 0)
+	ts := httptest.NewServer(s.mux)
+	defer ts.Close()
+	client := ts.Client()
+
+	const cycles = 10
+	const probes = 4
+	const validPerBatch = 120
+	const d7 = `"$schema":"http://json-schema.org/draft-07/schema#"`
+
+	getOK := func(url string) bool {
+		resp, err := client.Get(url)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var parsed map[string]any
+		if json.Unmarshal(body, &parsed) != nil {
+			return false
+		}
+		ok, _ := parsed["ok"].(bool)
+		return ok
+	}
+
+	var leaks int64
+	for cycle := 0; cycle < cycles; cycle++ {
+		ns := fmt.Sprintf("gts.x.goconc%d._", cycle)
+		var sb strings.Builder
+		sb.WriteString("[")
+		for i := 0; i < validPerBatch; i++ {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+			fmt.Fprintf(&sb, `{%s,"$id":"gts://%s.t%d.v1~","type":"object","properties":{"p":{"type":"string"}}}`, d7, ns, i)
+		}
+		invalidID := fmt.Sprintf("%s.invalid.v1~", ns)
+		fmt.Fprintf(&sb, `,{%s,"$id":"gts://%s","type":"object","properties":{"a":{"$ref":"gts://%s.never.v1~"}}}]`, d7, invalidID, ns)
+		batch := sb.String()
+		invalidURL := ts.URL + "/entities/" + invalidID
+
+		stop := make(chan struct{})
+		var wg sync.WaitGroup
+		for p := 0; p < probes; p++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+						if getOK(invalidURL) {
+							atomic.AddInt64(&leaks, 1)
+						}
+					}
+				}
+			}()
+		}
+
+		resp, err := client.Post(ts.URL+"/type-schemas?validate=true", "application/json", strings.NewReader(batch))
+		close(stop)
+		wg.Wait()
+		if err != nil {
+			t.Fatalf("cycle %d POST failed: %v", cycle, err)
+		}
+		var body map[string]any
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		_ = json.Unmarshal(respBody, &body)
+		if body["ok"] != false {
+			t.Fatalf("cycle %d: batch with an invalid entry must report ok=false, got %v", cycle, body)
+		}
+		if getOK(invalidURL) {
+			t.Fatalf("cycle %d: invalid entry must not be registered after the batch", cycle)
+		}
+		if !getOK(ts.URL + "/entities/" + ns + ".t0.v1~") {
+			t.Fatalf("cycle %d: a valid batch entry must be registered", cycle)
+		}
+	}
+
+	if n := atomic.LoadInt64(&leaks); n != 0 {
+		t.Fatalf("an uncommitted/invalid entity was exposed to a concurrent reader %d time(s)", n)
 	}
 }
 

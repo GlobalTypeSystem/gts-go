@@ -158,6 +158,7 @@ type GtsStore struct {
 	readerMu       sync.Mutex
 	mu             sync.RWMutex
 	byID           map[string]*JsonEntity
+	staged         map[string]*JsonEntity
 	reader         GtsReader
 	config         *RegistryConfig
 	schemaCache    sync.Map
@@ -220,6 +221,7 @@ func NewGtsStoreWithConfig(reader GtsReader, config *RegistryConfig) *GtsStore {
 	configCopy := *config
 	store := &GtsStore{
 		byID:   make(map[string]*JsonEntity),
+		staged: make(map[string]*JsonEntity),
 		reader: reader,
 		config: &configCopy,
 	}
@@ -386,9 +388,27 @@ func (s *GtsStore) RegisterSchema(typeID string, schema map[string]any) error {
 	return nil
 }
 
-// Get retrieves a JsonEntity by its ID
-// If not found in cache, attempts to fetch from reader
+// Get retrieves a JsonEntity by its ID for INTERNAL use (validation, $ref and
+// chain resolution). It consults the staging overlay first, so an entity that
+// is being validated as part of a batch can resolve its not-yet-committed
+// siblings regardless of their order in the batch. Public read endpoints MUST
+// use GetCommitted instead so uncommitted entities are never exposed.
 func (s *GtsStore) Get(entityID string) *JsonEntity {
+	s.mu.RLock()
+	if staged := s.staged[entityID]; staged != nil {
+		s.mu.RUnlock()
+		return cloneJsonEntity(staged)
+	}
+	s.mu.RUnlock()
+	return s.GetCommitted(entityID)
+}
+
+// GetCommitted retrieves a committed JsonEntity by its ID, never consulting the
+// staging overlay. This is the read path for public/API consumers: a
+// staged-but-not-yet-committed entity is invisible here, so clients never
+// observe an entity that has not passed validation.
+// If not found in cache, attempts to fetch from reader.
+func (s *GtsStore) GetCommitted(entityID string) *JsonEntity {
 	s.mu.RLock()
 	entity := s.byID[entityID]
 	s.mu.RUnlock()
@@ -458,6 +478,72 @@ func (s *GtsStore) Unregister(entityID string) {
 	defer s.writerMu.Unlock()
 	s.mu.Lock()
 	delete(s.byID, entityID)
+	s.mu.Unlock()
+	s.invalidateSchemaCache()
+}
+
+// Stage places an entity into the staging overlay WITHOUT publishing it. A
+// staged entity is visible to internal validation (via Get) so a batch can
+// resolve intra-batch references regardless of entry order, but it is invisible
+// to public reads (GetCommitted / List / Query) until Commit. This is how a
+// validate=true registration avoids ever exposing an entity that has not yet
+// passed validation, without holding a store-wide write lock across the
+// (potentially slow) validation. It returns an EntityConflictError when a
+// committed entity with different content already holds the id and updates are
+// not allowed. Callers MUST eventually Commit or Discard the staged id.
+func (s *GtsStore) Stage(entity *JsonEntity) error {
+	if entity == nil {
+		return fmt.Errorf("entity must not be nil")
+	}
+	key := entity.EffectiveID()
+	if key == "" {
+		return fmt.Errorf("entity must have a gts_id or a non-empty id field")
+	}
+	if err := validateJSONContent(entity.Content); err != nil {
+		return fmt.Errorf("entity content must be valid JSON: %w", err)
+	}
+	staged := cloneJsonEntity(entity)
+
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
+	s.mu.Lock()
+	previous, exists := s.byID[key]
+	s.mu.Unlock()
+	if exists && !s.config.AllowEntityUpdates && contentHash(previous.Content) != contentHash(entity.Content) {
+		return &EntityConflictError{EntityID: key}
+	}
+
+	s.mu.Lock()
+	s.staged[key] = staged
+	s.mu.Unlock()
+	// A staged type schema changes what a validating sibling resolves, so any
+	// memoized compilation that predates it must be discarded.
+	s.invalidateSchemaCache()
+	return nil
+}
+
+// Commit publishes a previously staged entity, making it visible to public
+// reads, and clears it from the staging overlay.
+func (s *GtsStore) Commit(entityID string) {
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
+	s.mu.Lock()
+	if staged, ok := s.staged[entityID]; ok {
+		s.byID[entityID] = staged
+		delete(s.staged, entityID)
+	}
+	s.mu.Unlock()
+	s.invalidateSchemaCache()
+}
+
+// Discard drops a staged entity that failed validation. The committed state is
+// untouched, so a client never observes the discarded (invalid) entity and any
+// prior committed version under the same id is preserved.
+func (s *GtsStore) Discard(entityID string) {
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
+	s.mu.Lock()
+	delete(s.staged, entityID)
 	s.mu.Unlock()
 	s.invalidateSchemaCache()
 }
