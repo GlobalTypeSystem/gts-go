@@ -555,3 +555,276 @@ func TestInferDirection(t *testing.T) {
 		})
 	}
 }
+
+// ── OP#8 structured diagnostics (#2) ────────────────────────────────────────
+
+func TestCheckCompatibility_Diagnostics_Incompatible(t *testing.T) {
+	store := NewGtsStore(nil)
+	registerSchema(t, store, map[string]any{
+		"$id": "gts://gts.x.core.diag.thing.v1.0~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"type": "object", "required": []any{"eventId"},
+		"properties": map[string]any{"eventId": map[string]any{"type": "string"}},
+	})
+	registerSchema(t, store, map[string]any{
+		"$id": "gts://gts.x.core.diag.thing.v1.1~", "$schema": "http://json-schema.org/draft-07/schema#",
+		"type": "object", "required": []any{"eventId", "newRequiredField"},
+		"properties": map[string]any{
+			"eventId": map[string]any{"type": "string"}, "newRequiredField": map[string]any{"type": "string"},
+		},
+	})
+
+	result := store.CheckCompatibility("gts.x.core.diag.thing.v1.0~", "gts.x.core.diag.thing.v1.1~")
+	assertCompat(t, result, VerdictIncompatible, VerdictCompatible, VerdictIncompatible)
+
+	if result.IsBackwardCompatible || !result.IsForwardCompatible || result.IsFullyCompatible {
+		t.Errorf("is_*_compatible flags disagree with verdicts: %+v", result)
+	}
+	if len(result.BackwardErrors) == 0 {
+		t.Error("expected backward_errors for the incompatible direction")
+	}
+	if len(result.ForwardErrors) != 0 {
+		t.Errorf("expected no forward_errors, got %v", result.ForwardErrors)
+	}
+	// Diagnostics must reconstruct the directional verdicts exactly.
+	var backwardDiags, forwardDiags []CompatibilityDiagnostic
+	for _, d := range result.Diagnostics {
+		if d.Direction == CompatDirectionBackward {
+			backwardDiags = append(backwardDiags, d)
+		} else {
+			forwardDiags = append(forwardDiags, d)
+		}
+	}
+	if got := verdictFromDiagnostics(backwardDiags); got != result.BackwardCompatibility {
+		t.Errorf("verdictFromDiagnostics(backward) = %q, want %q", got, result.BackwardCompatibility)
+	}
+	if got := verdictFromDiagnostics(forwardDiags); got != result.ForwardCompatibility {
+		t.Errorf("verdictFromDiagnostics(forward) = %q, want %q", got, result.ForwardCompatibility)
+	}
+}
+
+func TestCheckCompatibility_Diagnostics_MissingSchema(t *testing.T) {
+	store := NewGtsStore(nil)
+	result := store.CheckCompatibility("gts.x.core.diag.absent.v1.0~", "gts.x.core.diag.absent.v1.1~")
+	assertCompat(t, result, VerdictUnknown, VerdictUnknown, VerdictUnknown)
+	if len(result.Diagnostics) == 0 {
+		t.Fatal("expected diagnostics explaining the missing schemas")
+	}
+	for _, d := range result.Diagnostics {
+		if d.Verdict != VerdictUnknown {
+			t.Errorf("missing-schema diagnostic verdict = %q, want unknown", d.Verdict)
+		}
+	}
+	// Slices must serialise as [] not null.
+	if result.BackwardErrors == nil || result.ForwardErrors == nil || result.CandidateObjectLevels == nil {
+		t.Error("result slices must be non-nil")
+	}
+}
+
+func TestVerdictFromDiagnostics(t *testing.T) {
+	if got := verdictFromDiagnostics(nil); got != VerdictCompatible {
+		t.Errorf("no diagnostics: want compatible, got %q", got)
+	}
+	unknownOnly := []CompatibilityDiagnostic{{Verdict: VerdictUnknown}}
+	if got := verdictFromDiagnostics(unknownOnly); got != VerdictUnknown {
+		t.Errorf("unknown only: want unknown, got %q", got)
+	}
+	mixed := []CompatibilityDiagnostic{{Verdict: VerdictUnknown}, {Verdict: VerdictIncompatible}}
+	if got := verdictFromDiagnostics(mixed); got != VerdictIncompatible {
+		t.Errorf("incompatible dominates: want incompatible, got %q", got)
+	}
+}
+
+// ── OP#8 content-model classification (#3) ──────────────────────────────────
+
+func TestClassifyObjectLevels(t *testing.T) {
+	schema := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false, // root: closed
+		"properties": map[string]any{
+			"openBag": map[string]any{
+				"type":                 "object",
+				"additionalProperties": true, // open
+			},
+			"partialBag": map[string]any{
+				"type":                 "object",
+				"additionalProperties": map[string]any{"type": "string"}, // schema-valued -> partial
+			},
+		},
+	}
+	levels := classifyObjectLevels(schema)
+	got := map[string]string{}
+	for _, l := range levels {
+		got[l.Path] = l.ContentModel
+	}
+	if got["$"] != ContentModelClosed {
+		t.Errorf("root: want closed, got %q", got["$"])
+	}
+	if got["$.openBag"] != ContentModelOpen {
+		t.Errorf("$.openBag: want open, got %q", got["$.openBag"])
+	}
+	if got["$.partialBag"] != ContentModelPartial {
+		t.Errorf("$.partialBag: want partially_open, got %q", got["$.partialBag"])
+	}
+}
+
+func TestBooleanSchemaValue(t *testing.T) {
+	cases := []struct {
+		name   string
+		schema any
+		want   *bool
+	}{
+		{"true", true, boolPtr(true)},
+		{"false", false, boolPtr(false)},
+		{"empty object", map[string]any{}, boolPtr(true)},
+		{"annotations only", map[string]any{"title": "x", "description": "y"}, boolPtr(true)},
+		{"not empty", map[string]any{"not": map[string]any{}}, boolPtr(false)},
+		{"constrained", map[string]any{"type": "string"}, nil},
+		{"multiple assertions", map[string]any{"type": "string", "minLength": float64(1)}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := booleanSchemaValue(tc.schema)
+			switch {
+			case tc.want == nil && got != nil:
+				t.Errorf("want nil, got %v", *got)
+			case tc.want != nil && got == nil:
+				t.Errorf("want %v, got nil", *tc.want)
+			case tc.want != nil && got != nil && *got != *tc.want:
+				t.Errorf("want %v, got %v", *tc.want, *got)
+			}
+		})
+	}
+}
+
+func TestClassifyObjectLevels_DepthGuard(t *testing.T) {
+	// Deeper than the cap: the classifier must terminate, not overflow.
+	node := map[string]any{"type": "object", "additionalProperties": false}
+	for i := 0; i < maxCompatRecursionDepth+10; i++ {
+		node = map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"child": node},
+		}
+	}
+	levels := classifyObjectLevels(node)
+	if len(levels) == 0 {
+		t.Error("expected at least the shallow levels to be classified")
+	}
+}
+
+// ── content-model classifier: gts-rust parity (#1–#4) ───────────────────────
+
+func levelMap(schema map[string]any) map[string]string {
+	out := map[string]string{}
+	for _, l := range classifyObjectLevels(schema) {
+		out[l.Path] = l.ContentModel
+	}
+	return out
+}
+
+func TestClassifyObjectLevels_PatternProperties(t *testing.T) {
+	// All patterns closed + additionalProperties:false → closed.
+	got := levelMap(map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"patternProperties":    map[string]any{"^x-": false},
+	})
+	if got["$"] != ContentModelClosed {
+		t.Errorf("all-closed patterns + AP:false: want closed, got %q", got["$"])
+	}
+
+	// All patterns open + additionalProperties:true → open.
+	got = levelMap(map[string]any{
+		"type":                 "object",
+		"additionalProperties": true,
+		"patternProperties":    map[string]any{"^x-": true},
+	})
+	if got["$"] != ContentModelOpen {
+		t.Errorf("all-open patterns + AP:true: want open, got %q", got["$"])
+	}
+
+	// A constraining pattern → partially_open.
+	got = levelMap(map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"patternProperties":    map[string]any{"^x-": map[string]any{"type": "string"}},
+	})
+	if got["$"] != ContentModelPartial {
+		t.Errorf("constraining pattern: want partially_open, got %q", got["$"])
+	}
+}
+
+func TestClassifyObjectLevels_PropertyNames(t *testing.T) {
+	// Boolean propertyNames:false closes the level regardless of the fallback.
+	got := levelMap(map[string]any{
+		"type":                 "object",
+		"additionalProperties": true,
+		"propertyNames":        false,
+	})
+	if got["$"] != ContentModelClosed {
+		t.Errorf("propertyNames:false: want closed, got %q", got["$"])
+	}
+
+	// A schema-valued propertyNames only constrains → partially_open.
+	got = levelMap(map[string]any{
+		"type":                 "object",
+		"additionalProperties": true,
+		"propertyNames":        map[string]any{"pattern": "^[a-z]+$"},
+	})
+	if got["$"] != ContentModelPartial {
+		t.Errorf("schema-valued propertyNames: want partially_open, got %q", got["$"])
+	}
+}
+
+func TestClassifyObjectLevels_UnevaluatedPropertiesIsDialectAware(t *testing.T) {
+	// 2020-12 evaluates unevaluatedProperties, so it acts as the fallback.
+	got := levelMap(map[string]any{
+		"$schema":               "https://json-schema.org/draft/2020-12/schema",
+		"type":                  "object",
+		"unevaluatedProperties": false,
+		"properties":            map[string]any{"a": map[string]any{"type": "string"}},
+	})
+	if got["$"] != ContentModelClosed {
+		t.Errorf("2020-12 unevaluatedProperties:false: want closed, got %q", got["$"])
+	}
+
+	// draft-07 does not evaluate unevaluatedProperties, so it is not a fallback;
+	// with no additionalProperties the level stays open.
+	got = levelMap(map[string]any{
+		"$schema":               "http://json-schema.org/draft-07/schema#",
+		"type":                  "object",
+		"unevaluatedProperties": false,
+		"properties":            map[string]any{"a": map[string]any{"type": "string"}},
+	})
+	if got["$"] != ContentModelOpen {
+		t.Errorf("draft-07 unevaluatedProperties:false: want open, got %q", got["$"])
+	}
+}
+
+func TestClassifyObjectLevels_FlattensAllOf(t *testing.T) {
+	// allOf carrying additionalProperties:false closes the effective level.
+	got := levelMap(map[string]any{
+		"type": "object",
+		"allOf": []any{
+			map[string]any{"additionalProperties": false},
+			map[string]any{"properties": map[string]any{"a": map[string]any{"type": "string"}}},
+		},
+	})
+	if got["$"] != ContentModelClosed {
+		t.Errorf("allOf additionalProperties:false: want closed, got %q", got["$"])
+	}
+}
+
+func TestClassifyObjectLevels_IgnoresBranchLevels(t *testing.T) {
+	// Object levels reachable only through anyOf/oneOf have no single content
+	// model and must not be reported (only $ here).
+	levels := classifyObjectLevels(map[string]any{
+		"type": "object",
+		"anyOf": []any{
+			map[string]any{"type": "object", "additionalProperties": false},
+			map[string]any{"type": "object", "additionalProperties": true},
+		},
+	})
+	if len(levels) != 1 || levels[0].Path != "$" {
+		t.Errorf("anyOf branches must not be reported as levels, got %+v", levels)
+	}
+}

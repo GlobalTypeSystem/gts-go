@@ -7,6 +7,36 @@ package gts
 
 import "testing"
 
+// nestObjectSchema builds an object schema nested `levels` deep under a
+// "child" property, terminating in a string leaf.
+func nestObjectSchema(levels int) map[string]any {
+	schema := map[string]any{"type": "string"}
+	for i := 0; i < levels; i++ {
+		schema = map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"child": schema},
+		}
+	}
+	return schema
+}
+
+// TestCheckInclusion_DepthGuard verifies the inclusion checker stops descending
+// past maxCompatRecursionDepth and reports "unknown" (nil) instead of recursing
+// without bound. $ref inlining can produce trees far deeper than any authored
+// document, so this guard prevents a stack overflow on adversarial input.
+func TestCheckInclusion_DepthGuard(t *testing.T) {
+	deep := nestObjectSchema(maxCompatRecursionDepth + 10)
+	if result := checkInclusion(deep, deep, 0); result != nil {
+		t.Errorf("expected unknown (nil) past recursion cap, got %v", *result)
+	}
+
+	// A shallow schema stays fully decidable.
+	shallow := nestObjectSchema(3)
+	if result := checkInclusion(shallow, shallow, 0); result == nil || !*result {
+		t.Error("shallow identical schemas should be compatible")
+	}
+}
+
 // ── compatibility_helpers.go ────────────────────────────────────────────────
 
 func TestGetNumber_AllTypes(t *testing.T) {
@@ -342,7 +372,7 @@ func TestCheckArrayInclusion(t *testing.T) {
 	// Both have items, subset items ⊆ superset items
 	sub := map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}
 	sup := map[string]any{"type": "array", "items": map[string]any{"type": "number"}}
-	r := checkArrayInclusion(sub, sup)
+	r := checkArrayInclusion(sub, sup, 0)
 	if r == nil || !*r {
 		t.Error("integer items should be subset of number items")
 	}
@@ -350,7 +380,7 @@ func TestCheckArrayInclusion(t *testing.T) {
 	// Superset has items constraint, subset doesn't
 	subOpen := map[string]any{"type": "array"}
 	supConstrained := map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
-	r2 := checkArrayInclusion(subOpen, supConstrained)
+	r2 := checkArrayInclusion(subOpen, supConstrained, 0)
 	if r2 == nil || *r2 {
 		t.Error("open items should not be subset of constrained items")
 	}
@@ -358,13 +388,13 @@ func TestCheckArrayInclusion(t *testing.T) {
 	// Superset has no items constraint → accepts any
 	subConstrained := map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	supOpen := map[string]any{"type": "array"}
-	r3 := checkArrayInclusion(subConstrained, supOpen)
+	r3 := checkArrayInclusion(subConstrained, supOpen, 0)
 	if r3 == nil || !*r3 {
 		t.Error("constrained items should be subset of open items")
 	}
 
 	// Both have no items → equivalent
-	r4 := checkArrayInclusion(map[string]any{"type": "array"}, map[string]any{"type": "array"})
+	r4 := checkArrayInclusion(map[string]any{"type": "array"}, map[string]any{"type": "array"}, 0)
 	if r4 == nil || !*r4 {
 		t.Error("both open should be subset")
 	}

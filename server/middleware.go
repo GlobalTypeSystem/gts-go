@@ -14,11 +14,19 @@ import (
 	"time"
 )
 
-// responseWriter wraps http.ResponseWriter to capture status code
+// maxLogBodyBytes bounds how much of a request/response body is retained for
+// debug logging. Bodies can be attacker-controlled and arbitrarily large (and
+// may carry sensitive data), so we never buffer or emit more than this; the log
+// is a truncated preview, not a verbatim copy.
+const maxLogBodyBytes = 4096
+
+// responseWriter wraps http.ResponseWriter to capture the status code and, when
+// body capture is enabled, a bounded prefix of the response body for logging.
 type responseWriter struct {
 	http.ResponseWriter
-	statusCode int
-	body       bytes.Buffer
+	statusCode  int
+	captureBody bool
+	body        bytes.Buffer
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
@@ -27,8 +35,15 @@ func (rw *responseWriter) WriteHeader(code int) {
 }
 
 func (rw *responseWriter) Write(p []byte) (int, error) {
-	// Capture body
-	rw.body.Write(p)
+	// Only buffer a bounded prefix, and only when the caller intends to log it.
+	if rw.captureBody {
+		if remaining := maxLogBodyBytes - rw.body.Len(); remaining > 0 {
+			if len(p) < remaining {
+				remaining = len(p)
+			}
+			rw.body.Write(p[:remaining])
+		}
+	}
 	return rw.ResponseWriter.Write(p)
 }
 
@@ -41,17 +56,17 @@ func (s *Server) withLogging(handler http.Handler) http.Handler {
 		}
 
 		start := time.Now()
-		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		captureBody := s.verbose >= 2
+		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK, captureBody: captureBody}
 
-		// If highest verbosity, capture request body (log later after handler)
+		// At highest verbosity, capture a bounded prefix of the request body for
+		// logging while streaming the full body through to downstream handlers.
 		var reqBodyData []byte
-		if s.verbose >= 2 {
-			if r.Body != nil {
-				data, _ := io.ReadAll(r.Body)
-				// Restore the body for downstream handlers
-				r.Body = io.NopCloser(bytes.NewReader(data))
-				reqBodyData = data
-			}
+		if captureBody && r.Body != nil {
+			preview, _ := io.ReadAll(io.LimitReader(r.Body, maxLogBodyBytes))
+			// Restore the body (preview + untouched remainder) for handlers.
+			r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(preview), r.Body))
+			reqBodyData = preview
 		}
 
 		handler.ServeHTTP(wrapped, r)

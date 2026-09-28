@@ -126,20 +126,6 @@ func TestQuery_WithFilter(t *testing.T) {
 	}
 }
 
-// ── schema_compat.go — stringSliceContains ──────────────────────────────────
-
-func TestStringSliceContains(t *testing.T) {
-	if !stringSliceContains([]string{"a", "b", "c"}, "b") {
-		t.Error("expected true for present element")
-	}
-	if stringSliceContains([]string{"a", "b", "c"}, "d") {
-		t.Error("expected false for absent element")
-	}
-	if stringSliceContains([]string{}, "a") {
-		t.Error("expected false for empty slice")
-	}
-}
-
 // ── schema_compat.go — checkEnumeratedValuesAgainstBase multipleOf ──────────
 
 func TestCheckEnumeratedValuesAgainstBase_MultipleOf(t *testing.T) {

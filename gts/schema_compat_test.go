@@ -792,6 +792,125 @@ func TestValidateSchemaChain_TwoLevel_Compatible(t *testing.T) {
 	}
 }
 
+func TestSchemaDialectRejectsUnsupportedURIs(t *testing.T) {
+	for name, dialect := range map[string]string{
+		"unknown":  "https://example.invalid/not-a-json-schema-dialect",
+		"mistyped": "https://json-schema.org/draft/2020-21/schema",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := schemaDialect(map[string]any{"$schema": dialect})
+			if err == nil || !strings.Contains(err.Error(), "unsupported JSON Schema dialect") {
+				t.Fatalf("expected unsupported dialect error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateSchemaChain_LocalRefDialectMismatch(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.embedded.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+		"properties": map[string]any{
+			"legacy": map[string]any{"$ref": "#/$defs/legacy"},
+		},
+		"$defs": map[string]any{
+			"legacy": map[string]any{
+				"$id":     "legacy",
+				"$schema": "http://json-schema.org/draft-07/schema#",
+				"type":    "string",
+			},
+		},
+	})
+
+	result := store.ValidateSchemaChain("gts.x.chain.ns.embedded.v1~")
+	if result.OK || !strings.Contains(result.Error, "local $ref target") {
+		t.Fatalf("expected local ref dialect failure, got: %+v", result)
+	}
+}
+
+func TestValidateSchemaChain_MixedDialectChain(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.dialect.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type":    "object",
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.dialect.v1~x.chain.ns.child.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+	})
+
+	result := store.ValidateSchemaChain("gts.x.chain.ns.dialect.v1~x.chain.ns.child.v1~")
+	if result.OK || !strings.Contains(result.Error, "mixes JSON Schema dialects") {
+		t.Fatalf("expected mixed-dialect chain failure, got: %+v", result)
+	}
+}
+
+func TestValidateSchemaChain_TransitiveRefDialectMismatch(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.foreign.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.middle.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.chain.ns.foreign.v1~"},
+		},
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.ns.host.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.chain.ns.middle.v1~"},
+		},
+	})
+
+	result := store.ValidateSchemaChain("gts.x.chain.ns.host.v1~")
+	if result.OK || !strings.Contains(result.Error, "gts.x.chain.ns.foreign.v1~") {
+		t.Fatalf("expected transitive ref dialect failure, got: %+v", result)
+	}
+}
+
+func TestValidateSchemaChain_AncestorRefDialectMismatch(t *testing.T) {
+	// Issue C: the cross-dialect $ref lives on an ancestor (the chain root), and
+	// the descendant derives by chained-id re-declaration without referencing the
+	// ancestor or the foreign target. A leaf-only reference walk would accept the
+	// descendant; validating the whole chain closure must reject it.
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.anc.foreign.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.anc.base.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type":    "object",
+		"properties": map[string]any{
+			"ext": map[string]any{"$ref": "gts://gts.x.chain.anc.foreign.v1~"},
+		},
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.chain.anc.base.v1~x.chain.anc.child.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type":    "object",
+		"properties": map[string]any{
+			"label": map[string]any{"type": "string"},
+		},
+	})
+
+	result := store.ValidateSchemaChain("gts.x.chain.anc.base.v1~x.chain.anc.child.v1~")
+	if result.OK || !strings.Contains(result.Error, "gts.x.chain.anc.foreign.v1~") {
+		t.Fatalf("expected ancestor ref dialect failure, got: %+v", result)
+	}
+}
+
 func TestValidateSchemaChain_TwoLevel_TypeChange(t *testing.T) {
 	store := NewGtsStore(nil)
 	mustRegister(t, store, map[string]any{
@@ -984,6 +1103,23 @@ func TestValidateSchemaChain_CircularRef(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(result.Error), "circular") {
 		t.Errorf("expected error to contain 'circular', got: %s", result.Error)
+	}
+}
+
+func TestResolveRefs_ExpansionBudget(t *testing.T) {
+	store := NewGtsStore(nil)
+	targetID := "gts.x.budget.ns.target.v1~"
+	mustRegister(t, store, map[string]any{
+		"$id":  "gts://" + targetID,
+		"type": "object",
+	})
+	branches := make([]any, maxSchemaRefExpansions+1)
+	for i := range branches {
+		branches[i] = map[string]any{"$ref": "gts://" + targetID}
+	}
+	_, err := store.resolveRefs(map[string]any{"allOf": branches})
+	if err == nil || !strings.Contains(err.Error(), "expansion exceeds limit") {
+		t.Fatalf("resolveRefs error = %v", err)
 	}
 }
 

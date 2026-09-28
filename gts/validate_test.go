@@ -6,6 +6,7 @@ Released under Apache License 2.0
 package gts
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -430,6 +431,64 @@ func TestValidateInstance_NoSchemaID(t *testing.T) {
 	}
 }
 
+func TestValidateTransientJSON_RejectsMixedDialectSchemaGraph(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.validate.ns.foreign.v1~",
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "object",
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://gts.x.validate.ns.host.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://gts.x.validate.ns.foreign.v1~"},
+		},
+	})
+
+	result := store.ValidateTransientJSON(map[string]any{
+		"id":   "gts.x.validate.ns.host.v1~x.validate.ns.item.v1",
+		"type": "gts.x.validate.ns.host.v1~",
+	}, "")
+	if result.OK || result.Error == "" {
+		t.Fatalf("expected mixed-dialect schema graph failure, got: %+v", result)
+	}
+}
+
+func TestValidateWithSchemaLoadsReferencedSchemasOnDemand(t *testing.T) {
+	store := NewGtsStore(nil)
+	baseID := "gts.x.validate.ns.ondemand.v1~"
+	derivedID := "gts.x.validate.ns.ondemand.v1~x.validate.ns.child.v1~"
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://" + baseID,
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"$defs": map[string]any{
+			"named": map[string]any{
+				"type":     "object",
+				"required": []any{"name"},
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string"},
+				},
+			},
+		},
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":     "gts://" + derivedID,
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"allOf": []any{
+			map[string]any{"$ref": "gts://" + baseID + "#/$defs/named"},
+		},
+	})
+
+	derived := store.Get(derivedID)
+	if err := store.validateWithSchema(map[string]any{"name": "ok"}, derived.Content); err != nil {
+		t.Fatalf("expected on-demand reference resolution to pass: %v", err)
+	}
+	if err := store.validateWithSchema(map[string]any{}, derived.Content); err == nil {
+		t.Fatal("expected referenced required constraint to fail")
+	}
+}
+
 func TestECMARegexpEngine(t *testing.T) {
 	matcher, err := ecmaRegexpEngine("^(?!x).*$")
 	if err != nil {
@@ -441,5 +500,49 @@ func TestECMARegexpEngine(t *testing.T) {
 	regexp := matcher.(*regexp2RE)
 	if regexp.re.MatchTimeout != time.Second {
 		t.Errorf("expected one-second regexp timeout, got %s", regexp.re.MatchTimeout)
+	}
+}
+
+// TestCompileSchema_GenerationGuard verifies the compiled-schema cache rejects an
+// entry left over from before an invalidation, closing the race where a compile
+// that ran concurrently with a store mutation publishes a stale result.
+func TestCompileSchema_GenerationGuard(t *testing.T) {
+	store := NewGtsStore(nil)
+	schema := map[string]any{
+		"$id":     "gts://gts.x.core.cache.thing.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type":    "object",
+	}
+	normalized := normalizeSchemaForCompile(schema)
+	schemaID, _ := normalized["$id"].(string)
+	key := schemaID + "\x00" + contentHash(normalized)
+
+	// First compile populates the cache at the current generation.
+	if c, err := store.compileSchema(schemaID, normalized, schema); err != nil || c == nil {
+		t.Fatalf("initial compile failed: %v", err)
+	}
+	if _, ok := store.schemaCache.Load(key); !ok {
+		t.Fatal("expected the successful compile to be cached")
+	}
+
+	// A mutation advances the generation and clears the cache.
+	genBefore := store.schemaCacheGen.Load()
+	store.invalidateSchemaCache()
+	if store.schemaCacheGen.Load() != genBefore+1 {
+		t.Fatalf("invalidation must advance the generation: %d -> %d", genBefore, store.schemaCacheGen.Load())
+	}
+
+	// Simulate a compile that lost the Store/Clear race: an entry carrying the
+	// pre-mutation generation lands in the map. It must not be reused.
+	store.schemaCache.Store(key, &compiledSchemaEntry{
+		err: errors.New("stale cache entry (test)"),
+		gen: store.schemaCacheGen.Load() - 1,
+	})
+	c, err := store.compileSchema(schemaID, normalized, schema)
+	if err != nil {
+		t.Fatalf("stale-generation entry must be ignored, got: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected a fresh compile after the stale entry was rejected")
 	}
 }
