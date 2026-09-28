@@ -159,15 +159,18 @@ type GtsStore struct {
 	readerMu sync.Mutex
 	mu       sync.RWMutex
 	byID     map[string]*JsonEntity
-	// staged maps a unique staging TOKEN to its entry (registry key + entity).
-	// Keying by token (not by entity key) means two entries that resolve to the
-	// same id - a duplicated batch entry or two concurrent batches - never
-	// clobber each other, and Commit/Discard only affect the entry they name.
+	// staged maps a unique staging TOKEN to its entry (registry key + entity +
+	// staging session). Keying by token (not by entity key) means two entries
+	// that resolve to the same id - a duplicated batch entry or two concurrent
+	// batches - never clobber each other, and Commit/Discard only affect the
+	// entry they name.
 	staged map[string]*stagedEntry
-	// stagedByKey is the by-key overlay Get consults so a batch resolves its
-	// not-yet-committed siblings; it holds the most recently staged entity for
-	// each key and is recomputed when a token is committed or discarded.
-	stagedByKey    map[string]*JsonEntity
+	// stagedByKey is the by-key overlay a SESSION-SCOPED read consults so a batch
+	// resolves its OWN not-yet-committed siblings - and only its own. It is keyed
+	// session -> key -> most-recently-staged entity, so one request's unvalidated
+	// staged entries never leak into another request's validation. Recomputed
+	// when a token is committed or discarded.
+	stagedByKey    map[string]map[string]*JsonEntity
 	stageSeq       atomic.Uint64
 	reader         GtsReader
 	config         *RegistryConfig
@@ -176,10 +179,12 @@ type GtsStore struct {
 }
 
 // stagedEntry is one staged registration: the registry key it will publish
-// under, and the (already cloned) entity content.
+// under, the (already cloned) entity content, and the staging session it
+// belongs to (so it is visible only to reads scoped to that same session).
 type stagedEntry struct {
-	key    string
-	entity *JsonEntity
+	key     string
+	entity  *JsonEntity
+	session string
 }
 
 // invalidateSchemaCache drops every memoized compiled schema and advances the
@@ -239,7 +244,7 @@ func NewGtsStoreWithConfig(reader GtsReader, config *RegistryConfig) *GtsStore {
 	store := &GtsStore{
 		byID:        make(map[string]*JsonEntity),
 		staged:      make(map[string]*stagedEntry),
-		stagedByKey: make(map[string]*JsonEntity),
+		stagedByKey: make(map[string]map[string]*JsonEntity),
 		reader:      reader,
 		config:      &configCopy,
 	}
@@ -407,17 +412,30 @@ func (s *GtsStore) RegisterSchema(typeID string, schema map[string]any) error {
 }
 
 // Get retrieves a JsonEntity by its ID for INTERNAL use (validation, $ref and
-// chain resolution). It consults the staging overlay first, so an entity that
-// is being validated as part of a batch can resolve its not-yet-committed
-// siblings regardless of their order in the batch. Public read endpoints MUST
-// use GetCommitted instead so uncommitted entities are never exposed.
+// chain resolution) using the COMMITTED store only. It never consults the
+// staging overlay, so one request's not-yet-validated staged entries can never
+// affect another's resolution. A validation that must resolve its own batch's
+// staged siblings uses getScoped with its staging session. Public read
+// endpoints use GetCommitted so uncommitted entities are never exposed.
 func (s *GtsStore) Get(entityID string) *JsonEntity {
-	s.mu.RLock()
-	if staged := s.stagedByKey[entityID]; staged != nil {
+	return s.getScoped(entityID, "")
+}
+
+// getScoped resolves entityID against the committed store overlaid with ONLY the
+// staged entries of the given staging session. An empty session means
+// committed-only (identical to a public read), so an entry staged by another
+// request is invisible here.
+func (s *GtsStore) getScoped(entityID string, session string) *JsonEntity {
+	if session != "" {
+		s.mu.RLock()
+		if overlay := s.stagedByKey[session]; overlay != nil {
+			if staged := overlay[entityID]; staged != nil {
+				s.mu.RUnlock()
+				return cloneJsonEntity(staged)
+			}
+		}
 		s.mu.RUnlock()
-		return cloneJsonEntity(staged)
 	}
-	s.mu.RUnlock()
 	return s.GetCommitted(entityID)
 }
 
@@ -509,8 +527,10 @@ func (s *GtsStore) Unregister(entityID string) {
 // (potentially slow) validation. It returns a unique staging token identifying
 // this entry, or an EntityConflictError when a committed entity with different
 // content already holds the id and updates are not allowed. Callers MUST
-// eventually Commit or Discard the returned token.
-func (s *GtsStore) Stage(entity *JsonEntity) (string, error) {
+// eventually Commit or Discard the returned token. The entry is associated with
+// the given staging session (a batch id); pass "" for a private per-token
+// session that is visible to no snapshot.
+func (s *GtsStore) Stage(entity *JsonEntity, session string) (string, error) {
 	if entity == nil {
 		return "", fmt.Errorf("entity must not be nil")
 	}
@@ -523,6 +543,9 @@ func (s *GtsStore) Stage(entity *JsonEntity) (string, error) {
 	}
 	staged := cloneJsonEntity(entity)
 	token := "stg-" + strconv.FormatUint(s.stageSeq.Add(1), 10)
+	if session == "" {
+		session = token
+	}
 
 	s.writerMu.Lock()
 	defer s.writerMu.Unlock()
@@ -534,8 +557,8 @@ func (s *GtsStore) Stage(entity *JsonEntity) (string, error) {
 	}
 
 	s.mu.Lock()
-	s.staged[token] = &stagedEntry{key: key, entity: staged}
-	s.stagedByKey[key] = staged
+	s.staged[token] = &stagedEntry{key: key, entity: staged, session: session}
+	s.setStagedByKeyLocked(session, key, staged)
 	s.mu.Unlock()
 	// A staged type schema changes what a validating sibling resolves, so any
 	// memoized compilation that predates it must be discarded.
@@ -543,16 +566,42 @@ func (s *GtsStore) Stage(entity *JsonEntity) (string, error) {
 	return token, nil
 }
 
-// removeStagedLocked drops the staged entry named by token and rebuilds the
-// by-key overlay for its key from any other tokens that still target that key.
-// Callers must hold mu for writing.
+// NewStagingSession returns a unique staging-session id. Stage entries created
+// with the same session id share one overlay visible only to reads scoped to
+// that session, so a validate=true batch resolves its own siblings while another
+// request's staged entries stay invisible.
+func (s *GtsStore) NewStagingSession() string {
+	return "ses-" + strconv.FormatUint(s.stageSeq.Add(1), 10)
+}
+
+// setStagedByKeyLocked points session's overlay at entity for key. Callers must
+// hold mu for writing.
+func (s *GtsStore) setStagedByKeyLocked(session, key string, entity *JsonEntity) {
+	overlay := s.stagedByKey[session]
+	if overlay == nil {
+		overlay = make(map[string]*JsonEntity)
+		s.stagedByKey[session] = overlay
+	}
+	overlay[key] = entity
+}
+
+// removeStagedLocked drops the staged entry named by token and rebuilds its
+// session's by-key overlay for that key from any other tokens that still target
+// it within the same session. Callers must hold mu for writing.
 func (s *GtsStore) removeStagedLocked(token string, entry *stagedEntry) {
 	delete(s.staged, token)
-	delete(s.stagedByKey, entry.key)
+	overlay := s.stagedByKey[entry.session]
+	if overlay == nil {
+		return
+	}
+	delete(overlay, entry.key)
 	for _, other := range s.staged {
-		if other.key == entry.key {
-			s.stagedByKey[entry.key] = other.entity
+		if other.session == entry.session && other.key == entry.key {
+			overlay[entry.key] = other.entity
 		}
+	}
+	if len(overlay) == 0 {
+		delete(s.stagedByKey, entry.session)
 	}
 }
 
@@ -580,6 +629,65 @@ func (s *GtsStore) Commit(token string) error {
 	s.byID[entry.key] = entry.entity
 	s.invalidateSchemaCache()
 	return nil
+}
+
+// CommitBatch atomically publishes a whole set of staged tokens as one
+// all-or-nothing unit. Every token's target is checked against the committed
+// store (and against its batch siblings) under a single lock; if ANY would
+// conflict - a concurrent commit won the id with different content, an
+// intra-batch duplicate disagrees, or a token is unknown - NOTHING is published.
+// This closes the gap where a per-entry commit loop could publish a dependent
+// schema against a target whose content changed after the dependent was
+// validated. Returns one error per token, positionally aligned with tokens (nil
+// on success); on a batch conflict every entry reports an EntityConflictError
+// and the tokens remain staged for the caller to discard.
+func (s *GtsStore) CommitBatch(tokens []string) []error {
+	errs := make([]error, len(tokens))
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entries := make([]*stagedEntry, len(tokens))
+	pendingByKey := make(map[string]*JsonEntity)
+	anyConflict := false
+	for i, token := range tokens {
+		entry, ok := s.staged[token]
+		if !ok {
+			errs[i] = &EntityConflictError{EntityID: token}
+			anyConflict = true
+			continue
+		}
+		entries[i] = entry
+		existing, exists := pendingByKey[entry.key]
+		if !exists {
+			existing, exists = s.byID[entry.key]
+		}
+		if exists && !s.config.AllowEntityUpdates && contentHash(existing.Content) != contentHash(entry.entity.Content) {
+			errs[i] = &EntityConflictError{EntityID: entry.key}
+			anyConflict = true
+		}
+		pendingByKey[entry.key] = entry.entity
+	}
+
+	// All-or-nothing: if any target conflicts, publish none and report every
+	// entry as a conflict. The tokens stay staged for the caller to discard.
+	if anyConflict {
+		for i := range tokens {
+			if errs[i] == nil {
+				errs[i] = &EntityConflictError{EntityID: entries[i].key}
+			}
+		}
+		return errs
+	}
+
+	for i, token := range tokens {
+		entry := entries[i]
+		s.removeStagedLocked(token, entry)
+		s.byID[entry.key] = entry.entity
+	}
+	s.invalidateSchemaCache()
+	return errs
 }
 
 // Discard drops the staged entity named by token that failed validation. The

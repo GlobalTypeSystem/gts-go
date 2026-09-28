@@ -84,13 +84,20 @@ func (s *GtsStore) ValidateInstance(instanceID string, modes ...GtsRefValidation
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
-	if err := s.validateInstanceTransitive(instanceID, mode); err != nil {
+	return s.validateInstanceScoped(instanceID, mode, "")
+}
+
+// validateInstanceScoped is ValidateInstance resolving the instance (and any
+// staged siblings it references) against the given staging session's overlay
+// (plus committed). An empty session is committed-only.
+func (s *GtsStore) validateInstanceScoped(instanceID string, mode GtsRefValidationMode, session string) *ValidationResult {
+	if err := s.validateInstanceTransitive(instanceID, mode, session); err != nil {
 		return &ValidationResult{ID: instanceID, OK: false, Error: err.Error()}
 	}
 	return &ValidationResult{ID: instanceID, OK: true, Error: ""}
 }
 
-func (s *GtsStore) validateInstanceLocal(instanceID string, mode GtsRefValidationMode) *ValidationResult {
+func (s *GtsStore) validateInstanceLocalScoped(instanceID string, mode GtsRefValidationMode, session string) *ValidationResult {
 	// Well-known GTS id first; fall back to a raw store lookup by the
 	// passed string so anonymous instances (keyed by UUID) resolve too.
 	lookupID := instanceID
@@ -107,7 +114,7 @@ func (s *GtsStore) validateInstanceLocal(instanceID string, mode GtsRefValidatio
 	}
 
 	// Get the instance from store
-	obj := s.Get(lookupID)
+	obj := s.getScoped(lookupID, session)
 	if obj == nil {
 		return &ValidationResult{
 			ID:    instanceID,
@@ -135,7 +142,7 @@ func (s *GtsStore) validateInstanceLocal(instanceID string, mode GtsRefValidatio
 	}
 
 	// Get the type-schema from store
-	schemaEntity := s.Get(obj.TypeID)
+	schemaEntity := s.getScoped(obj.TypeID, session)
 	if schemaEntity == nil {
 		return &ValidationResult{
 			ID:    instanceID,
@@ -174,11 +181,11 @@ func (s *GtsStore) validateInstanceLocal(instanceID string, mode GtsRefValidatio
 
 	// Resolve composed schemas before x-gts-ref traversal while keeping the
 	// selected leaf identifier as the /$id root.
-	xGtsRefSchema, err := s.resolveSchemaRefsChecked(obj.TypeID)
+	xGtsRefSchema, err := s.resolveSchemaRefsChecked(obj.TypeID, session)
 	if err != nil {
 		return &ValidationResult{ID: instanceID, OK: false, Error: err.Error()}
 	}
-	xGtsRefValidator := NewXGtsRefValidator(s, mode)
+	xGtsRefValidator := NewXGtsRefValidatorScoped(s, mode, session)
 	xGtsRefErrors := xGtsRefValidator.ValidateInstance(obj.Content, xGtsRefSchema, "", obj.TypeID)
 	if len(xGtsRefErrors) > 0 {
 		var errorMsgs []string

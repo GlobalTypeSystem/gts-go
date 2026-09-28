@@ -35,6 +35,7 @@ func invalidJSONRefErrors(path string, err error) []*XGtsRefValidationError {
 type XGtsRefValidator struct {
 	store                      *GtsStore
 	mode                       GtsRefValidationMode
+	session                    string
 	referencedIDs              map[string]struct{}
 	referencedWildcardPatterns map[string]struct{}
 }
@@ -50,6 +51,16 @@ func NewXGtsRefValidator(store *GtsStore, modes ...GtsRefValidationMode) *XGtsRe
 		referencedIDs:              make(map[string]struct{}),
 		referencedWildcardPatterns: make(map[string]struct{}),
 	}
+}
+
+// NewXGtsRefValidatorScoped is like NewXGtsRefValidator but resolves referenced
+// entities against the given staging session's overlay (plus the committed
+// store), so a schema validated as part of a batch sees its own staged siblings
+// - and only its own. An empty session is committed-only.
+func NewXGtsRefValidatorScoped(store *GtsStore, mode GtsRefValidationMode, session string) *XGtsRefValidator {
+	v := NewXGtsRefValidator(store, mode)
+	v.session = session
+	return v
 }
 
 func (v *XGtsRefValidator) ReferencedIDs() []string {
@@ -388,7 +399,7 @@ func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]any, path, 
 					} else {
 						v.referencedWildcardPatterns[targetID] = struct{}{}
 					}
-				} else if v.store.Get(targetID) == nil {
+				} else if v.store.getScoped(targetID, v.session) == nil {
 					*errors = append(*errors, &XGtsRefValidationError{
 						FieldPath: refPath, Value: refStr, RefPattern: targetID,
 						Reason: fmt.Sprintf("x-gts-ref constraint '%s' is not registered", targetID),
@@ -446,7 +457,7 @@ func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) 
 	// uniformly for all constraint forms, including the bare "gts.*" wildcard
 	// (gts-spec §9.6).
 	if v.store != nil && v.mode != GtsRefValidationNone {
-		if v.store.Get(value) == nil {
+		if v.store.getScoped(value, v.session) == nil {
 			return &XGtsRefValidationError{
 				FieldPath:  fieldPath,
 				Value:      value,

@@ -352,12 +352,18 @@ func TestAddSchemasValidateDuplicateIDInBatch(t *testing.T) {
 	_, resp := do(http.MethodPost, "/type-schemas?validate=true", `[`+
 		`{`+d7+`,"$id":"gts://gts.x.dup._.t.v1~","type":"object","title":"a"},`+
 		`{`+d7+`,"$id":"gts://gts.x.dup._.t.v1~","type":"object","title":"b"}]`)
-	// One entry commits (Added), the conflicting duplicate is rejected.
+	// A batch carrying the same $id twice with different content is internally
+	// inconsistent, so the atomic publish keeps NEITHER entry (no silent
+	// last-wins): the batch is rejected as a whole and nothing is committed.
 	if resp["ok"] != false {
 		t.Fatalf("a batch with a conflicting duplicate id must report ok=false, got %v", resp)
 	}
-	if itemOK(resp, 0) == itemOK(resp, 1) {
-		t.Fatalf("exactly one of the duplicate entries must commit, got %v", resp)
+	if itemOK(resp, 0) || itemOK(resp, 1) {
+		t.Fatalf("all-or-nothing: neither duplicate entry may commit, got %v", resp)
+	}
+	// Nothing from the inconsistent batch is published.
+	if _, getResp := do(http.MethodGet, "/entities/gts.x.dup._.t.v1~", ""); getResp["ok"] == true {
+		t.Fatalf("no entity should be committed from the rejected duplicate batch, got %v", getResp)
 	}
 }
 

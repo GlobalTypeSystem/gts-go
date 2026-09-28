@@ -406,3 +406,90 @@ func TestGtsStore_ValidateSchema_NotFound(t *testing.T) {
 		t.Fatal("expected error for missing schema")
 	}
 }
+
+// ── Session-scoped staging (regression for the cross-request staging leak) ────
+
+func stagingTestSchema(typeID, title string) *JsonEntity {
+	return NewJsonEntity(
+		canonicalTestSchema(typeID, map[string]any{"type": "object", "title": title}),
+		DefaultGtsConfig(),
+	)
+}
+
+// A staged entry must be visible only to reads scoped to its OWN session, never
+// to another session or to committed-only reads, so one batch never resolves a
+// $ref/parent against another batch's not-yet-validated entry.
+func TestStagingSessionIsolation(t *testing.T) {
+	store := NewGtsStore(nil)
+	id := "gts.x.gosess._.a.v1~"
+	if _, err := store.Stage(stagingTestSchema(id, "a"), "sess-A"); err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+
+	if store.getScoped(id, "sess-A") == nil {
+		t.Fatal("entry must be visible to its own session")
+	}
+	if store.getScoped(id, "sess-B") != nil {
+		t.Fatal("entry must NOT be visible to another session")
+	}
+	if store.getScoped(id, "") != nil {
+		t.Fatal("committed-only read must not see a staged entry")
+	}
+	if store.Get(id) != nil {
+		t.Fatal("Get is committed-only and must not see a staged entry")
+	}
+}
+
+// ── Atomic batch commit (regression for the non-atomic commit loop) ───────────
+
+// If any survivor's target was committed with different content after staging,
+// the whole batch publishes nothing rather than committing the dependent against
+// changed content.
+func TestCommitBatchPublishesNothingOnConflict(t *testing.T) {
+	store := NewGtsStore(nil)
+	parent := "gts.x.goatomic._.parent.v1~"
+	child := "gts.x.goatomic._.child.v1~"
+	session := "batch-1"
+
+	cTok, err := store.Stage(stagingTestSchema(child, "ok"), session)
+	if err != nil {
+		t.Fatalf("Stage child: %v", err)
+	}
+	pTok, err := store.Stage(stagingTestSchema(parent, "staged"), session)
+	if err != nil {
+		t.Fatalf("Stage parent: %v", err)
+	}
+	// A concurrent writer commits the parent id with different content after staging.
+	if err := store.Register(stagingTestSchema(parent, "committed")); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	errs := store.CommitBatch([]string{cTok, pTok})
+	if errs[0] == nil || errs[1] == nil {
+		t.Fatalf("all-or-nothing: every entry must report a conflict, got %v", errs)
+	}
+	if store.GetCommitted(child) != nil {
+		t.Fatal("dependent must not be published when a sibling target conflicts")
+	}
+	if got := store.GetCommitted(parent); got == nil || got.Content["title"] != "committed" {
+		t.Fatalf("committed parent content must be preserved, got %v", got)
+	}
+}
+
+func TestCommitBatchPublishesAllWhenNoConflict(t *testing.T) {
+	store := NewGtsStore(nil)
+	idA := "gts.x.goatomic2._.a.v1~"
+	idB := "gts.x.goatomic2._.b.v1~"
+	session := "batch-2"
+	aTok, _ := store.Stage(stagingTestSchema(idA, "a"), session)
+	bTok, _ := store.Stage(stagingTestSchema(idB, "b"), session)
+
+	for i, err := range store.CommitBatch([]string{aTok, bTok}) {
+		if err != nil {
+			t.Fatalf("entry %d must commit, got %v", i, err)
+		}
+	}
+	if store.GetCommitted(idA) == nil || store.GetCommitted(idB) == nil {
+		t.Fatal("both entries must be published")
+	}
+}

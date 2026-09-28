@@ -417,6 +417,13 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string, modes ...GtsRefValidati
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
+	return s.validateSchemaTraitsScoped(schemaID, mode, "")
+}
+
+// validateSchemaTraitsScoped is ValidateSchemaTraits resolving the chain, trait
+// schema $refs and x-gts-ref targets against the given staging session's overlay
+// (plus committed). An empty session is committed-only.
+func (s *GtsStore) validateSchemaTraitsScoped(schemaID string, mode GtsRefValidationMode, session string) *ValidateSchemaTraitsResult {
 	gid, err := gtsid.New(schemaID)
 	if err != nil {
 		return &ValidateSchemaTraitsResult{
@@ -439,7 +446,7 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string, modes ...GtsRefValidati
 	for i := range segments {
 		segSchemaID := buildIDFromSegments(segments[:i+1])
 
-		entity := s.Get(segSchemaID)
+		entity := s.getScoped(segSchemaID, session)
 		if entity == nil {
 			return &ValidateSchemaTraitsResult{
 				TypeID: schemaID,
@@ -466,7 +473,7 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string, modes ...GtsRefValidati
 			continue
 		}
 		normalized := normalizeDollarRefs(tsMap)
-		resolved, err := s.resolveRefs(normalized)
+		resolved, err := s.resolveRefsScoped(normalized, session)
 		if err != nil {
 			return &ValidateSchemaTraitsResult{
 				TypeID: schemaID,
@@ -560,7 +567,7 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string, modes ...GtsRefValidati
 	// exempt abstract types, so it still runs below.
 	isAbstract := false
 	hostSchema := map[string]any{}
-	if leafEntity := s.Get(schemaID); leafEntity != nil {
+	if leafEntity := s.getScoped(schemaID, session); leafEntity != nil {
 		hostSchema = leafEntity.Content
 		if ab, isBool := leafEntity.Content[KeyXGtsAbstract].(bool); isBool && ab {
 			isAbstract = true
@@ -590,7 +597,7 @@ func (s *GtsStore) ValidateSchemaTraits(schemaID string, modes ...GtsRefValidati
 	// must name a registered constraint type, and any supplied trait value must
 	// resolve to a registered entity — regardless of whether a descendant may
 	// later override the value.
-	xGtsRefValidator := NewXGtsRefValidator(s, mode)
+	xGtsRefValidator := NewXGtsRefValidatorScoped(s, mode, session)
 	for _, err := range xGtsRefValidator.ValidateSchema(effectiveTraitSchema, "") {
 		errs = append(errs, err.Error())
 	}
@@ -670,15 +677,20 @@ func normalizeDollarRefs(m map[string]any) map[string]any {
 type dependencyValidationState struct {
 	store                *GtsStore
 	gtsRefValidationMode GtsRefValidationMode
-	visiting             map[string]bool
-	completed            map[string]bool
-	results              map[string]error
+	// session scopes every staged read this validation makes to a single staging
+	// session's overlay (plus committed), so a batch resolves its own staged
+	// siblings - and only its own. Empty means committed-only.
+	session   string
+	visiting  map[string]bool
+	completed map[string]bool
+	results   map[string]error
 }
 
-func (s *GtsStore) validateTypeSchemaTransitive(schemaID string, mode GtsRefValidationMode) error {
+func (s *GtsStore) validateTypeSchemaTransitive(schemaID string, mode GtsRefValidationMode, session string) error {
 	state := &dependencyValidationState{
 		store:                s,
 		gtsRefValidationMode: mode,
+		session:              session,
 		visiting:             make(map[string]bool),
 		completed:            make(map[string]bool),
 		results:              make(map[string]error),
@@ -686,10 +698,11 @@ func (s *GtsStore) validateTypeSchemaTransitive(schemaID string, mode GtsRefVali
 	return state.validateType(schemaID)
 }
 
-func (s *GtsStore) validateInstanceTransitive(instanceID string, mode GtsRefValidationMode) error {
+func (s *GtsStore) validateInstanceTransitive(instanceID string, mode GtsRefValidationMode, session string) error {
 	state := &dependencyValidationState{
 		store:                s,
 		gtsRefValidationMode: mode,
+		session:              session,
 		visiting:             make(map[string]bool),
 		completed:            make(map[string]bool),
 		results:              make(map[string]error),
@@ -698,7 +711,7 @@ func (s *GtsStore) validateInstanceTransitive(instanceID string, mode GtsRefVali
 }
 
 func (v *dependencyValidationState) validateEntity(entityID string) error {
-	entity := v.store.Get(entityID)
+	entity := v.store.getScoped(entityID, v.session)
 	if entity == nil {
 		return fmt.Errorf("referenced entity '%s' not found", entityID)
 	}
@@ -735,7 +748,7 @@ func (v *dependencyValidationState) validateType(schemaID string) (err error) {
 		v.results[key] = err
 	}()
 
-	entity := v.store.Get(schemaID)
+	entity := v.store.getScoped(schemaID, v.session)
 	if entity == nil {
 		return &StoreGtsSchemaNotFoundError{EntityID: schemaID}
 	}
@@ -765,7 +778,7 @@ func (v *dependencyValidationState) validateType(schemaID string) (err error) {
 		}
 	}
 
-	xGtsRefValidator := NewXGtsRefValidator(v.store, v.gtsRefValidationMode)
+	xGtsRefValidator := NewXGtsRefValidatorScoped(v.store, v.gtsRefValidationMode, v.session)
 	if refErrors := xGtsRefValidator.ValidateSchema(entity.Content, ""); len(refErrors) > 0 {
 		return fmt.Errorf("x-gts-ref validation failed: %s", refErrors[0].Error())
 	}
@@ -790,10 +803,10 @@ func (v *dependencyValidationState) validateType(schemaID string) (err error) {
 	if placementErr := ValidateTraitPlacement(entity.Content); placementErr != nil {
 		return placementErr
 	}
-	if chainResult := v.store.ValidateSchemaChain(schemaID); !chainResult.OK {
+	if chainResult := v.store.validateSchemaChainScoped(schemaID, v.session); !chainResult.OK {
 		return fmt.Errorf("%s", chainResult.Error)
 	}
-	traitsResult := v.store.ValidateSchemaTraits(schemaID, v.gtsRefValidationMode)
+	traitsResult := v.store.validateSchemaTraitsScoped(schemaID, v.gtsRefValidationMode, v.session)
 	if !traitsResult.OK {
 		return fmt.Errorf("%s", traitsResult.Error)
 	}
@@ -835,7 +848,7 @@ func (v *dependencyValidationState) validateInstance(instanceID string) (err err
 		}
 		lookupID = gid.ID
 	}
-	entity := v.store.Get(lookupID)
+	entity := v.store.getScoped(lookupID, v.session)
 	if entity == nil {
 		return &StoreGtsObjectNotFoundError{EntityID: instanceID}
 	}
@@ -849,15 +862,15 @@ func (v *dependencyValidationState) validateInstance(instanceID string) (err err
 		return fmt.Errorf("instance type '%s' is invalid: %w", entity.TypeID, dependencyErr)
 	}
 
-	localResult := v.store.validateInstanceLocal(instanceID, v.gtsRefValidationMode)
+	localResult := v.store.validateInstanceLocalScoped(instanceID, v.gtsRefValidationMode, v.session)
 	if !localResult.OK {
 		return fmt.Errorf("%s", localResult.Error)
 	}
-	xGtsRefSchema, resolveErr := v.store.resolveSchemaRefsChecked(entity.TypeID)
+	xGtsRefSchema, resolveErr := v.store.resolveSchemaRefsChecked(entity.TypeID, v.session)
 	if resolveErr != nil {
 		return resolveErr
 	}
-	xGtsRefValidator := NewXGtsRefValidator(v.store, v.gtsRefValidationMode)
+	xGtsRefValidator := NewXGtsRefValidatorScoped(v.store, v.gtsRefValidationMode, v.session)
 	xGtsRefValidator.ValidateInstance(entity.Content, xGtsRefSchema, "", entity.TypeID)
 	if v.gtsRefValidationMode == GtsRefValidationAnyValid {
 		for _, dependencyID := range xGtsRefValidator.ReferencedIDs() {
@@ -884,7 +897,28 @@ func (s *GtsStore) ValidateEntity(entityID string, modes ...GtsRefValidationMode
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
-	entity := s.Get(entityID)
+	return s.validateEntityScoped(entityID, mode, "")
+}
+
+// ValidateEntityInSession is ValidateEntity that resolves the entity and its
+// dependencies against the given staging session's overlay (plus committed), so
+// a validate=true registration sees its own staged entity and, for a batch, its
+// staged siblings - and only its own.
+func (s *GtsStore) ValidateEntityInSession(entityID string, session string, modes ...GtsRefValidationMode) *ValidateEntityResult {
+	mode := GtsRefValidationAnyValid
+	if len(modes) > 0 {
+		mode = modes[0]
+	}
+	return s.validateEntityScoped(entityID, mode, session)
+}
+
+// validateEntityScoped is ValidateEntity resolving the entity and every
+// dependency it validates against the given staging session's overlay (plus
+// committed), so a validate=true registration sees its own staged entity and,
+// for a batch, its staged siblings - and only its own. An empty session is
+// committed-only.
+func (s *GtsStore) validateEntityScoped(entityID string, mode GtsRefValidationMode, session string) *ValidateEntityResult {
+	entity := s.getScoped(entityID, session)
 	if entity == nil {
 		return &ValidateEntityResult{
 			EntityID: entityID,
@@ -894,7 +928,7 @@ func (s *GtsStore) ValidateEntity(entityID string, modes ...GtsRefValidationMode
 	}
 
 	if entity.IsTypeSchema {
-		if err := s.validateTypeSchemaTransitive(entityID, mode); err != nil {
+		if err := s.validateTypeSchemaTransitive(entityID, mode, session); err != nil {
 			return &ValidateEntityResult{
 				EntityID:   entityID,
 				EntityType: "schema",
@@ -916,7 +950,7 @@ func (s *GtsStore) ValidateEntity(entityID string, modes ...GtsRefValidationMode
 	}
 
 	// For instances: validate against schema
-	instanceResult := s.ValidateInstance(entityID, mode)
+	instanceResult := s.validateInstanceScoped(entityID, mode, session)
 	if !instanceResult.OK {
 		return &ValidateEntityResult{
 			EntityID:   entityID,
@@ -928,7 +962,7 @@ func (s *GtsStore) ValidateEntity(entityID string, modes ...GtsRefValidationMode
 
 	// Also run OP#12 chain validation and OP#13 traits validation on the type-schema
 	if entity.TypeID != "" {
-		chainResult := s.ValidateSchemaChain(entity.TypeID)
+		chainResult := s.validateSchemaChainScoped(entity.TypeID, session)
 		if !chainResult.OK {
 			return &ValidateEntityResult{
 				EntityID:   entityID,
@@ -938,7 +972,7 @@ func (s *GtsStore) ValidateEntity(entityID string, modes ...GtsRefValidationMode
 			}
 		}
 
-		traitsResult := s.ValidateSchemaTraits(entity.TypeID, mode)
+		traitsResult := s.validateSchemaTraitsScoped(entity.TypeID, mode, session)
 		if !traitsResult.OK {
 			return &ValidateEntityResult{
 				EntityID:   entityID,

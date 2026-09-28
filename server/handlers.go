@@ -308,7 +308,10 @@ func (s *Server) addEntityResult(
 		// observes an entity that has not passed validation - and no store-wide
 		// write lock is held across validation, so concurrent reads are not
 		// blocked.
-		token, err := s.store.Stage(entity)
+		// Stage under a fresh per-registration session (empty session id => the
+		// returned token doubles as the session), so this entity's own validation
+		// resolves itself while another request's staged entries stay invisible.
+		token, err := s.store.Stage(entity, "")
 		if err != nil {
 			status := http.StatusUnprocessableEntity
 			if isConflict(err) {
@@ -320,7 +323,7 @@ func (s *Server) addEntityResult(
 				"is_type_schema": entity.IsTypeSchema,
 			}, status
 		}
-		if result := s.store.ValidateEntity(responseID, mode); !result.OK {
+		if result := s.store.ValidateEntityInSession(responseID, token, mode); !result.OK {
 			s.store.Discard(token)
 			return map[string]any{
 				"ok":             false,
@@ -473,6 +476,10 @@ func (s *Server) stageAndValidateBatch(
 		token    string
 	}
 	var survivors []stagedEntry
+	// One staging session for the whole batch: entries resolve their own
+	// intra-batch siblings during validation, while another request's staged
+	// entries stay invisible to this batch.
+	session := s.store.NewStagingSession()
 	// pending tracks every still-staged token so a panic anywhere below discards
 	// the leftovers instead of leaking unvalidated entries into the staging
 	// overlay. Tokens are removed as they are committed or discarded.
@@ -495,7 +502,7 @@ func (s *Server) stageAndValidateBatch(
 			results[i] = map[string]any{"ok": false, "type_id": typeID, "error": errBody["error"]}
 			continue
 		}
-		token, err := s.store.Stage(entity)
+		token, err := s.store.Stage(entity, session)
 		if err != nil {
 			results[i] = map[string]any{"ok": false, "type_id": typeID, "error": err.Error()}
 			continue
@@ -514,7 +521,7 @@ func (s *Server) stageAndValidateBatch(
 		var failed []stagedEntry
 		failErr := map[int]string{}
 		for _, entry := range survivors {
-			if res := s.store.ValidateEntity(entry.entityID, mode); res.OK {
+			if res := s.store.ValidateEntityInSession(entry.entityID, session, mode); res.OK {
 				stillGood = append(stillGood, entry)
 			} else {
 				failed = append(failed, entry)
@@ -532,15 +539,25 @@ func (s *Server) stageAndValidateBatch(
 		survivors = stillGood
 	}
 
-	// Phase 3: publish the entries that passed. A commit can still report a
-	// conflict if a concurrent batch committed the same id with different content.
-	for _, entry := range survivors {
-		if err := s.store.Commit(entry.token); err != nil {
-			results[entry.index] = map[string]any{"ok": false, "type_id": entry.typeID, "error": err.Error()}
+	// Phase 3: publish the survivors AS ONE ATOMIC UNIT. A per-entry commit loop
+	// could publish a dependent schema after a concurrent batch won its parent or
+	// $ref target id with different content than the dependent was validated
+	// against; the store-level batch compare-and-swap publishes none if any
+	// target conflicts.
+	survivorTokens := make([]string, len(survivors))
+	for i, entry := range survivors {
+		survivorTokens[i] = entry.token
+	}
+	commitErrs := s.store.CommitBatch(survivorTokens)
+	for i, entry := range survivors {
+		if commitErrs[i] != nil {
+			// Nothing was published for a conflicting entry; leave its token in
+			// pending so the deferred cleanup discards it.
+			results[entry.index] = map[string]any{"ok": false, "type_id": entry.typeID, "error": commitErrs[i].Error()}
 		} else {
+			delete(pending, entry.token)
 			results[entry.index] = map[string]any{"ok": true, "type_id": entry.typeID}
 		}
-		delete(pending, entry.token)
 	}
 }
 
