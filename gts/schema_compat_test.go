@@ -793,7 +793,12 @@ func TestValidateSchemaChain_TwoLevel_Compatible(t *testing.T) {
 }
 
 func TestSchemaDialectRejectsUnsupportedURIs(t *testing.T) {
+	if _, err := schemaDialect(map[string]any{}); err == nil {
+		t.Fatal("expected missing $schema to be rejected")
+	}
 	for name, dialect := range map[string]string{
+		"old":      "http://json-schema.org/draft-06/schema#",
+		"future":   "https://json-schema.org/draft/2025-01/schema",
 		"unknown":  "https://example.invalid/not-a-json-schema-dialect",
 		"mistyped": "https://json-schema.org/draft/2020-21/schema",
 	} {

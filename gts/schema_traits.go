@@ -336,7 +336,12 @@ func validateTraitsAgainstSchema(traitSchema map[string]any, effectiveTraits map
 			return errors
 		}
 	}
-	cleanSchema["$schema"] = canonicalSchemaDialectURI(hostDialect)
+	canonicalDialect, err := canonicalSchemaDialectURI(hostDialect)
+	if err != nil {
+		errors = append(errors, err.Error())
+		return errors
+	}
+	cleanSchema["$schema"] = canonicalDialect
 
 	schemaID := "gts://internal/trait-schema"
 	if err := compiler.AddResource(schemaID, cleanSchema); err != nil {
@@ -754,6 +759,9 @@ func (v *dependencyValidationState) validateType(schemaID string) (err error) {
 	}
 	if !entity.IsTypeSchema {
 		return fmt.Errorf("entity '%s' is not a type-schema", schemaID)
+	}
+	if schemaErr := v.store.validateJSONSchemaScoped(entity.Content, v.session); schemaErr != nil {
+		return schemaErr
 	}
 
 	gid, parseErr := gtsid.New(schemaID)

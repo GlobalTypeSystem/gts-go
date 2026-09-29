@@ -44,7 +44,7 @@ type ValidateSchemaChainResult struct {
 func schemaDialect(schema map[string]any) (string, error) {
 	rawDialect, exists := schema["$schema"]
 	if !exists {
-		return "draft-07", nil
+		return "", fmt.Errorf("$schema must declare a supported JSON Schema dialect")
 	}
 	dialect, ok := rawDialect.(string)
 	if !ok || dialect == "" {
@@ -64,14 +64,16 @@ func schemaDialect(schema map[string]any) (string, error) {
 	}
 }
 
-func canonicalSchemaDialectURI(dialect string) string {
+func canonicalSchemaDialectURI(dialect string) (string, error) {
 	switch dialect {
+	case "draft-07":
+		return "http://json-schema.org/draft-07/schema#", nil
 	case "2019-09":
-		return "https://json-schema.org/draft/2019-09/schema"
+		return "https://json-schema.org/draft/2019-09/schema", nil
 	case "2020-12":
-		return "https://json-schema.org/draft/2020-12/schema"
+		return "https://json-schema.org/draft/2020-12/schema", nil
 	default:
-		return "http://json-schema.org/draft-07/schema#"
+		return "", fmt.Errorf("unsupported JSON Schema dialect: %s", dialect)
 	}
 }
 

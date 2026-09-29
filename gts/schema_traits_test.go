@@ -484,6 +484,7 @@ func TestApplyDefaults(t *testing.T) {
 // =============================================================================
 
 func TestValidateTraitsAgainstSchema(t *testing.T) {
+	hostSchema := map[string]any{"$schema": "http://json-schema.org/draft-07/schema#"}
 	t.Run("valid traits pass", func(t *testing.T) {
 		traitSchema := map[string]any{
 			"type": "object",
@@ -494,7 +495,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 			"required": []any{"color"},
 		}
 		traits := map[string]any{"color": "red", "count": 3.0}
-		errs := validateTraitsAgainstSchema(traitSchema, traits, map[string]any{}, false)
+		errs := validateTraitsAgainstSchema(traitSchema, traits, hostSchema, false)
 		if len(errs) != 0 {
 			t.Errorf("expected no errors, got %v", errs)
 		}
@@ -508,7 +509,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 			},
 			"required": []any{"color"},
 		}
-		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, map[string]any{}, false)
+		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, hostSchema, false)
 		if len(errs) == 0 {
 			t.Error("expected error for missing required trait")
 		}
@@ -522,7 +523,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 			},
 		}
 		traits := map[string]any{"count": "not-a-number"}
-		errs := validateTraitsAgainstSchema(traitSchema, traits, map[string]any{}, false)
+		errs := validateTraitsAgainstSchema(traitSchema, traits, hostSchema, false)
 		if len(errs) == 0 {
 			t.Error("expected error for wrong type")
 		}
@@ -536,7 +537,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 			},
 			"required": []any{"unresolved"},
 		}
-		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, map[string]any{}, true)
+		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, hostSchema, true)
 		if len(errs) == 0 {
 			t.Error("expected error for unresolved required trait without default")
 		}
@@ -551,7 +552,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 				"note": map[string]any{"type": "string"},
 			},
 		}
-		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, map[string]any{}, true)
+		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{}, hostSchema, true)
 		if len(errs) != 0 {
 			t.Errorf("optional unresolved property must not fail completeness, got %v", errs)
 		}
@@ -567,7 +568,7 @@ func TestValidateTraitsAgainstSchema(t *testing.T) {
 			},
 			"required": []any{"color"},
 		}
-		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{"color": "blue"}, map[string]any{}, true)
+		errs := validateTraitsAgainstSchema(traitSchema, map[string]any{"color": "blue"}, hostSchema, true)
 		if len(errs) != 0 {
 			t.Errorf("required property satisfied by default should not fail, got %v", errs)
 		}

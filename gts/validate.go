@@ -23,11 +23,39 @@ type regexp2RE struct {
 
 func (r *regexp2RE) MatchString(s string) bool {
 	ok, err := r.re.MatchString(s)
-	return err == nil && ok
+	if err != nil {
+		panic(regexpMatchError{err})
+	}
+	return ok
 }
 
 func (r *regexp2RE) String() string {
 	return r.re.String()
+}
+
+type regexpMatchError struct {
+	err error
+}
+
+func (e regexpMatchError) Error() string {
+	return fmt.Sprintf("regular expression match failed: %v", e.err)
+}
+
+func (e regexpMatchError) Unwrap() error {
+	return e.err
+}
+
+func validateCompiledSchema(schema *jsonschema.Schema, instance any) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if matchErr, ok := recovered.(regexpMatchError); ok {
+				err = matchErr
+				return
+			}
+			panic(recovered)
+		}
+	}()
+	return schema.Validate(instance)
 }
 
 // ecmaRegexpEngine compiles patterns using ECMA-262 compatible regexp2.
@@ -38,13 +66,14 @@ func ecmaRegexpEngine(s string) (jsonschema.Regexp, error) {
 	if err != nil {
 		return nil, err
 	}
-	re.MatchTimeout = time.Second
+	re.MatchTimeout = 250 * time.Millisecond
 	return &regexp2RE{re}, nil
 }
 
 // gtsURLLoader implements jsonschema.URLLoader for GTS ID reference resolution
 type gtsURLLoader struct {
-	store *GtsStore
+	store   *GtsStore
+	session string
 }
 
 // Load resolves GTS ID references to their schema content
@@ -55,7 +84,7 @@ func (l *gtsURLLoader) Load(url string) (any, error) {
 
 	// Check if this is a GTS ID reference
 	if gtsid.IsValid(normalizedURL) {
-		entity := l.store.Get(normalizedURL)
+		entity := l.store.getScoped(normalizedURL, l.session)
 		if entity == nil {
 			return nil, fmt.Errorf("unresolvable GTS reference: %s", url)
 		}
@@ -302,7 +331,7 @@ func collectExternalSchemaRefs(node any, refs map[string]struct{}) {
 	}
 }
 
-func (s *GtsStore) addSchemaDependencyResources(compiler *jsonschema.Compiler, schema map[string]any, rootID string) {
+func (s *GtsStore) addSchemaDependencyResources(compiler *jsonschema.Compiler, schema map[string]any, rootID, session string) {
 	refs := make(map[string]struct{})
 	collectExternalSchemaRefs(schema, refs)
 	loaded := map[string]struct{}{gtsid.NormalizeID(rootID): {}}
@@ -317,7 +346,7 @@ func (s *GtsStore) addSchemaDependencyResources(compiler *jsonschema.Compiler, s
 			continue
 		}
 		loaded[id] = struct{}{}
-		entity := s.Get(id)
+		entity := s.getScoped(id, session)
 		if entity == nil || !entity.IsTypeSchema {
 			continue
 		}
@@ -340,6 +369,10 @@ func (s *GtsStore) validateJSON(instance, schema map[string]any) error {
 }
 
 func (s *GtsStore) validateJSONSchema(schema map[string]any) error {
+	return s.validateJSONSchemaScoped(schema, "")
+}
+
+func (s *GtsStore) validateJSONSchemaScoped(schema map[string]any, session string) error {
 	if _, err := schemaDialect(schema); err != nil {
 		return fmt.Errorf("JSON Schema validation failed: %v", err)
 	}
@@ -352,16 +385,11 @@ func (s *GtsStore) validateJSONSchema(schema map[string]any) error {
 
 	compiler := jsonschema.NewCompiler()
 	compiler.UseRegexpEngine(ecmaRegexpEngine)
-	compiler.UseLoader(&gtsURLLoader{store: s})
+	compiler.UseLoader(&gtsURLLoader{store: s, session: session})
 	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
 		return fmt.Errorf("JSON Schema validation failed: %v", err)
 	}
-	s.forEachEntity(func(id string, entity *JsonEntity) bool {
-		if resourceID := gtsid.ToCompileURI(id); entity.IsTypeSchema && resourceID != schemaID {
-			_ = compiler.AddResource(resourceID, normalizeSchemaForCompile(entity.Content))
-		}
-		return true
-	})
+	s.addSchemaDependencyResources(compiler, schema, schemaID, session)
 	if _, err := compiler.Compile(schemaID); err != nil {
 		return fmt.Errorf("JSON Schema validation failed: %v", err)
 	}
@@ -518,7 +546,7 @@ func (s *GtsStore) compileSchema(schemaID string, normalizedSchema, rawSchema ma
 	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
 		entry.err = fmt.Errorf("add schema resource: %v", err)
 	} else {
-		s.addSchemaDependencyResources(compiler, rawSchema, schemaID)
+		s.addSchemaDependencyResources(compiler, rawSchema, schemaID, "")
 		compiled, err := compiler.Compile(schemaID)
 		if err != nil {
 			entry.err = fmt.Errorf("compile schema: %v", err)
@@ -555,7 +583,7 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 	}
 
 	// Validate the instance
-	if err := compiledSchema.Validate(instance); err != nil {
+	if err := validateCompiledSchema(compiledSchema, instance); err != nil {
 		return fmt.Errorf("validation error: %v", err)
 	}
 
