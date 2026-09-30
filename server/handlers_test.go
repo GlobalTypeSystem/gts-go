@@ -390,7 +390,7 @@ func TestAddSchemasValidateStagingConcurrentReadsNeverSeeInvalid(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(resp.Body)
 		var parsed map[string]any
 		if json.Unmarshal(body, &parsed) != nil {
@@ -443,7 +443,7 @@ func TestAddSchemasValidateStagingConcurrentReadsNeverSeeInvalid(t *testing.T) {
 		}
 		var body map[string]any
 		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		_ = json.Unmarshal(respBody, &body)
 		if body["ok"] != false {
 			t.Fatalf("cycle %d: batch with an invalid entry must report ok=false, got %v", cycle, body)

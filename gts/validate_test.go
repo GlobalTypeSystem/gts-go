@@ -498,8 +498,8 @@ func TestECMARegexpEngine(t *testing.T) {
 		t.Error("ECMA lookahead matching failed")
 	}
 	regexp := matcher.(*regexp2RE)
-	if regexp.re.MatchTimeout != time.Second {
-		t.Errorf("expected one-second regexp timeout, got %s", regexp.re.MatchTimeout)
+	if regexp.re.MatchTimeout != 250*time.Millisecond {
+		t.Errorf("expected 250ms regexp timeout, got %s", regexp.re.MatchTimeout)
 	}
 }
 

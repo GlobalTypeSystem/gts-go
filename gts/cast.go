@@ -399,7 +399,7 @@ func validateWithGtsIDTolerance(instance, schema map[string]any, store *GtsStore
 	}
 
 	// Validate instance
-	err = schemaObj.Validate(instance)
+	err = validateCompiledSchema(schemaObj, instance)
 	if err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}
