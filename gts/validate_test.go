@@ -7,8 +7,8 @@ package gts
 
 import (
 	"errors"
+	"strings"
 	"testing"
-	"time"
 )
 
 func TestValidateInstance_ValidInstance(t *testing.T) {
@@ -489,20 +489,6 @@ func TestValidateWithSchemaLoadsReferencedSchemasOnDemand(t *testing.T) {
 	}
 }
 
-func TestECMARegexpEngine(t *testing.T) {
-	matcher, err := ecmaRegexpEngine("^(?!x).*$")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !matcher.MatchString("valid") || matcher.MatchString("x-invalid") {
-		t.Error("ECMA lookahead matching failed")
-	}
-	regexp := matcher.(*regexp2RE)
-	if regexp.re.MatchTimeout != 250*time.Millisecond {
-		t.Errorf("expected 250ms regexp timeout, got %s", regexp.re.MatchTimeout)
-	}
-}
-
 // TestCompileSchema_GenerationGuard verifies the compiled-schema cache rejects an
 // entry left over from before an invalidation, closing the race where a compile
 // that ran concurrently with a store mutation publishes a stale result.
@@ -544,5 +530,164 @@ func TestCompileSchema_GenerationGuard(t *testing.T) {
 	}
 	if c == nil {
 		t.Fatal("expected a fresh compile after the stale entry was rejected")
+	}
+}
+
+// onDemandRef points into an unknown keyword, which becomes a schema position
+// only through the reference (gts-spec README §11.0.1).
+var onDemandRef = map[string]any{"$ref": "#/custom/unused"}
+
+func onDemandSchema(dialect string, body map[string]any) map[string]any {
+	schema := map[string]any{
+		"$id":     "gts://gts.x.validate.regex.ondemand.v1~",
+		"$schema": dialect,
+		"type":    "object",
+		"custom":  map[string]any{"unused": map[string]any{"pattern": "a(?=b)"}},
+	}
+	for k, v := range body {
+		schema[k] = v
+	}
+	return schema
+}
+
+// Inactive subschemas must follow $refs and reject unsupported patterns;
+// literal data and keywords outside the dialect remain unscanned.
+func TestValidateJSONSchema_OnDemandSubschemas(t *testing.T) {
+	const (
+		d7   = "http://json-schema.org/draft-07/schema#"
+		d19  = "https://json-schema.org/draft/2019-09/schema"
+		d20  = "https://json-schema.org/draft/2020-12/schema"
+		fail = true
+		pass = false
+	)
+	cases := []struct {
+		name    string
+		dialect string
+		body    map[string]any
+		wantErr bool
+	}{
+		{"definitions", d7, map[string]any{"definitions": map[string]any{"e": onDemandRef}}, fail},
+		{"defs_2019", d19, map[string]any{"$defs": map[string]any{"e": onDemandRef}}, fail},
+		{"defs_2020", d20, map[string]any{"$defs": map[string]any{"e": onDemandRef}}, fail},
+		{"legacy_definitions_2020", d20, map[string]any{"definitions": map[string]any{"e": onDemandRef}}, fail},
+		{"nested_in_property", d7, map[string]any{"properties": map[string]any{
+			"p": map[string]any{"definitions": map[string]any{"e": map[string]any{"anyOf": []any{true, onDemandRef}}}},
+		}}, fail},
+		{"embedded_id_scope", d20, map[string]any{"$defs": map[string]any{"e": map[string]any{
+			"$id":    "http://example.com/embedded",
+			"$ref":   "#/inner/unused",
+			"inner":  map[string]any{"unused": map[string]any{"pattern": "a(?=b)"}},
+			"custom": map[string]any{},
+		}}}, fail},
+		{"percent_encoded_pointer", d7, map[string]any{
+			"definitions": map[string]any{"e": map[string]any{"$ref": "#/custom/un%75sed"}},
+		}, fail},
+		{"then_without_if", d7, map[string]any{"then": onDemandRef}, fail},
+		{"then_after_false_if", d7, map[string]any{"if": false, "then": onDemandRef}, fail},
+		{"else_after_true_if", d20, map[string]any{"if": true, "else": onDemandRef}, fail},
+		{"additional_items_draft7", d7, map[string]any{"additionalItems": onDemandRef}, fail},
+		{"additional_items_2019", d19, map[string]any{"additionalItems": onDemandRef}, fail},
+		{"content_schema_2019", d19, map[string]any{"contentSchema": onDemandRef}, fail},
+		{"content_schema_2020", d20, map[string]any{"contentSchema": onDemandRef}, fail},
+		{"traits_draft7", d7, map[string]any{KeyXGtsTraitsSchema: map[string]any{"properties": map[string]any{"value": map[string]any{"pattern": "a(?=b)"}}}}, fail},
+		{"traits_2019", d19, map[string]any{KeyXGtsTraitsSchema: onDemandRef}, fail},
+		{"traits_2020", d20, map[string]any{KeyXGtsTraitsSchema: onDemandRef}, fail},
+		{"traits_ref_draft7", d7, map[string]any{KeyXGtsTraitsSchema: onDemandRef}, fail},
+		// Draft-07 ignores keywords beside "$ref" during evaluation; they are
+		// still schema positions, checked like inactive branches.
+		{"ref_sibling_properties_draft7", d7, refSiblings("properties", map[string]any{"p": onDemandRef}), fail},
+		{"ref_sibling_allof_draft7", d7, refSiblings("allOf", []any{true, onDemandRef}), fail},
+		{"ref_sibling_anyof_draft7", d7, refSiblings("anyOf", []any{true, onDemandRef}), fail},
+		{"ref_sibling_not_draft7", d7, refSiblings("not", onDemandRef), fail},
+		{"ref_sibling_items_draft7", d7, refSiblings("items", []any{onDemandRef}), fail},
+		{"ref_sibling_dependencies_draft7", d7, refSiblings("dependencies", map[string]any{"x": onDemandRef}), fail},
+		{"ref_sibling_property_names_draft7", d7, refSiblings("propertyNames", onDemandRef), fail},
+		{"ref_sibling_contains_draft7", d7, refSiblings("contains", onDemandRef), fail},
+		{"ref_sibling_if_draft7", d7, refSiblings("if", onDemandRef), fail},
+		{"ref_sibling_properties_2020", d20, refSiblings("properties", map[string]any{"p": onDemandRef}), fail},
+
+		// Controls: not schema positions in the declared dialect.
+		{"dollar_defs_draft7", d7, map[string]any{"$defs": map[string]any{"e": onDemandRef}}, pass},
+		{"content_schema_draft7", d7, map[string]any{"contentSchema": onDemandRef}, pass},
+		{"additional_items_2020", d20, map[string]any{"additionalItems": onDemandRef}, pass},
+		{"literal_data", d7, map[string]any{
+			"const":   map[string]any{"definitions": map[string]any{"e": onDemandRef}},
+			"default": map[string]any{"then": onDemandRef},
+		}, pass},
+		{"unknown_keyword", d7, map[string]any{"other": map[string]any{"definitions": map[string]any{"e": onDemandRef}}}, pass},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewGtsStore(nil)
+			err := store.validateJSONSchema(onDemandSchema(tc.dialect, tc.body))
+			if tc.wantErr && (err == nil || !strings.Contains(err.Error(), "regex")) {
+				t.Fatalf("expected unsupported-regex error, got %v", err)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected schema to be accepted, got %v", err)
+			}
+		})
+	}
+
+	// Control: the same references to a supported pattern are accepted.
+	for _, supported := range []map[string]any{
+		onDemandSchema(d20, map[string]any{"$defs": map[string]any{"e": onDemandRef}, "then": onDemandRef}),
+		onDemandSchema(d7, refSiblings("allOf", []any{true, onDemandRef})),
+		onDemandSchema(d7, map[string]any{KeyXGtsTraitsSchema: onDemandRef}),
+	} {
+		supported["custom"] = map[string]any{"unused": map[string]any{"pattern": "^a+$"}}
+		if err := NewGtsStore(nil).validateJSONSchema(supported); err != nil {
+			t.Fatalf("expected supported pattern to be accepted, got %v", err)
+		}
+	}
+}
+
+// refSiblings places keyword beside a root "$ref" to a valid definition.
+func refSiblings(keyword string, value any) map[string]any {
+	return map[string]any{
+		"$ref":        "#/definitions/main",
+		"definitions": map[string]any{"main": map[string]any{"type": "object"}},
+		keyword:       value,
+	}
+}
+
+// Deferred validation must also reject unsupported patterns in external schemas.
+func TestOnDemandSubschemas_DeferredAndExternal(t *testing.T) {
+	store := NewGtsStore(nil)
+	target := onDemandSchema("http://json-schema.org/draft-07/schema#",
+		map[string]any{"definitions": map[string]any{"e": onDemandRef}})
+	mustRegister(t, store, target)
+
+	if err := store.validateWithSchema(map[string]any{}, target); err == nil || !strings.Contains(err.Error(), "regex") {
+		t.Fatalf("expected instance validation to fail on the unsupported pattern, got %v", err)
+	}
+
+	host := map[string]any{
+		"$id":     "gts://gts.x.validate.regex.host.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"anyOf":   []any{true, map[string]any{"$ref": "gts://gts.x.validate.regex.ondemand.v1~"}},
+	}
+	if err := store.validateJSONSchema(host); err == nil || !strings.Contains(err.Error(), "regex") {
+		t.Fatalf("expected referenced schema's unsupported pattern to fail, got %v", err)
+	}
+}
+
+// Synthesized trait schemas inherit the host dialect.
+func TestValidateTraitsAgainstSchema_OnDemandSubschemas(t *testing.T) {
+	host := map[string]any{"$schema": "http://json-schema.org/draft-07/schema#"}
+	traitSchema := func(container string) map[string]any {
+		return map[string]any{
+			"type":    "object",
+			container: map[string]any{"e": onDemandRef},
+			"custom":  map[string]any{"unused": map[string]any{"pattern": "a(?=b)"}},
+		}
+	}
+	errs := validateTraitsAgainstSchema(traitSchema("definitions"), map[string]any{}, host, false)
+	if len(errs) == 0 || !strings.Contains(errs[0], "regex") {
+		t.Fatalf("expected trait schema compile error, got %v", errs)
+	}
+	// Draft-07 does not define $defs, so its value is an annotation.
+	if errs := validateTraitsAgainstSchema(traitSchema("$defs"), map[string]any{}, host, false); len(errs) != 0 {
+		t.Fatalf("expected draft-07 $defs to be ignored, got %v", errs)
 	}
 }

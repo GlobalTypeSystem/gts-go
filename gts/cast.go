@@ -373,33 +373,49 @@ func validateWithGtsIDTolerance(instance, schema map[string]any, store *GtsStore
 
 	// Compile and validate
 	compiler := jsonschema.NewCompiler()
-	compiler.UseRegexpEngine(ecmaRegexpEngine)
+	compiler.UseRegexpEngine(jsonschemaRegexpEngine)
+	// In 2019-09+, formats are annotations unless explicitly asserted.
+	compiler.AssertFormat()
 
-	// Set up custom loader for GTS ID references
-	compiler.UseLoader(&gtsURLLoader{store: store})
-
-	// Pre-load all schemas from the store. forEachEntity iterates under the read
-	// lock without deep-cloning the whole store; stored entities are immutable
-	// once registered and the compiler treats resources as read-only.
-	store.forEachEntity(func(id string, entity *JsonEntity) bool {
-		if entity.IsTypeSchema {
-			_ = compiler.AddResource(id, entity.Content)
-		}
-		return true
-	})
-
-	// Add the modified schema as a resource
 	schemaID := "_cast_validation"
-	_ = compiler.AddResource(schemaID, modifiedSchema)
+	addResources := func(c *jsonschema.Compiler) error {
+		// Set up custom loader for GTS ID references
+		c.UseLoader(&gtsURLLoader{store: store})
+
+		// Read-lock iteration avoids cloning: entities are immutable and the
+		// compiler only reads them.
+		store.forEachEntity(func(id string, entity *JsonEntity) bool {
+			if entity.IsTypeSchema {
+				_ = c.AddResource(id, entity.Content)
+			}
+			return true
+		})
+
+		// Add the modified schema as a resource
+		_ = c.AddResource(schemaID, modifiedSchema)
+		return nil
+	}
+	_ = addResources(compiler)
 
 	// Compile the modified schema
-	schemaObj, err := compiler.Compile(schemaID)
+	var schemaObj *jsonschema.Schema
+	err := guardRegexEngine(func() (err error) {
+		schemaObj, err = compiler.Compile(schemaID)
+		return err
+	})
+	if err == nil {
+		dialect, dialectErr := schemaDialect(schema)
+		if dialectErr != nil {
+			dialect = "2020-12" // the library's default draft
+		}
+		err = checkOnDemandSubschemas(dialect, schemaID, addResources)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to compile schema: %w", err)
 	}
 
 	// Validate instance
-	err = validateCompiledSchema(schemaObj, instance)
+	err = guardRegexEngine(func() error { return schemaObj.Validate(instance) })
 	if err != nil {
 		return fmt.Errorf("validation failed: %w", err)
 	}

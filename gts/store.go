@@ -531,6 +531,13 @@ func (s *GtsStore) Unregister(entityID string) {
 // the given staging session (a batch id); pass "" for a private per-token
 // session that is visible to no snapshot.
 func (s *GtsStore) Stage(entity *JsonEntity, session string) (string, error) {
+	return s.stage(entity, session, s.config.AllowEntityUpdates)
+}
+
+// stage also supports transient validation of a candidate under an existing ID.
+// Such candidates may shadow committed content, but must always be discarded.
+// Commit independently enforces the registry's update policy.
+func (s *GtsStore) stage(entity *JsonEntity, session string, allowUpdates bool) (string, error) {
 	if entity == nil {
 		return "", fmt.Errorf("entity must not be nil")
 	}
@@ -552,7 +559,7 @@ func (s *GtsStore) Stage(entity *JsonEntity, session string) (string, error) {
 	s.mu.Lock()
 	previous, exists := s.byID[key]
 	s.mu.Unlock()
-	if exists && !s.config.AllowEntityUpdates && contentHash(previous.Content) != contentHash(entity.Content) {
+	if exists && !allowUpdates && contentHash(previous.Content) != contentHash(entity.Content) {
 		return "", &EntityConflictError{EntityID: key}
 	}
 

@@ -315,7 +315,7 @@ func validateTraitsAgainstSchema(traitSchema map[string]any, effectiveTraits map
 
 	// Use jsonschema library for standard JSON Schema validation
 	compiler := jsonschema.NewCompiler()
-	compiler.UseRegexpEngine(ecmaRegexpEngine)
+	compiler.UseRegexpEngine(jsonschemaRegexpEngine)
 	compiler.AssertFormat()
 
 	// Remove x-gts-ref and x-gts-traits from schema before validation
@@ -344,18 +344,28 @@ func validateTraitsAgainstSchema(traitSchema map[string]any, effectiveTraits map
 	cleanSchema["$schema"] = canonicalDialect
 
 	schemaID := "gts://internal/trait-schema"
-	if err := compiler.AddResource(schemaID, cleanSchema); err != nil {
+	addResources := func(c *jsonschema.Compiler) error {
+		return c.AddResource(schemaID, cleanSchema)
+	}
+	if err := addResources(compiler); err != nil {
 		errors = append(errors, fmt.Sprintf("failed to compile trait schema: %v", err))
 		return errors
 	}
 
-	compiled, err := compiler.Compile(schemaID)
+	var compiled *jsonschema.Schema
+	err = guardRegexEngine(func() (err error) {
+		compiled, err = compiler.Compile(schemaID)
+		return err
+	})
+	if err == nil {
+		err = checkOnDemandSubschemas(hostDialect, schemaID, addResources)
+	}
 	if err != nil {
 		errors = append(errors, fmt.Sprintf("failed to compile trait schema: %v", err))
 		return errors
 	}
 
-	if verr := compiled.Validate(effectiveTraits); verr != nil {
+	if verr := guardRegexEngine(func() error { return compiled.Validate(effectiveTraits) }); verr != nil {
 		errors = append(errors, fmt.Sprintf("trait validation: %v", verr))
 	}
 
