@@ -58,6 +58,64 @@ func TestValidateJSON(t *testing.T) {
 	}
 }
 
+func TestSchemaValidationEndpointsAgree(t *testing.T) {
+	const typeID = "gts.x.test6json._.schema_parity.v1~"
+	for _, tc := range []struct {
+		name      string
+		body      map[string]any
+		wantOK    bool
+		wantError string
+	}{
+		{"valid", map[string]any{"type": "object"}, true, ""},
+		{"invalid_modifier", map[string]any{gts.KeyXGtsFinal: "true"}, false, "must be a boolean"},
+		{"invalid_traits", map[string]any{
+			gts.KeyXGtsTraitsSchema: map[string]any{"properties": map[string]any{"value": map[string]any{"type": "string"}}},
+			gts.KeyXGtsTraits:       map[string]any{"value": 1},
+		}, false, "trait validation failed"},
+		{"trait_pattern", map[string]any{
+			gts.KeyXGtsTraitsSchema: map[string]any{"properties": map[string]any{"value": map[string]any{"pattern": "a(?=b)"}}},
+		}, false, "regex"},
+		{"trait_pattern_ref", map[string]any{
+			gts.KeyXGtsTraitsSchema: map[string]any{"$ref": "#/customSchemas/traits"},
+			"customSchemas":         map[string]any{"traits": map[string]any{"properties": map[string]any{"value": map[string]any{"pattern": "a(?=b)"}}}},
+		}, false, "regex"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := gts.NewGtsStore(nil)
+			s := NewServer(store, "", 0, 0)
+			content := canonicalSchema(typeID, tc.body)
+			body, err := json.Marshal(content)
+			if err != nil {
+				t.Fatal(err)
+			}
+			code, transient := entityRequest(t, s, http.MethodPost, "/validate-json", string(body))
+			if code != http.StatusOK || transient["is_type_schema"] != true {
+				t.Fatalf("transient response: %d, %+v", code, transient)
+			}
+			if store.Get(typeID) != nil {
+				t.Fatal("transient schema was saved")
+			}
+			if err := store.RegisterSchema(typeID, content); err != nil {
+				t.Fatal(err)
+			}
+			code, stored := entityRequest(t, s, http.MethodPost, "/validate-type-schema", `{"type_id":"`+typeID+`"}`)
+			if code != http.StatusOK || stored["ok"] != tc.wantOK {
+				t.Fatalf("stored response: %d, %+v, want ok=%v", code, stored, tc.wantOK)
+			}
+			if transient["ok"] != stored["ok"] {
+				t.Fatalf("endpoints disagree: transient=%+v, stored=%+v", transient, stored)
+			}
+			if !tc.wantOK {
+				for _, response := range []map[string]any{transient, stored} {
+					if message, ok := response["error"].(string); !ok || !strings.Contains(message, tc.wantError) {
+						t.Fatalf("expected error containing %q: %+v", tc.wantError, response)
+					}
+				}
+			}
+		})
+	}
+}
+
 const (
 	testSchema        = `{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://gts.x.test._.foo.v1~","type":"object","properties":{"name":{"type":"string"}}}`
 	testSchemaChanged = `{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://gts.x.test._.foo.v1~","type":"object","properties":{"name":{"type":"integer"}}}`

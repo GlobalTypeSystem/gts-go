@@ -152,28 +152,27 @@ func TestCheckEnumeratedValuesAgainstBase_Pattern(t *testing.T) {
 	}
 }
 
-// TestCheckEnumeratedValuesAgainstBase_PatternCardinalityBound ensures an
-// oversized enum is rejected before running unbounded regexp matches (CWE-1333).
-func TestCheckEnumeratedValuesAgainstBase_PatternCardinalityBound(t *testing.T) {
-	base := map[string]any{"pattern": "^[a-z]+$"}
+// Linear matching checks the full enum and reports every mismatch.
+func TestCheckEnumeratedValuesAgainstBase_LargeEnumLinearMatching(t *testing.T) {
+	base := map[string]any{"pattern": "^(a+)+$"}
+	values := make([]any, 1000)
+	for i := range values {
+		values[i] = strings.Repeat("a", 1000)
+	}
+	values[500] = strings.Repeat("a", 1000) + "!"
 
-	// Within the bound: valid values produce no errors.
-	within := make([]any, maxEnumeratedPatternChecks)
-	for i := range within {
-		within[i] = "abc"
+	errs := checkEnumeratedValuesAgainstBase(base, values, "prop")
+	if len(errs) != 1 || !strings.Contains(errs[0], "does not match base pattern") {
+		t.Errorf("expected exactly one mismatch for the non-matching value, got %d: %v", len(errs), errs)
 	}
-	if errs := checkEnumeratedValuesAgainstBase(base, within, "prop"); len(errs) != 0 {
-		t.Errorf("expected no errors within bound, got: %v", errs)
-	}
+}
 
-	// Beyond the bound: reject without matching every value.
-	over := make([]any, maxEnumeratedPatternChecks+1)
-	for i := range over {
-		over[i] = "abc"
-	}
-	errs := checkEnumeratedValuesAgainstBase(base, over, "prop")
-	if len(errs) != 1 {
-		t.Errorf("expected exactly one cardinality error, got %d: %v", len(errs), errs)
+// Unsupported base patterns must produce an error.
+func TestCheckEnumeratedValuesAgainstBase_UnsupportedPattern(t *testing.T) {
+	base := map[string]any{"pattern": "^(?!x)"}
+	errs := checkEnumeratedValuesAgainstBase(base, []any{"x"}, "prop")
+	if len(errs) != 1 || !strings.Contains(errs[0], "unsupported regular expression") {
+		t.Errorf("expected an unsupported-pattern error, got: %v", errs)
 	}
 }
 

@@ -4,7 +4,13 @@
 
 A minimal, idiomatic Go library for working with **GTS** ([Global Type System](https://github.com/gts-spec/gts-spec)) identifiers and JSON/JSON Schema artifacts.
 
-Supported GTS spec version: `0.14.5`
+Supported GTS spec version: `0.15.0`
+
+Regular expressions follow the GTS 0.15
+[safe regular-expression profile](#regular-expressions) (spec README §11.0.1,
+ADR-0006), a breaking change from the full ECMA-262 support of 0.14.
+The conformance image is pinned to the released `v0.15.0` in
+[`.gts-spec-version`](.gts-spec-version).
 
 ## Roadmap
 
@@ -45,6 +51,14 @@ Technical Backlog:
 - [ ] **Documentation** - add documentation for all the features
 - [ ] **Interface** - export publicly available interface and keep cli and others private
 - [ ] **Final code cleanup** - remove unused code, denormalize, add critical comments, etc.
+
+## Regular expressions
+
+`pattern`, `patternProperties`, `propertyNames` and `format: "regex"`, including trait, casting and OP#12 checks, follow the GTS [safe regular-expression profile](https://github.com/GlobalTypeSystem/gts-spec/blob/main/README.md#1101-regular-expression-execution-safety) (spec §11.0.1, version 0.15).
+
+- **Engine:** Go standard library [`regexp`](https://pkg.go.dev/regexp) of the building toolchain (go.mod minimum 1.25, tested with 1.27.1), `regexp.Compile` without flags.
+- **Declared behavior:** reference for `digit`, `word` and `space`; no permitted deviation is used.
+- **Unpaired surrogates** (no result defined by GTS): JSON decoding replaces them, and invalid UTF-8, with U+FFFD.
 
 ## Installation
 
@@ -160,6 +174,14 @@ if attr.Resolved {
     fmt.Printf("Attribute value: %v\n", attr.Value)
 }
 ```
+
+`ValidateTransientJSON(schema, "")` validates a supplied type schema with the same
+checks as `ValidateEntity(schemaID)`: JSON Schema and regex syntax, GTS modifiers
+and keyword placement, inheritance, traits, and transitive dependencies. The
+candidate is visible only in its private validation session and is discarded
+afterward, including when its ID already exists in the registry. The HTTP
+endpoints `/validate-json` (schema JSON) and `/validate-type-schema` (stored type
+ID) use this shared schema validation.
 
 ### CLI
 

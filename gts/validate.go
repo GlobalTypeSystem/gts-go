@@ -6,68 +6,109 @@ Released under Apache License 2.0
 package gts
 
 import (
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/GlobalTypeSystem/gts-go/gtsid"
-	"github.com/dlclark/regexp2"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"golang.org/x/text/message"
 )
 
-// regexp2RE adapts dlclark/regexp2 (PCRE-compatible) to the jsonschema.Regexp interface.
-type regexp2RE struct {
-	re *regexp2.Regexp
-}
-
-func (r *regexp2RE) MatchString(s string) bool {
-	ok, err := r.re.MatchString(s)
-	if err != nil {
-		panic(regexpMatchError{err})
+// checkOnDemandSubschemas compiles inactive subschemas to catch unsupported
+// regexes behind their $refs, using jsonschema/v6's reference resolution.
+// The compiled result is discarded; only the error matters.
+// addResources must register the same resources and loader as the main compile.
+func checkOnDemandSubschemas(dialect, url string, addResources func(*jsonschema.Compiler) error) error {
+	compiler := jsonschema.NewCompiler()
+	compiler.UseRegexpEngine(jsonschemaRegexpEngine)
+	// Required for custom vocabularies in 2019-09+. This limits meta-validation
+	// to default vocabularies; the main compiler still validates the full schema.
+	compiler.AssertVocabs()
+	compiler.RegisterVocabulary(onDemandSubschemasVocabulary(dialect))
+	if err := addResources(compiler); err != nil {
+		return err
 	}
-	return ok
+	return guardRegexEngine(func() error {
+		_, err := compiler.Compile(url)
+		return err
+	})
 }
 
-func (r *regexp2RE) String() string {
-	return r.re.String()
-}
-
-type regexpMatchError struct {
-	err error
-}
-
-func (e regexpMatchError) Error() string {
-	return fmt.Sprintf("regular expression match failed: %v", e.err)
-}
-
-func (e regexpMatchError) Unwrap() error {
-	return e.err
-}
-
-func validateCompiledSchema(schema *jsonschema.Schema, instance any) (err error) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			if matchErr, ok := recovered.(regexpMatchError); ok {
-				err = matchErr
-				return
+// onDemandSubschemasVocabulary forces compilation of definitions, inactive
+// branches and other subschemas jsonschema/v6 compiles only on demand.
+func onDemandSubschemasVocabulary(dialect string) *jsonschema.Vocabulary {
+	containers := []string{"definitions"}
+	keywords := []string{"then", "else", KeyXGtsTraitsSchema}
+	if dialect != "2020-12" {
+		keywords = append(keywords, "additionalItems")
+	}
+	if dialect != "draft-07" {
+		containers = append(containers, "$defs")
+		keywords = append(keywords, "contentSchema")
+	}
+	return &jsonschema.Vocabulary{
+		URL: "https://globaltypesystem.io/vocab/on-demand-subschemas",
+		Compile: func(ctx *jsonschema.CompilerContext, obj map[string]any) (jsonschema.SchemaExt, error) {
+			for _, container := range containers {
+				if defs, ok := obj[container].(map[string]any); ok {
+					for name := range defs {
+						ctx.Enqueue([]string{container, name})
+					}
+				}
 			}
-			panic(recovered)
-		}
-	}()
-	return schema.Validate(instance)
+			for _, keyword := range keywords {
+				if _, ok := obj[keyword]; ok {
+					ctx.Enqueue([]string{keyword})
+				}
+			}
+			if _, hasRef := obj["$ref"].(string); hasRef && dialect == "draft-07" {
+				enqueueDraft07RefSiblings(ctx, obj)
+			}
+			return nil, nil
+		},
+	}
 }
 
-// ecmaRegexpEngine compiles patterns using ECMA-262 compatible regexp2.
-// JSON Schema specifies ECMA-262 regex, which supports lookaheads ((?!, (?=)
-// that Go's stdlib regexp (RE2) does not.
-func ecmaRegexpEngine(s string) (jsonschema.Regexp, error) {
-	re, err := regexp2.Compile(s, regexp2.ECMAScript)
-	if err != nil {
-		return nil, err
+// enqueueDraft07RefSiblings checks subschemas beside "$ref": Draft-07 ignores
+// them during evaluation, but its meta-schema still defines them as schemas.
+func enqueueDraft07RefSiblings(ctx *jsonschema.CompilerContext, obj map[string]any) {
+	for _, keyword := range []string{"not", "additionalProperties"} {
+		if _, ok := obj[keyword]; ok {
+			ctx.Enqueue([]string{keyword})
+		}
 	}
-	re.MatchTimeout = 250 * time.Millisecond
-	return &regexp2RE{re}, nil
+	for _, keyword := range []string{"allOf", "anyOf", "oneOf"} {
+		if arr, ok := obj[keyword].([]any); ok {
+			for i := range arr {
+				ctx.Enqueue([]string{keyword, strconv.Itoa(i)})
+			}
+		}
+	}
+	switch items := obj["items"].(type) {
+	case nil:
+	case []any:
+		for i := range items {
+			ctx.Enqueue([]string{"items", strconv.Itoa(i)})
+		}
+	default:
+		ctx.Enqueue([]string{"items"})
+	}
+	for _, keyword := range []string{"properties", "patternProperties"} {
+		if m, ok := obj[keyword].(map[string]any); ok {
+			for name := range m {
+				ctx.Enqueue([]string{keyword, name})
+			}
+		}
+	}
+	if deps, ok := obj["dependencies"].(map[string]any); ok {
+		for name, dep := range deps {
+			if _, isArray := dep.([]any); !isArray {
+				ctx.Enqueue([]string{"dependencies", name})
+			}
+		}
+	}
 }
 
 // gtsURLLoader implements jsonschema.URLLoader for GTS ID reference resolution
@@ -373,7 +414,8 @@ func (s *GtsStore) validateJSONSchema(schema map[string]any) error {
 }
 
 func (s *GtsStore) validateJSONSchemaScoped(schema map[string]any, session string) error {
-	if _, err := schemaDialect(schema); err != nil {
+	dialect, err := schemaDialect(schema)
+	if err != nil {
 		return fmt.Errorf("JSON Schema validation failed: %v", err)
 	}
 	normalizedSchema := normalizeSchemaForCompile(schema)
@@ -382,17 +424,35 @@ func (s *GtsStore) validateJSONSchemaScoped(schema map[string]any, session strin
 		schemaID = gtsid.ToCompileURI("gts.validation.schema")
 		normalizedSchema["$id"] = schemaID
 	}
+	addResources := func(c *jsonschema.Compiler) error {
+		return s.addCompileResources(c, schemaID, normalizedSchema, schema, session)
+	}
 
 	compiler := jsonschema.NewCompiler()
-	compiler.UseRegexpEngine(ecmaRegexpEngine)
+	compiler.UseRegexpEngine(jsonschemaRegexpEngine)
+	if err := addResources(compiler); err != nil {
+		return fmt.Errorf("JSON Schema validation failed: %v", err)
+	}
+	if err := guardRegexEngine(func() error {
+		_, err := compiler.Compile(schemaID)
+		return err
+	}); err != nil {
+		return fmt.Errorf("JSON Schema validation failed: %v", err)
+	}
+	if err := checkOnDemandSubschemas(dialect, schemaID, addResources); err != nil {
+		return fmt.Errorf("JSON Schema validation failed: %v", err)
+	}
+	return nil
+}
+
+// addCompileResources registers a schema, its preloaded gts:// dependencies and
+// the GTS loader with compiler.
+func (s *GtsStore) addCompileResources(compiler *jsonschema.Compiler, schemaID string, normalizedSchema, rawSchema map[string]any, session string) error {
 	compiler.UseLoader(&gtsURLLoader{store: s, session: session})
 	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
-		return fmt.Errorf("JSON Schema validation failed: %v", err)
+		return err
 	}
-	s.addSchemaDependencyResources(compiler, schema, schemaID, session)
-	if _, err := compiler.Compile(schemaID); err != nil {
-		return fmt.Errorf("JSON Schema validation failed: %v", err)
-	}
+	s.addSchemaDependencyResources(compiler, rawSchema, schemaID, session)
 	return nil
 }
 
@@ -436,33 +496,27 @@ func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) 
 		entity.TypeID = typeID
 	}
 	if entity.IsTypeSchema {
-		if err := s.validateJSONSchema(content); err != nil {
-			return fail(err.Error())
-		}
 		if entity.GtsID == nil {
 			return fail("Unable to detect GTS ID in schema")
 		}
-		s.writerMu.Lock()
-		s.mu.Lock()
-		previous, existed := s.byID[entity.GtsID.ID]
-		s.byID[entity.GtsID.ID] = cloneJsonEntity(entity)
-		s.mu.Unlock()
-		s.invalidateSchemaCache()
-		validation := s.ValidateSchemaChain(entity.GtsID.ID)
-		s.mu.Lock()
-		if existed {
-			s.byID[entity.GtsID.ID] = previous
-		} else {
-			delete(s.byID, entity.GtsID.ID)
+		// Resolve this candidate and self-references in a private overlay. Run
+		// the same complete schema validator used by stored-entity validation.
+		token, err := s.stage(entity, "", true)
+		if err != nil {
+			return fail(err.Error())
 		}
-		s.mu.Unlock()
-		s.invalidateSchemaCache()
-		s.writerMu.Unlock()
-		if !validation.OK {
-			if validation.MissingSchema {
-				return fail("Parent GTS Type Schema not found")
+		defer s.Discard(token)
+		if err := s.validateTypeSchemaTransitive(entity.GtsID.ID, GtsRefValidationAnyValid, token); err != nil {
+			// Preserve validate-json's missing-parent diagnostic.
+			var missing *StoreGtsSchemaNotFoundError
+			if errors.As(err, &missing) {
+				for i := 1; i < len(entity.GtsID.Segments); i++ {
+					if missing.EntityID == buildIDFromSegments(entity.GtsID.Segments[:i]) {
+						return fail("Parent GTS Type Schema not found")
+					}
+				}
 			}
-			return fail(validation.Error)
+			return fail(err.Error())
 		}
 		result.OK = true
 		return result
@@ -529,9 +583,7 @@ func (s *GtsStore) compileSchema(schemaID string, normalizedSchema, rawSchema ma
 
 	// Create a custom compiler with GTS reference resolution.
 	compiler := jsonschema.NewCompiler()
-	// Use ECMA-262 compatible regexp engine for pattern validation. Go's stdlib
-	// regexp uses RE2 which rejects lookaheads ((?!, (?=) valid in JSON Schema.
-	compiler.UseRegexpEngine(ecmaRegexpEngine)
+	compiler.UseRegexpEngine(jsonschemaRegexpEngine)
 	// Register x-gts-ref as a proper vocabulary so the library treats it as a real
 	// keyword with validation semantics. This prevents oneOf/anyOf/allOf branches
 	// containing only x-gts-ref from being treated as empty match-all schemas.
@@ -539,20 +591,29 @@ func (s *GtsStore) compileSchema(schemaID string, normalizedSchema, rawSchema ma
 	// Assert JSON Schema format keywords (uuid, email, date-time, …) so format
 	// violations are reported as validation errors (gts-spec OP#6).
 	compiler.AssertFormat()
-	// Set up custom loader for GTS ID references (matches Python's resolve_gts_ref handler).
-	compiler.UseLoader(&gtsURLLoader{store: s})
+	// Resources and the custom loader for GTS ID references (matches Python's
+	// resolve_gts_ref handler).
+	addResources := func(c *jsonschema.Compiler) error {
+		return s.addCompileResources(c, schemaID, normalizedSchema, rawSchema, "")
+	}
+	// validateWithSchema has already rejected unsupported dialects.
+	dialect, _ := schemaDialect(rawSchema)
 
 	entry := &compiledSchemaEntry{gen: gen}
-	if err := compiler.AddResource(schemaID, normalizedSchema); err != nil {
+	var compiled *jsonschema.Schema
+	if err := addResources(compiler); err != nil {
 		entry.err = fmt.Errorf("add schema resource: %v", err)
+	} else if err := guardRegexEngine(func() (err error) {
+		compiled, err = compiler.Compile(schemaID)
+		return err
+	}); err != nil {
+		entry.err = fmt.Errorf("compile schema: %v", err)
+	} else if err := checkOnDemandSubschemas(dialect, schemaID, addResources); err != nil {
+		// Schemas registered without validation must still fail here rather
+		// than validate instances (gts-spec README §11.0.1).
+		entry.err = fmt.Errorf("compile schema: %v", err)
 	} else {
-		s.addSchemaDependencyResources(compiler, rawSchema, schemaID, "")
-		compiled, err := compiler.Compile(schemaID)
-		if err != nil {
-			entry.err = fmt.Errorf("compile schema: %v", err)
-		} else {
-			entry.schema = compiled
-		}
+		entry.schema = compiled
 	}
 	// Publish only if no invalidation intervened during the compile. If one did,
 	// this entry reflects a stale view; skip storing it (a later call recompiles)
@@ -583,7 +644,7 @@ func (s *GtsStore) validateWithSchema(instance map[string]any, schema map[string
 	}
 
 	// Validate the instance
-	if err := validateCompiledSchema(compiledSchema, instance); err != nil {
+	if err := guardRegexEngine(func() error { return compiledSchema.Validate(instance) }); err != nil {
 		return fmt.Errorf("validation error: %v", err)
 	}
 
