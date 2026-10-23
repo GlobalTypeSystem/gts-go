@@ -169,6 +169,8 @@ type XGtsRefValidator struct {
 	referencedWildcardPatterns map[string]struct{}
 }
 
+// NewXGtsRefValidator returns a validator for GTS reference keywords backed by
+// the given store. The optional mode defaults to GtsRefValidationAnyValid.
 func NewXGtsRefValidator(store *GtsStore, modes ...GtsRefValidationMode) *XGtsRefValidator {
 	mode := GtsRefValidationAnyValid
 	if len(modes) > 0 {
@@ -192,6 +194,8 @@ func NewXGtsRefValidatorScoped(store *GtsStore, mode GtsRefValidationMode, sessi
 	return v
 }
 
+// ReferencedIDs returns the concrete GTS identifiers referenced by the
+// keywords encountered during the last validation call.
 func (v *XGtsRefValidator) ReferencedIDs() []string {
 	ids := make([]string, 0, len(v.referencedIDs))
 	for id := range v.referencedIDs {
@@ -200,6 +204,8 @@ func (v *XGtsRefValidator) ReferencedIDs() []string {
 	return ids
 }
 
+// ReferencedWildcardPatterns returns the wildcard patterns referenced by the
+// keywords encountered during the last validation call.
 func (v *XGtsRefValidator) ReferencedWildcardPatterns() []string {
 	patterns := make([]string, 0, len(v.referencedWildcardPatterns))
 	for pattern := range v.referencedWildcardPatterns {

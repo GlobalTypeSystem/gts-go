@@ -419,6 +419,8 @@ func (s *GtsStore) addSchemaDependencyResources(compiler *jsonschema.Compiler, s
 	}
 }
 
+// JSONValidationResult is the outcome of validating a standalone JSON document
+// (a type schema or an instance) with ValidateTransientJSON.
 type JSONValidationResult struct {
 	OK           bool   `json:"ok"`
 	IsTypeSchema bool   `json:"is_type_schema"`
@@ -512,6 +514,12 @@ func adaptTypeMismatchMessage(message string) string {
 	return message
 }
 
+// ValidateTransientJSON validates a supplied JSON document against the stored
+// registry without registering it. If typeID is empty the content is treated
+// as a type schema and validated with the same checks as a stored schema;
+// otherwise it is validated as an instance of the given type. The candidate is
+// visible only inside a private validation session and is discarded afterward,
+// even if its ID already exists in the registry.
 func (s *GtsStore) ValidateTransientJSON(content map[string]any, typeID string) *JSONValidationResult {
 	entity := NewJsonEntity(content, DefaultGtsConfig())
 	result := &JSONValidationResult{IsTypeSchema: entity.IsTypeSchema}

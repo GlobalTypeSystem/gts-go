@@ -10,7 +10,10 @@ import (
 )
 
 const (
-	KeyXGtsFinal    = "x-gts-final"
+	// KeyXGtsFinal marks a schema as final: it may not be derived from.
+	KeyXGtsFinal = "x-gts-final"
+	// KeyXGtsAbstract marks a schema as abstract: it may be derived from but
+	// cannot be instantiated directly.
 	KeyXGtsAbstract = "x-gts-abstract"
 )
 
@@ -52,6 +55,10 @@ func ValidateSchemaExtensions(content map[string]any) error {
 	return walk(content)
 }
 
+// ValidateSchemaModifiers validates the GTS schema modifier keywords
+// (x-gts-final, x-gts-abstract): it checks their value types, rejects
+// declaring a schema both final and abstract, and enforces that modifiers
+// appear only at the schema document top level.
 func ValidateSchemaModifiers(content map[string]any) error {
 	final, err := readBoolModifier(content, KeyXGtsFinal)
 	if err != nil {
