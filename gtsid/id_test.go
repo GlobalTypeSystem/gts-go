@@ -308,7 +308,13 @@ func TestGtsID_CombinedAnonymousInstance_Invalid(t *testing.T) {
 // Identifiers are validated as spelled: surrounding whitespace is rejected by
 // the shared parser rather than trimmed, for New, ParsePattern and Match alike.
 func TestSurroundingWhitespaceIsRejected(t *testing.T) {
-	for _, id := range []string{" gts.x.core.ns.type.v1~", "gts.x.core.ns.type.v1~\n", "\tgts.x.core.*"} {
+	for _, id := range []string{
+		" gts.x.core.ns.type.v1~",
+		"gts.x.core.ns.type.v1~\n",
+		"\tgts.x.core.*",
+		"gts.x.y.z.t.v1~ a.b.c.d.v1",
+		"gts.x.y.z.t.v1~a.b.c.d.v1 ",
+	} {
 		if _, err := New(id); err == nil {
 			t.Errorf("New(%q): want error", id)
 		}
@@ -317,6 +323,14 @@ func TestSurroundingWhitespaceIsRejected(t *testing.T) {
 		}
 		if r := Match(id, "gts.*"); r.Match || r.Error == "" {
 			t.Errorf("Match(%q, gts.*) = %+v, want a non-match with an error", id, r)
+		}
+	}
+}
+
+func TestNewRejectsWildcards(t *testing.T) {
+	for _, id := range []string{"gts.x.core.*", "gts.x.core.ns.type.v*", "gts.*"} {
+		if _, err := New(id); err == nil {
+			t.Errorf("New(%q): want error for wildcard input", id)
 		}
 	}
 }

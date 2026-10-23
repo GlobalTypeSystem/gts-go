@@ -173,16 +173,11 @@ RUN_TESTS_DOCKER = \
 		--gts-base-url http://host.docker.internal:$(PORT) \
 		$(TEST)
 
-# Run the gts server in the foreground. Pair with `make gts-spec-tests-run
-# TEST=...` for iterative test development. Binds to 0.0.0.0 so the
-# test-runner container can reach the server via host.docker.internal on
-# Linux (see START_SERVER for the full rationale).
+# Run the gts server in the foreground (binds to 0.0.0.0 on $(PORT))
 gts-server: build
 	./bin/gts server -host 0.0.0.0 -port $(PORT)
 
-# Validate $(GTS_SPEC_VERSION) is non-empty and looks like a version tag
-# (vMAJOR.MINOR or vMAJOR.MINOR.PATCH). Catches missing/garbled
-# .gts-spec-version before it turns into an opaque docker error.
+# Validate $(GTS_SPEC_VERSION) is non-empty and formatted correctly
 gts-spec-version-check:
 	@case "$(GTS_SPEC_VERSION)" in \
 		"") echo "ERROR: spec version is empty — populate .gts-spec-version or pass GTS_SPEC_VERSION=..."; exit 1 ;; \
@@ -192,11 +187,7 @@ gts-spec-version-check:
 		*) echo "ERROR: GTS_SPEC_VERSION='$(GTS_SPEC_VERSION)' — expected 'vMAJOR.MINOR' or 'vMAJOR.MINOR.PATCH'"; exit 1 ;; \
 	esac
 
-# Pull the gts-spec test-runner image from GHCR. Skips the network round-trip
-# when the image is already in the local cache (safe because the default tag
-# is an immutable vMAJOR.MINOR.PATCH; bumping .gts-spec-version produces a new
-# ref, which forces a fresh pull). Use `docker rmi $(GTS_SPEC_REF)` to force
-# a refetch of a rolling tag.
+# Pull the gts-spec test-runner image from GHCR
 gts-spec-tests-pull: gts-spec-version-check
 	@docker image inspect $(GTS_SPEC_REF) >/dev/null 2>&1 || docker pull $(GTS_SPEC_REF)
 

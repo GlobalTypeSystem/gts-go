@@ -4,13 +4,11 @@
 
 A minimal, idiomatic Go library for working with **GTS** ([Global Type System](https://github.com/gts-spec/gts-spec)) identifiers and JSON/JSON Schema artifacts.
 
-Supported GTS spec version: `0.15.0`
+Supported GTS spec version: `0.17.0`
 
-Regular expressions follow the GTS 0.15
-[safe regular-expression profile](#regular-expressions) (spec README §11.0.1,
-ADR-0006), a breaking change from the full ECMA-262 support of 0.14.
-The conformance image is pinned to the released `v0.15.0` in
-[`.gts-spec-version`](.gts-spec-version).
+Regular expressions follow the GTS safe regular-expression profile
+(spec README §11.0.1, ADR-0006). The conformance image is pinned to the
+released `v0.17.0` in [`.gts-spec-version`](.gts-spec-version).
 
 ## Roadmap
 
@@ -40,10 +38,10 @@ Other GTS spec [Reference Implementation](https://github.com/globaltypesystem/gt
 - [x] **In-memory entities registry** - simple GTS entities registry with optional GTS references validation on entity registration
 - [x] **CLI** - command-line interface for all GTS operations
 - [x] **Web server** - a non-production web-server with REST API for the operations processing and testing
-- [x] **x-gts-ref support** - to support special GTS entity reference annotation in schemas
+- [x] **GTS reference keywords** - to support x-gts-type-ref, x-gts-instance-ref, and x-gts-pattern-ref annotations in schemas
 - [x] **YAML support** - to support YAML files (*.yml, *.yaml) as input files
 - [ ] **TypeSpec support** - add [typespec.io](https://typespec.io/) files (*.tsp) support
-- [ ] **UUID for instances** - to support UUID as ID in JSON instances
+- [x] **UUID for instances** - to support UUID as ID in JSON instances
 
 Technical Backlog:
 
