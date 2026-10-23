@@ -7,6 +7,7 @@ package gtsid
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -80,29 +81,27 @@ type ID struct {
 	Segments []*Segment
 }
 
-// ParseOptions tunes the shared identifier parser (parseGtsID) so the strict
-// (New) and relaxed (wildcard) callers can share one implementation
-// instead of maintaining several near-duplicate parsers.
-type ParseOptions struct {
-	// AllowSingleSegment lifts the "single-segment instances are prohibited"
-	// rule. Wildcard patterns need this because a pattern like "gts.x.core.*"
-	// legitimately has a single (wildcard) segment.
-	AllowSingleSegment bool
-	// DetectUUIDTail treats a trailing canonical-UUID part as a combined
-	// anonymous-instance segment (spec §3.7) rather than a normal segment.
-	DetectUUIDTail bool
-}
-
 // New creates and validates a new (concrete) GTS identifier.
 func New(id string) (*ID, error) {
-	return parseGtsID(id, ParseOptions{DetectUUIDTail: true})
+	return parseGtsID(id)
+}
+
+// hasSurroundingWhitespace reports whether s has leading or trailing
+// whitespace. GTS identifiers and patterns are validated as spelled, with no
+// trimming (README §2/§10).
+func hasSurroundingWhitespace(s string) bool {
+	return strings.TrimSpace(s) != s
 }
 
 // parseGtsID is the single, shared GTS identifier parser. All parsing paths
-// (strict ids and wildcard patterns) funnel through here; ParseOptions selects
-// the behavioral differences.
-func parseGtsID(id string, opts ParseOptions) (*ID, error) {
-	raw := strings.TrimSpace(id)
+// (strict ids via New and match patterns via ParsePattern) funnel through
+// here. A trailing canonical-UUID part is parsed as a combined
+// anonymous-instance segment (spec §3.7).
+func parseGtsID(id string) (*ID, error) {
+	if hasSurroundingWhitespace(id) {
+		return nil, &InvalidIDError{GtsID: id, Cause: "Must not contain leading or trailing whitespace"}
+	}
+	raw := id
 
 	// Validate lowercase
 	if raw != strings.ToLower(raw) {
@@ -124,7 +123,7 @@ func parseGtsID(id string, opts ParseOptions) (*ID, error) {
 	parts := splitPreservingTilde(remainder)
 
 	// Detect combined anonymous instance: last part is a UUID (no trailing ~)
-	hasUUIDTail := opts.DetectUUIDTail && len(parts) >= 2 && isUUIDSegment(parts[len(parts)-1])
+	hasUUIDTail := len(parts) >= 2 && isUUIDSegment(parts[len(parts)-1])
 
 	// Validate no hyphens in non-UUID portions (reuse already-split parts)
 	gtsPartsToCheck := parts
@@ -173,7 +172,7 @@ func parseGtsID(id string, opts ParseOptions) (*ID, error) {
 	// Single-segment instances are prohibited
 	// Well-known instances must be chained with at least one type segment
 	// This check should only apply to non-wildcard, non-type single-segment IDs
-	if !opts.AllowSingleSegment && len(gtsID.Segments) == 1 && !gtsID.IsType() && !gtsID.Segments[0].IsWildcard {
+	if len(gtsID.Segments) == 1 && !gtsID.IsType() && !gtsID.Segments[0].IsWildcard {
 		return nil, &InvalidIDError{GtsID: id, Cause: "Single-segment instances are prohibited. Well-known instances must be chained with a type segment"}
 	}
 
@@ -281,25 +280,42 @@ func parseSegment(num, offset int, segment string) (*Segment, error) {
 	}
 
 	// If not ending with wildcard, must have at least 5 tokens
-	if !strings.HasSuffix(workingSegment, WildcardMarker) {
-		if len(tokens) < 5 {
-			return nil, &InvalidSegmentError{
-				Num:     num,
-				Offset:  offset,
-				Segment: segment,
-				Cause:   "Too few tokens",
-			}
+	if !strings.HasSuffix(workingSegment, WildcardMarker) && len(tokens) < 5 {
+		return nil, &InvalidSegmentError{
+			Num:     num,
+			Offset:  offset,
+			Segment: segment,
+			Cause:   "Too few tokens",
 		}
+	}
 
-		// Validate first 4 tokens
-		for t := 0; t < 4; t++ {
-			if !segmentTokenRegex.MatchString(tokens[t]) {
+	// Validate the name tokens (first up to four). A bare '*' is permitted only
+	// as the final token (it makes the segment a wildcard); every other name
+	// token must be a valid segment token. This runs for wildcard patterns too,
+	// so a wildcard glued to a name token (e.g. "typ*") is rejected rather than
+	// silently accepted as a literal name.
+	nameTokens := len(tokens)
+	if nameTokens > 4 {
+		nameTokens = 4
+	}
+	for t := 0; t < nameTokens; t++ {
+		if tokens[t] == WildcardMarker {
+			if t != len(tokens)-1 {
 				return nil, &InvalidSegmentError{
 					Num:     num,
 					Offset:  offset,
 					Segment: segment,
-					Cause:   "Invalid segment token: " + tokens[t],
+					Cause:   "Wildcard '*' is only allowed as the final token",
 				}
+			}
+			break
+		}
+		if !segmentTokenRegex.MatchString(tokens[t]) {
+			return nil, &InvalidSegmentError{
+				Num:     num,
+				Offset:  offset,
+				Segment: segment,
+				Cause:   "Invalid segment token: " + tokens[t],
 			}
 		}
 	}
@@ -344,6 +360,21 @@ func parseSegment(num, offset int, segment string) (*Segment, error) {
 			return seg, nil
 		}
 
+		// Glued version wildcard `v*`: the mandatory `v` marker followed by a
+		// wildcard means "any version" (spec §10). Only valid as the final token.
+		if tokens[4] == "v"+WildcardMarker {
+			if len(tokens) != 5 {
+				return nil, &InvalidSegmentError{
+					Num:     num,
+					Offset:  offset,
+					Segment: segment,
+					Cause:   "Wildcard '*' is only allowed as the final token",
+				}
+			}
+			seg.IsWildcard = true
+			return seg, nil
+		}
+
 		if !strings.HasPrefix(tokens[4], "v") {
 			return nil, &InvalidSegmentError{
 				Num:     num,
@@ -364,12 +395,12 @@ func parseSegment(num, offset int, segment string) (*Segment, error) {
 			}
 		}
 
-		if major < 0 {
+		if major < 0 || int64(major) > math.MaxUint32 {
 			return nil, &InvalidSegmentError{
 				Num:     num,
 				Offset:  offset,
 				Segment: segment,
-				Cause:   "Major version must be >= 0",
+				Cause:   "Major version must be an unsigned 32-bit integer",
 			}
 		}
 
@@ -404,12 +435,12 @@ func parseSegment(num, offset int, segment string) (*Segment, error) {
 			}
 		}
 
-		if minor < 0 {
+		if minor < 0 || int64(minor) > math.MaxUint32 {
 			return nil, &InvalidSegmentError{
 				Num:     num,
 				Offset:  offset,
 				Segment: segment,
-				Cause:   "Minor version must be >= 0",
+				Cause:   "Minor version must be an unsigned 32-bit integer",
 			}
 		}
 

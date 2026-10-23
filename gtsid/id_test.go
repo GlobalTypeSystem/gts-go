@@ -304,3 +304,19 @@ func TestGtsID_CombinedAnonymousInstance_Invalid(t *testing.T) {
 		})
 	}
 }
+
+// Identifiers are validated as spelled: surrounding whitespace is rejected by
+// the shared parser rather than trimmed, for New, ParsePattern and Match alike.
+func TestSurroundingWhitespaceIsRejected(t *testing.T) {
+	for _, id := range []string{" gts.x.core.ns.type.v1~", "gts.x.core.ns.type.v1~\n", "\tgts.x.core.*"} {
+		if _, err := New(id); err == nil {
+			t.Errorf("New(%q): want error", id)
+		}
+		if _, err := ParsePattern(id); err == nil {
+			t.Errorf("ParsePattern(%q): want error", id)
+		}
+		if r := Match(id, "gts.*"); r.Match || r.Error == "" {
+			t.Errorf("Match(%q, gts.*) = %+v, want a non-match with an error", id, r)
+		}
+	}
+}
