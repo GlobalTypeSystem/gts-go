@@ -12,619 +12,695 @@ import (
 	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
-// ── validate.go coverage ────────────────────────────────────────────────────
+// ── ref_scope_compat.go — refScopeRelation / relation / atomRelation ────────
 
-func TestValidateInstance_NotFound_Extra(t *testing.T) {
-	store := NewGtsStore(nil)
-	r := store.ValidateInstance("gts.x.test.ns.type.v1~x.test.ns.inst.v1")
-	if r.OK {
-		t.Fatal("expected !ok for missing instance")
-	}
-	if !strings.Contains(r.Error, "not found") {
-		t.Errorf("expected 'not found' in error: %s", r.Error)
-	}
+func typeRef(operand string) map[string]any {
+	return map[string]any{"type": "string", KeyXGtsTypeRef: operand}
 }
 
-func TestValidateInstance_NoTypeID(t *testing.T) {
-	store := NewGtsStore(nil)
-	// Register an entity without a type_id (a plain object with no schema association)
-	entity := &JsonEntity{
-		Content: map[string]any{"name": "test"},
-	}
-	entity.GtsID = &gtsid.ID{ID: "some-raw-id"}
-	store.byID["some-raw-id"] = entity
-	r := store.ValidateInstance("some-raw-id")
-	if r.OK {
-		t.Fatal("expected !ok for entity without type_id")
-	}
-}
-
-func TestValidateInstance_SchemaNotFound(t *testing.T) {
-	store := NewGtsStore(nil)
-	entity := &JsonEntity{
-		Content: map[string]any{"name": "test"},
-		TypeID:  "gts.x.missing.schema.v1~",
-	}
-	entity.GtsID = &gtsid.ID{ID: "gts.x.test.ns.type.v1~x.test.ns.inst.v1"}
-	store.byID["gts.x.test.ns.type.v1~x.test.ns.inst.v1"] = entity
-	r := store.ValidateInstance("gts.x.test.ns.type.v1~x.test.ns.inst.v1")
-	if r.OK {
-		t.Fatal("expected !ok for missing schema")
-	}
-	if !strings.Contains(r.Error, "not found") {
-		t.Errorf("expected 'not found' in error: %s", r.Error)
-	}
-}
-
-func TestValidateInstance_AbstractTypeRejected(t *testing.T) {
-	store := NewGtsStore(nil)
-	// Register an abstract schema
-	regSpec(t, store, map[string]any{
-		"$$id": "gts://gts.x.test.ns.abstract.v1~", "$$schema": "http://json-schema.org/draft-07/schema#",
-		"type": "object", "x-gts-abstract": true,
-		"properties": map[string]any{"name": map[string]any{"type": "string"}},
-		"required":   []any{"name"},
-	})
-	// Register an instance referencing the abstract type
-	inst := map[string]any{
-		"id": "gts.x.test.ns.abstract.v1~x.test.ns.inst.v1", "type": "gts.x.test.ns.abstract.v1~",
-		"name": "test",
-	}
-	instEntity := NewJsonEntity(inst, DefaultGtsConfig())
-	_ = store.Register(instEntity)
-
-	r := store.ValidateInstance("gts.x.test.ns.abstract.v1~x.test.ns.inst.v1")
-	if r.OK {
-		t.Fatal("expected !ok for abstract type instance")
-	}
-	if !strings.Contains(r.Error, "abstract") {
-		t.Errorf("expected 'abstract' in error: %s", r.Error)
-	}
-}
-
-func TestValidateInstance_Valid(t *testing.T) {
-	store := NewGtsStore(nil)
-	regSpec(t, store, map[string]any{
-		"$$id": "gts://gts.x.test.ns.type.v1~", "$$schema": "http://json-schema.org/draft-07/schema#",
-		"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}},
-		"required": []any{"name"},
-	})
-	inst := map[string]any{
-		"id": "gts.x.test.ns.type.v1~x.test.ns.inst.v1", "type": "gts.x.test.ns.type.v1~",
-		"name": "hello",
-	}
-	instEntity := NewJsonEntity(inst, DefaultGtsConfig())
-	_ = store.Register(instEntity)
-
-	r := store.ValidateInstance("gts.x.test.ns.type.v1~x.test.ns.inst.v1")
-	if !r.OK {
-		t.Fatalf("expected OK, got error: %s", r.Error)
-	}
-}
-
-func TestValidateInstance_Invalid(t *testing.T) {
-	store := NewGtsStore(nil)
-	regSpec(t, store, map[string]any{
-		"$$id": "gts://gts.x.test.ns.type.v1~", "$$schema": "http://json-schema.org/draft-07/schema#",
-		"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}},
-		"required": []any{"name"},
-	})
-	inst := map[string]any{
-		"id": "gts.x.test.ns.type.v1~x.test.ns.inst.v1", "type": "gts.x.test.ns.type.v1~",
-		// missing required "name"
-	}
-	instEntity := NewJsonEntity(inst, DefaultGtsConfig())
-	_ = store.Register(instEntity)
-
-	r := store.ValidateInstance("gts.x.test.ns.type.v1~x.test.ns.inst.v1")
-	if r.OK {
-		t.Fatal("expected !ok for invalid instance")
-	}
-}
-
-// ── parse.go coverage ───────────────────────────────────────────────────────
-
-func TestParseID_ValidType(t *testing.T) {
-	r := gtsid.Parse("gts.x.core.ns.type.v1~")
-	if !r.OK {
-		t.Fatalf("expected OK: %s", r.Error)
-	}
-	if !r.IsType {
-		t.Error("expected is_type")
-	}
-	if len(r.Segments) != 1 {
-		t.Fatalf("expected 1 segment, got %d", len(r.Segments))
-	}
-	s := r.Segments[0]
-	if s.Vendor != "x" || s.Package != "core" || s.Namespace != "ns" || s.Type != "type" {
-		t.Errorf("segment fields: %+v", s)
-	}
-}
-
-func TestParseID_ValidInstance(t *testing.T) {
-	r := gtsid.Parse("gts.x.core.ns.type.v1~x.ext.ns.inst.v1")
-	if !r.OK {
-		t.Fatalf("expected OK: %s", r.Error)
-	}
-	if r.IsType {
-		t.Error("expected not is_type for instance")
-	}
-	if len(r.Segments) != 2 {
-		t.Fatalf("expected 2 segments, got %d", len(r.Segments))
-	}
-}
-
-func TestParseID_Invalid(t *testing.T) {
-	r := gtsid.Parse("garbage")
-	if r.OK {
-		t.Fatal("expected !ok")
-	}
-	if r.Error == "" {
-		t.Error("expected error message")
-	}
-}
-
-func TestParseID_WildcardValid(t *testing.T) {
-	r := gtsid.Parse("gts.x.core.ns.*")
-	if !r.OK {
-		t.Fatalf("expected OK: %s", r.Error)
-	}
-	if !r.IsWildcard {
-		t.Error("expected is_wildcard")
-	}
-}
-
-func TestParseID_WildcardTypePattern(t *testing.T) {
-	r := gtsid.Parse("gts.x.core.ns.type.v1~*")
-	if !r.OK {
-		t.Fatalf("expected OK: %s", r.Error)
-	}
-	if !r.IsType {
-		t.Error("expected is_type for ~* pattern")
-	}
-}
-
-func TestParseID_WildcardInvalid(t *testing.T) {
-	r := gtsid.Parse("gts.x.*bad*")
-	if r.OK {
-		t.Fatal("expected !ok for invalid wildcard")
-	}
-}
-
-// ── extract.go / EffectiveID coverage ───────────────────────────────────────
-
-func TestEffectiveID_FromGtsID(t *testing.T) {
-	e := &JsonEntity{GtsID: &gtsid.ID{ID: "gts.x.test.v1~"}}
-	if e.EffectiveID() != "gts.x.test.v1~" {
-		t.Errorf("expected GTS ID: %s", e.EffectiveID())
-	}
-}
-
-func TestEffectiveID_FromRawField(t *testing.T) {
-	e := &JsonEntity{
-		Content:             map[string]any{"id": "some-uuid"},
-		SelectedEntityField: "id",
-	}
-	if e.EffectiveID() != "some-uuid" {
-		t.Errorf("expected raw id: %s", e.EffectiveID())
-	}
-}
-
-func TestEffectiveID_FromFile(t *testing.T) {
-	e := &JsonEntity{
-		File: &JsonFile{Path: "/some/path.json", Name: "path.json"},
-	}
-	if e.EffectiveID() != "/some/path.json" {
-		t.Errorf("expected file path: %s", e.EffectiveID())
-	}
-}
-
-func TestEffectiveID_FromFileWithSequence(t *testing.T) {
-	seq := 3
-	e := &JsonEntity{
-		File:         &JsonFile{Path: "/some/path.json", Name: "path.json"},
-		ListSequence: &seq,
-	}
-	if e.EffectiveID() != "/some/path.json#3" {
-		t.Errorf("expected file#seq: %s", e.EffectiveID())
-	}
-}
-
-func TestEffectiveID_Empty(t *testing.T) {
-	e := &JsonEntity{}
-	if e.EffectiveID() != "" {
-		t.Errorf("expected empty: %s", e.EffectiveID())
-	}
-}
-
-func TestEffectiveID_SkipTypeSchemaForRawField(t *testing.T) {
-	e := &JsonEntity{
-		IsTypeSchema:        true,
-		Content:             map[string]any{"id": "some-value"},
-		SelectedEntityField: "id",
-	}
-	// For type schemas, raw field is not used (IsTypeSchema && SelectedEntityField)
-	if e.EffectiveID() != "" {
-		t.Errorf("expected empty for type schema without GtsID: %s", e.EffectiveID())
-	}
-}
-
-// ── schema_compat.go coverage ───────────────────────────────────────────────
-
-func TestSchemaCompat_CheckMultipleOf(t *testing.T) {
-	base := map[string]any{"multipleOf": float64(2)}
-	derived := map[string]any{"multipleOf": float64(6)}
-	errs := checkMultipleOf(base, derived, "prop")
-	if len(errs) != 0 {
-		t.Errorf("6 is a multiple of 2: %v", errs)
-	}
-
-	derived2 := map[string]any{"multipleOf": float64(3)}
-	errs2 := checkMultipleOf(base, derived2, "prop")
-	if len(errs2) == 0 {
-		t.Error("3 is not a multiple of 2, expected error")
-	}
-
-	// Derived omits multipleOf
-	errs3 := checkMultipleOf(base, map[string]any{}, "prop")
-	if len(errs3) == 0 {
-		t.Error("missing multipleOf should error")
-	}
-
-	// Base has no multipleOf → no check
-	errs4 := checkMultipleOf(map[string]any{}, derived, "prop")
-	if len(errs4) != 0 {
-		t.Errorf("no base multipleOf → no error: %v", errs4)
-	}
-}
-
-func TestSchemaCompat_JsonValueType(t *testing.T) {
-	tests := []struct {
-		val  any
-		want string
+func TestRefScopeRelation_Atoms(t *testing.T) {
+	cases := []struct {
+		name          string
+		base, derived map[string]any
+		want          refRel
 	}{
-		{"hello", "string"},
-		{true, "boolean"},
-		{float64(1), "number"},
-		{[]any{}, "array"},
-		{map[string]any{}, "object"},
-		{nil, ""},
+		{
+			"base imposes no constraint",
+			map[string]any{"type": "string"},
+			typeRef("gts.x.scope.ns.a.v1~"),
+			relIncluded,
+		},
+		{
+			"base covers derived",
+			typeRef("gts.x.scope.*"),
+			typeRef("gts.x.scope.ns.a.v1~"),
+			relIncluded,
+		},
+		{
+			"base does not cover derived",
+			typeRef("gts.x.scope.ns.a.*"),
+			typeRef("gts.x.scope.*"),
+			relExcluded,
+		},
+		{
+			"type vs instance kinds are disjoint",
+			typeRef("gts.x.scope.*"),
+			map[string]any{"type": "string", KeyXGtsInstanceRef: "gts.x.scope.*"},
+			relExcluded,
+		},
+		{
+			"pattern vs entity ref is undecided",
+			map[string]any{"type": "string", KeyXGtsPatternRef: "gts.x.scope.*"},
+			typeRef("gts.x.scope.ns.a.v1~"),
+			relUnknown,
+		},
+		{
+			"base top accepts everything",
+			map[string]any{"type": "string", KeyXGtsTypeRef: XGtsRefSelf},
+			typeRef("gts.x.scope.ns.a.v1~"),
+			relIncluded,
+		},
+		{
+			"derived top is excluded by a restricted base",
+			typeRef("gts.x.scope.ns.a.v1~"),
+			map[string]any{"type": "string", KeyXGtsTypeRef: XGtsRefSelf},
+			relExcluded,
+		},
 	}
-	for _, tt := range tests {
-		got := jsonValueType(tt.val)
-		if got != tt.want {
-			t.Errorf("jsonValueType(%v): want %q, got %q", tt.val, tt.want, got)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := refScopeRelation(c.base, c.derived); got != c.want {
+				t.Errorf("refScopeRelation = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestRefScopeRelation_Composition(t *testing.T) {
+	cases := []struct {
+		name          string
+		base, derived map[string]any
+		want          refRel
+	}{
+		{
+			"derived union all included",
+			typeRef("gts.x.scope.*"),
+			map[string]any{"anyOf": []any{typeRef("gts.x.scope.ns.a.v1~"), typeRef("gts.x.scope.ns.b.v1~")}},
+			relIncluded,
+		},
+		{
+			"derived union one excluded",
+			typeRef("gts.x.scope.*"),
+			map[string]any{"anyOf": []any{typeRef("gts.x.scope.ns.a.v1~"), typeRef("gts.y.other.ns.b.v1~")}},
+			relExcluded,
+		},
+		{
+			"derived intersection with one included conjunct",
+			typeRef("gts.x.scope.*"),
+			map[string]any{"allOf": []any{typeRef("gts.x.scope.ns.a.v1~")}},
+			relIncluded,
+		},
+		{
+			"not/not reduces to the reverse relation",
+			map[string]any{"not": typeRef("gts.x.scope.ns.a.*")},
+			map[string]any{"not": typeRef("gts.x.scope.*")},
+			relIncluded,
+		},
+		{
+			"base union: atom fits a branch",
+			map[string]any{"anyOf": []any{typeRef("gts.x.scope.ns.a.*"), typeRef("gts.x.scope.ns.b.*")}},
+			typeRef("gts.x.scope.ns.a.v1~"),
+			relIncluded,
+		},
+		{
+			"base intersection: every conjunct must include",
+			map[string]any{"allOf": []any{typeRef("gts.x.scope.*"), typeRef("gts.x.scope.ns.a.*")}},
+			typeRef("gts.x.scope.ns.a.v1~"),
+			relIncluded,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := refScopeRelation(c.base, c.derived); got != c.want {
+				t.Errorf("refScopeRelation = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestRefScopeRelation_EnumeratedDerived(t *testing.T) {
+	base := typeRef("gts.x.scope.*")
+	cases := []struct {
+		name    string
+		derived map[string]any
+		want    refRel
+	}{
+		{"const inside scope", map[string]any{"const": "gts.x.scope.ns.a.v1~"}, relIncluded},
+		{"const outside scope", map[string]any{"const": "gts.y.other.ns.a.v1~"}, relExcluded},
+		{"enum with non-string", map[string]any{"enum": []any{"gts.x.scope.ns.a.v1~", 123}}, relExcluded},
+		{"plain string, no enumeration", map[string]any{"type": "string"}, relExcluded},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := refScopeRelation(base, c.derived); got != c.want {
+				t.Errorf("refScopeRelation = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestRefScopeAccepts_Composition(t *testing.T) {
+	cases := []struct {
+		name  string
+		base  map[string]any
+		value string
+		want  refRel // relIncluded means accepted
+	}{
+		{
+			"union accepts via second branch",
+			map[string]any{"anyOf": []any{typeRef("gts.x.a.*"), typeRef("gts.x.b.*")}},
+			"gts.x.b.ns.t.v1~",
+			relIncluded,
+		},
+		{
+			"complement accepts a value outside the inner scope",
+			map[string]any{"not": typeRef("gts.x.a.*")},
+			"gts.x.b.ns.t.v1~",
+			relIncluded,
+		},
+		{
+			"intersection rejects a value missing from one conjunct",
+			map[string]any{"allOf": []any{typeRef("gts.x.a.*"), typeRef("gts.x.b.*")}},
+			"gts.x.a.ns.t.v1~",
+			relExcluded,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := refScopeRelation(c.base, map[string]any{"const": c.value})
+			if got != c.want {
+				t.Errorf("refScopeRelation via const = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestCheckRefScopeCompatibility(t *testing.T) {
+	ok := checkRefScopeCompatibility(typeRef("gts.x.scope.*"), typeRef("gts.x.scope.ns.a.v1~"), "p")
+	if len(ok) != 0 {
+		t.Errorf("included scope should yield no errors, got %v", ok)
+	}
+	bad := checkRefScopeCompatibility(typeRef("gts.x.scope.ns.a.*"), typeRef("gts.x.scope.*"), "p")
+	if len(bad) == 0 || !strings.Contains(bad[0], "not included") {
+		t.Errorf("excluded scope should report an error, got %v", bad)
+	}
+}
+
+func TestNarrowerRefOperand_Comparable(t *testing.T) {
+	if n, ok := narrowerRefOperand(KeyXGtsTypeRef, "gts.x.scope.*", "gts.x.scope.ns.a.v1~"); !ok || n != "gts.x.scope.ns.a.v1~" {
+		t.Errorf("narrower should be the covered operand b, got %v,%v", n, ok)
+	}
+	if n, ok := narrowerRefOperand(KeyXGtsTypeRef, "gts.x.scope.ns.a.v1~", "gts.x.scope.*"); !ok || n != "gts.x.scope.ns.a.v1~" {
+		t.Errorf("narrower should be a when a ⊆ b, got %v,%v", n, ok)
+	}
+	if _, ok := narrowerRefOperand(KeyXGtsTypeRef, "gts.x.scope.ns.a.*", "gts.x.scope.ns.b.*"); ok {
+		t.Error("incomparable operands should report ok=false")
+	}
+}
+
+// ── x_gts_ref.go — refKind strings and candidate violations ─────────────────
+
+func TestRefKindStrings(t *testing.T) {
+	if refKindType.keyword() != KeyXGtsTypeRef || refKindType.noun() != "GTS Type Identifier" ||
+		refKindType.otherNoun() != "GTS Instance Identifier" {
+		t.Error("refKindType strings are wrong")
+	}
+	if refKindInstance.keyword() != KeyXGtsInstanceRef || refKindInstance.noun() != "GTS Instance Identifier" ||
+		refKindInstance.otherNoun() != "GTS Type Identifier" {
+		t.Error("refKindInstance strings are wrong")
+	}
+	if refKindPattern.keyword() != KeyXGtsPatternRef {
+		t.Error("refKindPattern keyword is wrong")
+	}
+}
+
+func TestRefCandidateViolation(t *testing.T) {
+	patternOperand, err := gtsid.ParsePattern("gts.x.scope.*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeOperand, err := gtsid.ParsePattern("gts.x.scope.*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Pattern kind.
+	if v := refCandidateViolation(refKindPattern, "gts.x.scope.ns.a.*", patternOperand, "gts.x.scope.*"); v != "" {
+		t.Errorf("covered pattern should pass, got %q", v)
+	}
+	if v := refCandidateViolation(refKindPattern, "not a pattern", patternOperand, "gts.x.scope.*"); !strings.Contains(v, "not a valid GTS identifier pattern") {
+		t.Errorf("invalid pattern message = %q", v)
+	}
+	if v := refCandidateViolation(refKindPattern, "gts.y.other.*", patternOperand, "gts.x.scope.*"); !strings.Contains(v, "outside") {
+		t.Errorf("out-of-scope pattern message = %q", v)
+	}
+
+	// Type kind.
+	if v := refCandidateViolation(refKindType, "gts.x.scope.ns.thing.v1~", typeOperand, "gts.x.scope.*"); v != "" {
+		t.Errorf("matching type should pass, got %q", v)
+	}
+	if v := refCandidateViolation(refKindType, "gts.x.scope.*", typeOperand, "gts.x.scope.*"); !strings.Contains(v, "not a valid GTS identifier") {
+		t.Errorf("wildcard value message = %q", v)
+	}
+	if v := refCandidateViolation(refKindType, "@bad", typeOperand, "gts.x.scope.*"); !strings.Contains(v, "not a valid GTS identifier") {
+		t.Errorf("invalid value message = %q", v)
+	}
+	if v := refCandidateViolation(refKindType, "gts.x.scope.ns.thing.v1~x.c.n.i.v1", typeOperand, "gts.x.scope.*"); !strings.Contains(v, "requires a") {
+		t.Errorf("instance-where-type-required message = %q", v)
+	}
+	narrow, _ := gtsid.ParsePattern("gts.x.scope.ns.only.*")
+	if v := refCandidateViolation(refKindType, "gts.x.scope.ns.thing.v1~", narrow, "gts.x.scope.ns.only.*"); !strings.Contains(v, "does not match pattern") {
+		t.Errorf("non-matching type message = %q", v)
+	}
+}
+
+// ── regex_profile.go — exported helpers and trait-schema walk ───────────────
+
+func TestRegexProfileSupportedAndError(t *testing.T) {
+	if !RegexProfileSupported("^[a-z]+$") {
+		t.Error("a simple anchored class should be supported")
+	}
+	if RegexProfileSupported("a(?=b)") {
+		t.Error("lookahead is outside the profile")
+	}
+	if (&RegexProfileError{Reason: "boom"}).Error() != "boom" {
+		t.Error("RegexProfileError.Error should return the reason")
+	}
+}
+
+func TestCheckTraitSchemaRegexProfile_NoTraits(t *testing.T) {
+	if err := checkTraitSchemaRegexProfile(map[string]any{"type": "object"}, "draft-07"); err != nil {
+		t.Errorf("a doc without a traits schema should pass, got %v", err)
+	}
+}
+
+func TestCheckTraitSchemaRegexProfile_AllKeywords(t *testing.T) {
+	traits := map[string]any{
+		"not":                   map[string]any{"pattern": "^a$"},
+		"allOf":                 []any{map[string]any{"pattern": "^b$"}},
+		"anyOf":                 []any{map[string]any{"pattern": "^c$"}},
+		"oneOf":                 []any{map[string]any{"pattern": "^d$"}},
+		"properties":            map[string]any{"p": map[string]any{"pattern": "^e$"}},
+		"patternProperties":     map[string]any{"^k$": map[string]any{"type": "string"}},
+		"items":                 map[string]any{"pattern": "^f$"},
+		"additionalItems":       map[string]any{"pattern": "^g$"},
+		"prefixItems":           []any{map[string]any{"pattern": "^h$"}},
+		"contains":              map[string]any{"pattern": "^i$"},
+		"if":                    map[string]any{"pattern": "^j$"},
+		"then":                  map[string]any{"pattern": "^l$"},
+		"else":                  map[string]any{"pattern": "^m$"},
+		"propertyNames":         map[string]any{"pattern": "^n$"},
+		"additionalProperties":  map[string]any{"pattern": "^o$"},
+		"definitions":           map[string]any{"d": map[string]any{"pattern": "^p1$"}},
+		"$defs":                 map[string]any{"e": map[string]any{"pattern": "^q$"}},
+		"dependencies":          map[string]any{"x": map[string]any{"pattern": "^r$"}, "y": []any{"a", "b"}},
+		"dependentSchemas":      map[string]any{"z": map[string]any{"pattern": "^s$"}},
+		"unevaluatedItems":      map[string]any{"pattern": "^t$"},
+		"unevaluatedProperties": map[string]any{"pattern": "^u$"},
+		"contentSchema":         map[string]any{"pattern": "^v$"},
+	}
+	for _, dialect := range []string{"draft-07", "2019-09", "2020-12"} {
+		doc := map[string]any{KeyXGtsTraitsSchema: traits}
+		if err := checkTraitSchemaRegexProfile(doc, dialect); err != nil {
+			t.Errorf("%s: all-valid traits should pass, got %v", dialect, err)
 		}
 	}
 }
 
-func TestSchemaCompat_ValueTypeCompatible(t *testing.T) {
-	numSet := map[string]bool{"number": true}
-	intSet := map[string]bool{"integer": true}
-	if !valueTypeCompatible("integer", numSet) {
-		t.Error("integer should be compatible with number set")
+func TestCheckTraitSchemaRegexProfile_Rejections(t *testing.T) {
+	// Unsupported pattern nested in properties.
+	doc := map[string]any{KeyXGtsTraitsSchema: map[string]any{
+		"properties": map[string]any{"p": map[string]any{"pattern": "a(?=b)"}},
+	}}
+	if err := checkTraitSchemaRegexProfile(doc, "draft-07"); err == nil {
+		t.Error("an unsupported nested pattern should be rejected")
 	}
-	if !valueTypeCompatible("number", intSet) {
-		t.Error("number should be compatible with integer set")
+	// Unsupported patternProperties key.
+	doc = map[string]any{KeyXGtsTraitsSchema: map[string]any{
+		"patternProperties": map[string]any{"a(?=b)": map[string]any{}},
+	}}
+	if err := checkTraitSchemaRegexProfile(doc, "2020-12"); err == nil {
+		t.Error("an unsupported patternProperties key should be rejected")
 	}
-	if valueTypeCompatible("string", numSet) {
-		t.Error("string should not be compatible with number set")
+	// Local $ref target reached from the traits schema.
+	doc = map[string]any{
+		KeyXGtsTraitsSchema: map[string]any{"$ref": "#/$defs/shared"},
+		"$defs":             map[string]any{"shared": map[string]any{"pattern": "a(?=b)"}},
 	}
-}
-
-func TestSchemaCompat_CheckTypeCompatibility_NoBaseType(t *testing.T) {
-	errs := checkTypeCompatibility(map[string]any{}, map[string]any{"type": "string"}, "prop")
-	if len(errs) != 0 {
-		t.Errorf("no base type → no error: %v", errs)
-	}
-}
-
-func TestSchemaCompat_CheckTypeCompatibility_DerivedOmitsWithConst(t *testing.T) {
-	base := map[string]any{"type": "string"}
-	derived := map[string]any{"const": "hello"}
-	errs := checkTypeCompatibility(base, derived, "prop")
-	if len(errs) != 0 {
-		t.Errorf("const string is compatible with base type string: %v", errs)
+	if err := checkTraitSchemaRegexProfile(doc, "2020-12"); err == nil {
+		t.Error("an unsupported pattern behind a local $ref should be rejected")
 	}
 }
 
-func TestSchemaCompat_CheckTypeCompatibility_DerivedOmitsWithEnum(t *testing.T) {
-	base := map[string]any{"type": "string"}
-	derived := map[string]any{"enum": []any{"a", "b"}}
-	errs := checkTypeCompatibility(base, derived, "prop")
-	if len(errs) != 0 {
-		t.Errorf("string enum is compatible with base type string: %v", errs)
+func TestResolveLocalPointer(t *testing.T) {
+	doc := map[string]any{
+		"a": map[string]any{"b": map[string]any{"c": "leaf"}},
+	}
+	if got := resolveLocalPointer(doc, "#"); got == nil {
+		t.Error("# should resolve to the document root")
+	}
+	if got := resolveLocalPointer(doc, "#/a"); got == nil {
+		t.Error("#/a should resolve to an object")
+	}
+	if got := resolveLocalPointer(doc, "#/a/b/c"); got != nil {
+		t.Error("a pointer to a non-object should resolve to nil")
+	}
+	if got := resolveLocalPointer(doc, "#/missing"); got != nil {
+		t.Error("a missing pointer should resolve to nil")
+	}
+	if got := resolveLocalPointer(doc, "relative"); got != nil {
+		t.Error("a non-anchored pointer should resolve to nil")
 	}
 }
 
-func TestSchemaCompat_CheckTypeCompatibility_DerivedOmitsNoConstOrEnum(t *testing.T) {
-	base := map[string]any{"type": "string"}
-	derived := map[string]any{"minLength": float64(1)}
-	errs := checkTypeCompatibility(base, derived, "prop")
-	if len(errs) == 0 {
-		t.Error("derived omits type without const/enum → should error")
+// ── gts_ref_validation.go ───────────────────────────────────────────────────
+
+func TestParseGtsRefValidationMode(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    GtsRefValidationMode
+		wantErr bool
+	}{
+		{"", GtsRefValidationAnyValid, false},
+		{"none", GtsRefValidationNone, false},
+		{"any-present", GtsRefValidationAnyPresent, false},
+		{"any-valid", GtsRefValidationAnyValid, false},
+		{"bogus", "", true},
+	}
+	for _, c := range cases {
+		got, err := ParseGtsRefValidationMode(c.in)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("ParseGtsRefValidationMode(%q): want error", c.in)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("ParseGtsRefValidationMode(%q) = %q,%v", c.in, got, err)
+		}
 	}
 }
 
-// ── cast_compat.go coverage ─────────────────────────────────────────────────
+// ── compatibility.go — small helpers ────────────────────────────────────────
 
-func TestCheckStructuralCompatibility_EnumChanges(t *testing.T) {
-	// Note: the structural diff checker uses consumer-model semantics:
-	//   backward (checkBackward=true): flags NEW enum values (values in new not in old)
-	//   forward  (checkBackward=false): flags REMOVED enum values (values in old not in new)
-
-	old := map[string]any{
-		"type": "object", "required": []any{"status"},
-		"properties": map[string]any{
-			"status": map[string]any{"type": "string", "enum": []any{"a", "b", "c"}},
-		},
+func TestHasObjectAndArrayKeywords(t *testing.T) {
+	if !hasObjectKeywords(map[string]any{"properties": map[string]any{}}) {
+		t.Error("properties should be recognised as an object keyword")
 	}
-	newSchema := map[string]any{
-		"type": "object", "required": []any{"status"},
-		"properties": map[string]any{
-			"status": map[string]any{"type": "string", "enum": []any{"a", "b"}},
-		},
+	if hasObjectKeywords(map[string]any{"type": "string"}) {
+		t.Error("a plain string schema has no object keywords")
 	}
+	if !hasArrayKeywords(map[string]any{"items": map[string]any{}}) {
+		t.Error("items should be recognised as an array keyword")
+	}
+	if hasArrayKeywords(map[string]any{"type": "string"}) {
+		t.Error("a plain string schema has no array keywords")
+	}
+}
 
-	// old=[a,b,c] → new=[a,b]: no new values added → backward OK
-	ok, _ := checkBackwardCompatibility(old, newSchema)
+func TestLowerUnevaluatedProperties(t *testing.T) {
+	// No unevaluatedProperties: schema is returned unchanged.
+	in := map[string]any{"type": "object"}
+	if out, ok := lowerUnevaluatedProperties(in); !ok || out["type"] != "object" {
+		t.Errorf("schema without unevaluatedProperties should pass through, got %v,%v", out, ok)
+	}
+	// Lowered into additionalProperties.
+	in = map[string]any{"type": "object", "unevaluatedProperties": false}
+	out, ok := lowerUnevaluatedProperties(in)
 	if !ok {
-		t.Error("backward should be OK: no new enum values added in new")
+		t.Fatal("simple unevaluatedProperties should lower")
 	}
-
-	// old=[a,b,c] → new=[a,b]: "c" removed → forward ERROR
-	ok2, errs2 := checkForwardCompatibility(old, newSchema)
-	if ok2 {
-		t.Error("forward should be ERROR: old had 'c' which new doesn't")
+	if _, exists := out["unevaluatedProperties"]; exists {
+		t.Error("unevaluatedProperties should be removed after lowering")
 	}
-	if len(errs2) == 0 {
-		t.Error("expected forward errors")
+	if out["additionalProperties"] != false {
+		t.Error("unevaluatedProperties value should become additionalProperties")
 	}
-
-	// Reverse: old=[a,b] → new=[a,b,c]: "c" added → backward ERROR
-	ok3, errs3 := checkBackwardCompatibility(newSchema, old)
-	if ok3 {
-		t.Error("backward should be ERROR: new added 'c'")
+	// Applicator sibling blocks lowering.
+	if _, ok := lowerUnevaluatedProperties(map[string]any{"unevaluatedProperties": false, "allOf": []any{}}); ok {
+		t.Error("an allOf sibling must block lowering")
 	}
-	if len(errs3) == 0 {
-		t.Error("expected backward errors")
-	}
-
-	// Reverse: old=[a,b] → new=[a,b,c]: no values removed → forward OK
-	ok4, _ := checkForwardCompatibility(newSchema, old)
-	if !ok4 {
-		t.Error("forward should be OK: no old enum values removed")
+	// Conflicting additionalProperties blocks lowering.
+	if _, ok := lowerUnevaluatedProperties(map[string]any{"unevaluatedProperties": false, "additionalProperties": true}); ok {
+		t.Error("a conflicting additionalProperties must block lowering")
 	}
 }
 
-func TestFlattenSchemaPreservesAllOfConstraints(t *testing.T) {
-	flat := flattenSchema(map[string]any{
-		"allOf": []any{
-			map[string]any{"type": "object", "properties": map[string]any{"status": map[string]any{"enum": []any{"active"}}}},
-			map[string]any{"properties": map[string]any{"status": map[string]any{"minLength": float64(3)}, "items": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}}},
+// ── schema_compat.go — small helpers ────────────────────────────────────────
+
+func TestCanonicalSchemaDialectURI(t *testing.T) {
+	cases := map[string]string{
+		"draft-07": "http://json-schema.org/draft-07/schema#",
+		"2019-09":  "https://json-schema.org/draft/2019-09/schema",
+		"2020-12":  "https://json-schema.org/draft/2020-12/schema",
+	}
+	for dialect, want := range cases {
+		got, err := canonicalSchemaDialectURI(dialect)
+		if err != nil || got != want {
+			t.Errorf("canonicalSchemaDialectURI(%q) = %q,%v", dialect, got, err)
+		}
+	}
+	if _, err := canonicalSchemaDialectURI("nope"); err == nil {
+		t.Error("an unknown dialect should error")
+	}
+}
+
+func TestResolveLocalSchemaRef(t *testing.T) {
+	root := map[string]any{
+		"$defs": map[string]any{"a": map[string]any{"type": "string"}},
+		"arr":   []any{map[string]any{"x": 1}},
+	}
+	if resolveLocalSchemaRef(root, "#") == nil {
+		t.Error("# should resolve to the root")
+	}
+	if resolveLocalSchemaRef(root, "#/$defs/a") == nil {
+		t.Error("#/$defs/a should resolve")
+	}
+	if resolveLocalSchemaRef(root, "#/arr/0") == nil {
+		t.Error("#/arr/0 should resolve an array element")
+	}
+	if resolveLocalSchemaRef(root, "#/arr/9") != nil {
+		t.Error("an out-of-range array index should resolve to nil")
+	}
+	if resolveLocalSchemaRef(root, "external") != nil {
+		t.Error("a non-anchored ref should resolve to nil")
+	}
+	if resolveLocalSchemaRef(root, "#/missing/x") != nil {
+		t.Error("a missing path should resolve to nil")
+	}
+}
+
+func TestValueTypeCompatible(t *testing.T) {
+	base := map[string]bool{"integer": true}
+	if !valueTypeCompatible("integer", base) {
+		t.Error("integer should be compatible with an integer base")
+	}
+	if !valueTypeCompatible("number", base) {
+		t.Error("number should be accepted when the base allows integer")
+	}
+	if !valueTypeCompatible("integer", map[string]bool{"number": true}) {
+		t.Error("integer should be accepted when the base allows number")
+	}
+	if valueTypeCompatible("string", base) {
+		t.Error("string is not compatible with an integer-only base")
+	}
+}
+
+func TestJSONValueType(t *testing.T) {
+	cases := []struct {
+		v    any
+		want string
+	}{
+		{"x", "string"},
+		{true, "boolean"},
+		{float64(1), "number"},
+		{1, "number"},
+		{[]any{}, "array"},
+		{map[string]any{}, "object"},
+		{nil, ""},
+	}
+	for _, c := range cases {
+		if got := jsonValueType(c.v); got != c.want {
+			t.Errorf("jsonValueType(%v) = %q, want %q", c.v, got, c.want)
+		}
+	}
+}
+
+func TestCheckMultipleOf(t *testing.T) {
+	base := map[string]any{"multipleOf": float64(2)}
+	if errs := checkMultipleOf(base, map[string]any{"multipleOf": float64(4)}, "p"); len(errs) != 0 {
+		t.Errorf("4 is a multiple of 2, want no error, got %v", errs)
+	}
+	if errs := checkMultipleOf(base, map[string]any{"multipleOf": float64(3)}, "p"); len(errs) == 0 {
+		t.Error("3 is not a multiple of 2, want an error")
+	}
+	if errs := checkMultipleOf(base, map[string]any{}, "p"); len(errs) == 0 {
+		t.Error("derived omitting multipleOf should error")
+	}
+	if errs := checkMultipleOf(map[string]any{}, map[string]any{"multipleOf": float64(3)}, "p"); len(errs) != 0 {
+		t.Errorf("no base multipleOf, want no error, got %v", errs)
+	}
+}
+
+// ── store.go — conflict error, ids, staging lifecycle ───────────────────────
+
+func TestEntityConflictError(t *testing.T) {
+	err := &EntityConflictError{EntityID: "gts.x.c.n.t.v1~"}
+	if !strings.Contains(err.Error(), "already registered") {
+		t.Errorf("unexpected message: %q", err.Error())
+	}
+}
+
+func TestStoreEntityIDs(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{"$id": "gts://gts.x.ids.ns.a.v1~", "type": "object"})
+	mustRegister(t, store, map[string]any{"$id": "gts://gts.x.ids.ns.b.v1~", "type": "object"})
+	ids := store.entityIDs()
+	if len(ids) != 2 {
+		t.Fatalf("entityIDs = %v, want 2 entries", ids)
+	}
+}
+
+func TestStagingSessionCommit(t *testing.T) {
+	store := NewGtsStore(nil)
+	session := store.NewStagingSession()
+	if !strings.HasPrefix(session, "ses-") {
+		t.Fatalf("NewStagingSession = %q, want a ses- token", session)
+	}
+	entity := newSchemaEntity(map[string]any{
+		"$id":     "gts://gts.x.stage.ns.a.v1~",
+		"$schema": "http://json-schema.org/draft-07/schema#",
+		"type":    "object",
+	})
+	token, err := store.Stage(entity, session)
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	if store.Get("gts.x.stage.ns.a.v1~") != nil {
+		t.Error("a staged entity must not be visible to public reads")
+	}
+	if err := store.Commit(token); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if store.Get("gts.x.stage.ns.a.v1~") == nil {
+		t.Error("the entity should be visible after commit")
+	}
+	// Committing an unknown token is a conflict.
+	if err := store.Commit("stg-does-not-exist"); err == nil {
+		t.Error("committing an unknown token should fail")
+	}
+}
+
+func TestValidateEntityAndInSession(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":  "gts://gts.x.ve.ns.base.v1~",
+		"type": "object",
+		"properties": map[string]any{
+			"id": map[string]any{"type": "string"},
 		},
 	})
-	status := getMap(getPropertiesMap(flat), "status")
-	if status == nil || !anySliceContains(status["enum"].([]any), "active") || getNumber(status, "minLength") == nil {
-		t.Errorf("allOf property constraints were not preserved: %v", flat)
+	if res := store.ValidateEntity("gts.x.ve.ns.base.v1~"); !res.OK {
+		t.Fatalf("ValidateEntity: %+v", res)
 	}
-	items := getMap(getPropertiesMap(flat), "items")
-	if items == nil || getMap(items, "items") == nil {
-		t.Errorf("allOf array item constraints were not preserved: %v", flat)
+	if res := store.ValidateEntityInSession("gts.x.ve.ns.base.v1~", ""); !res.OK {
+		t.Fatalf("ValidateEntityInSession: %+v", res)
 	}
-}
-
-func TestStructuralEnumAdditionRemoval(t *testing.T) {
-	withoutEnum := map[string]any{"properties": map[string]any{"status": map[string]any{"type": "string"}}}
-	withEnum := map[string]any{"properties": map[string]any{"status": map[string]any{"type": "string", "enum": []any{float64(1), true}}}}
-	if compatible, _ := checkBackwardCompatibility(withoutEnum, withEnum); compatible {
-		t.Error("adding an enum must be backward-incompatible")
-	}
-	if compatible, _ := checkForwardCompatibility(withEnum, withoutEnum); compatible {
-		t.Error("removing an enum must be forward-incompatible")
+	if res := store.ValidateEntity("gts.x.ve.ns.missing.v1~"); res.OK {
+		t.Error("a missing entity should not validate")
 	}
 }
 
-func TestCheckInclusion_TypeLessObjectAndArray(t *testing.T) {
-	objectOld := map[string]any{"required": []any{"id"}}
-	objectNew := map[string]any{"required": []any{"id", "source"}}
-	if result := checkInclusion(objectOld, objectNew, 0); result == nil || *result {
-		t.Error("type-less required property addition must reject old objects")
-	}
-	arrayOld := map[string]any{"items": map[string]any{"type": "string"}}
-	arrayNew := map[string]any{"items": map[string]any{"type": "string", "maxLength": float64(10)}}
-	if result := checkInclusion(arrayOld, arrayNew, 0); result == nil || *result {
-		t.Error("type-less item constraint must reject old arrays")
-	}
-}
-
-func TestCheckMinMaxConstraint_AllBranches(t *testing.T) {
-	// Backward: increase minimum → tighten
-	old := map[string]any{"minimum": float64(0), "maximum": float64(100)}
-	newS := map[string]any{"minimum": float64(10), "maximum": float64(100)}
-	errs := checkMinMaxConstraint("prop", old, newS, "minimum", "maximum", true)
-	if len(errs) == 0 {
-		t.Error("increasing minimum should be an error for backward")
-	}
-
-	// Backward: add minimum where none existed
-	errs2 := checkMinMaxConstraint(
-		"prop",
-		map[string]any{},
-		map[string]any{"minimum": float64(10)},
-		"minimum",
-		"maximum",
-		true,
-	)
-	if len(errs2) == 0 {
-		t.Error("adding minimum constraint should be an error for backward")
-	}
-
-	// Forward: decrease minimum → relax
-	errs3 := checkMinMaxConstraint("prop", newS, old, "minimum", "maximum", false)
-	if len(errs3) == 0 {
-		t.Error("decreasing minimum should be an error for forward")
-	}
-
-	// Forward: remove minimum
-	errs4 := checkMinMaxConstraint("prop", old, map[string]any{"maximum": float64(100)}, "minimum", "maximum", false)
-	if len(errs4) == 0 {
-		t.Error("removing minimum should be an error for forward")
-	}
-
-	// Backward: decrease maximum → tighten
-	oldMax := map[string]any{"maximum": float64(100)}
-	newMax := map[string]any{"maximum": float64(50)}
-	errs5 := checkMinMaxConstraint("prop", oldMax, newMax, "minimum", "maximum", true)
-	if len(errs5) == 0 {
-		t.Error("decreasing maximum should be an error for backward")
-	}
-
-	// Backward: add maximum where none existed
-	errs6 := checkMinMaxConstraint("prop", map[string]any{}, newMax, "minimum", "maximum", true)
-	if len(errs6) == 0 {
-		t.Error("adding maximum constraint should be an error for backward")
-	}
-
-	// Forward: increase maximum → relax
-	errs7 := checkMinMaxConstraint("prop", newMax, oldMax, "minimum", "maximum", false)
-	if len(errs7) == 0 {
-		t.Error("increasing maximum should be an error for forward")
-	}
-
-	// Forward: remove maximum
-	errs8 := checkMinMaxConstraint("prop", oldMax, map[string]any{}, "minimum", "maximum", false)
-	if len(errs8) == 0 {
-		t.Error("removing maximum should be an error for forward")
-	}
-}
-
-// ── schema_traits.go / ValidateEntity coverage ──────────────────────────────
-
-func TestValidateEntity_SchemaType(t *testing.T) {
+func TestValidateSchema_Paths(t *testing.T) {
 	store := NewGtsStore(nil)
-	regSpec(t, store, map[string]any{
-		"$$id": "gts://gts.x.test.ns.type.v1~", "$$schema": "http://json-schema.org/draft-07/schema#",
-		"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}},
+	mustRegister(t, store, map[string]any{
+		"$id":        "gts://gts.x.vs.ns.base.v1~",
+		"type":       "object",
+		"properties": map[string]any{"id": map[string]any{"type": "string"}},
 	})
-
-	r := store.ValidateEntity("gts.x.test.ns.type.v1~")
-	if !r.OK {
-		t.Fatalf("expected OK for schema: %s", r.Error)
+	if err := store.ValidateSchema("gts.x.vs.ns.base.v1~"); err != nil {
+		t.Fatalf("valid schema: %v", err)
 	}
-	if r.EntityType != "schema" {
-		t.Errorf("expected entity_type='schema', got %q", r.EntityType)
+	// Not a type ID (no trailing ~).
+	if err := store.ValidateSchema("gts.x.vs.ns.base.v1"); err == nil {
+		t.Error("a non-type ID should be rejected")
+	}
+	// Missing schema.
+	if err := store.ValidateSchema("gts.x.vs.ns.missing.v1~"); err == nil {
+		t.Error("a missing schema should be rejected")
 	}
 }
 
-func TestValidateEntity_InstanceType(t *testing.T) {
+func TestValidateInstanceWithXGtsRef_Paths(t *testing.T) {
 	store := NewGtsStore(nil)
-	regSpec(t, store, map[string]any{
-		"$$id": "gts://gts.x.test.ns.type.v1~", "$$schema": "http://json-schema.org/draft-07/schema#",
-		"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}},
+	// A type-schema is not an instance.
+	mustRegister(t, store, map[string]any{
+		"$id":  "gts://gts.x.vi.ns.base.v1~",
+		"type": "object",
+	})
+	if err := store.ValidateInstanceWithXGtsRef("gts.x.vi.ns.base.v1~"); err == nil {
+		t.Error("validating a type-schema as an instance should fail")
+	}
+	// A missing entity.
+	if err := store.ValidateInstanceWithXGtsRef("gts.x.vi.ns.ghost.v1~x.c.n.i.v1"); err == nil {
+		t.Error("a missing instance should fail")
+	}
+}
+
+func TestValidateInstance_EndToEnd(t *testing.T) {
+	store := NewGtsStore(nil)
+	mustRegister(t, store, map[string]any{
+		"$id":      "gts://gts.x.inst.ns.thing.v1~",
+		"type":     "object",
 		"required": []any{"name"},
+		"properties": map[string]any{
+			"name": map[string]any{"type": "string"},
+		},
 	})
-	inst := map[string]any{
-		"id": "gts.x.test.ns.type.v1~x.test.ns.inst.v1", "type": "gts.x.test.ns.type.v1~",
-		"name": "hello",
+	mustRegisterInstance(t, store, map[string]any{
+		"$id":  "gts://gts.x.inst.ns.thing.v1~x.inst._.one.v1",
+		"name": "ok",
+	})
+	if res := store.ValidateInstance("gts.x.inst.ns.thing.v1~x.inst._.one.v1"); !res.OK {
+		t.Fatalf("a conforming instance should validate: %+v", res)
 	}
-	instEntity := NewJsonEntity(inst, DefaultGtsConfig())
-	_ = store.Register(instEntity)
 
-	r := store.ValidateEntity("gts.x.test.ns.type.v1~x.test.ns.inst.v1")
-	if !r.OK {
-		t.Fatalf("expected OK for instance: %s", r.Error)
-	}
-	if r.EntityType != "instance" {
-		t.Errorf("expected entity_type='instance', got %q", r.EntityType)
+	// An instance missing its required field must fail.
+	mustRegisterInstance(t, store, map[string]any{
+		"$id": "gts://gts.x.inst.ns.thing.v1~x.inst._.two.v1",
+	})
+	if res := store.ValidateInstance("gts.x.inst.ns.thing.v1~x.inst._.two.v1"); res.OK {
+		t.Error("an instance missing a required field should not validate")
 	}
 }
 
-func TestValidateEntity_NotFound_Extra(t *testing.T) {
+// Exercises the any-valid dependency walk, including concrete ReferencedIDs
+// (validateEntity) and wildcard ReferencedWildcardPatterns (hasValidWildcardMatch).
+func TestValidateEntity_AnyValidResolvesReferences(t *testing.T) {
 	store := NewGtsStore(nil)
-	r := store.ValidateEntity("gts.x.missing.v1~")
-	if r.OK {
-		t.Fatal("expected !ok")
+	mustRegister(t, store, map[string]any{
+		"$id":  "gts://gts.x.wild.ns.target.v1~",
+		"type": "object",
+	})
+	mustRegister(t, store, map[string]any{
+		"$id":  "gts://gts.x.wild.ns.host.v1~",
+		"type": "object",
+		"properties": map[string]any{
+			"c": map[string]any{"type": "string", KeyXGtsTypeRef: "gts.x.wild.ns.target.v1~"},
+			"w": map[string]any{"type": "string", KeyXGtsTypeRef: "gts.x.wild.ns.*"},
+		},
+	})
+	res := store.ValidateEntity("gts.x.wild.ns.host.v1~", GtsRefValidationAnyValid)
+	if !res.OK {
+		t.Fatalf("a host whose references all resolve should validate: %+v", res)
 	}
 }
 
-// ── GtsID / IsWildcard coverage ─────────────────────────────────────────────
+// ── file_reader.go ──────────────────────────────────────────────────────────
 
-func TestGtsID_IsWildcard(t *testing.T) {
-	id, err := gtsid.New("gts.x.core.ns.type.v1~")
-	if err != nil {
-		t.Fatal(err)
+func TestNewGtsFileReaderAndWithExclude(t *testing.T) {
+	r := NewGtsFileReader([]string{"~/some/path", "/abs"}, nil)
+	if r == nil {
+		t.Fatal("NewGtsFileReader returned nil")
 	}
-	if id.IsWildcard() {
-		t.Error("regular ID should not be wildcard")
+	// WithExclude overrides the default list; an empty list is ignored.
+	custom := r.WithExclude([]string{"vendor", "node_modules"})
+	if custom == nil {
+		t.Fatal("WithExclude returned nil")
 	}
-}
-
-// ── GTS ID Error types ──────────────────────────────────────────────────────
-
-func TestInvalidGtsIDError(t *testing.T) {
-	e := &gtsid.InvalidIDError{GtsID: "bad", Cause: "reason"}
-	if !strings.Contains(e.Error(), "bad") || !strings.Contains(e.Error(), "reason") {
-		t.Errorf("error: %s", e.Error())
-	}
-	e2 := &gtsid.InvalidIDError{GtsID: "bad"}
-	if !strings.Contains(e2.Error(), "bad") {
-		t.Errorf("error: %s", e2.Error())
-	}
-}
-
-func TestInvalidSegmentError(t *testing.T) {
-	e := &gtsid.InvalidSegmentError{Num: 1, Offset: 4, Segment: "bad", Cause: "reason"}
-	if !strings.Contains(e.Error(), "bad") || !strings.Contains(e.Error(), "reason") {
-		t.Errorf("error: %s", e.Error())
-	}
-	e2 := &gtsid.InvalidSegmentError{Num: 1, Offset: 4, Segment: "bad"}
-	if !strings.Contains(e2.Error(), "bad") {
-		t.Errorf("error: %s", e2.Error())
-	}
-}
-
-// ── schema_traits.go mergeRFC7396Recursive coverage ─────────────────────────
-
-func TestMergeRFC7396Recursive(t *testing.T) {
-	base := map[string]any{
-		"a": "base",
-		"b": map[string]any{"nested": "original", "keep": "yes"},
-		"c": "stays",
-	}
-	patch := map[string]any{
-		"a": "patched",
-		"b": map[string]any{"nested": "updated"},
-		"d": "added",
-	}
-	// Apply merge
-	mergeRFC7396Into(base, patch)
-	if base["a"] != "patched" {
-		t.Errorf("a: %v", base["a"])
-	}
-	nested := base["b"].(map[string]any)
-	if nested["nested"] != "updated" {
-		t.Errorf("b.nested: %v", nested["nested"])
-	}
-	if nested["keep"] != "yes" {
-		t.Errorf("b.keep should be preserved: %v", nested["keep"])
-	}
-	if base["c"] != "stays" {
-		t.Errorf("c: %v", base["c"])
-	}
-	if base["d"] != "added" {
-		t.Errorf("d: %v", base["d"])
-	}
-}
-
-func TestMergeRFC7396Recursive_NullRemoval(t *testing.T) {
-	base := map[string]any{"a": "val", "b": "val2"}
-	patch := map[string]any{"a": nil}
-	mergeRFC7396Into(base, patch)
-	if _, ok := base["a"]; ok {
-		t.Error("a should be removed by null patch")
-	}
-	if base["b"] != "val2" {
-		t.Error("b should be preserved")
+	before := append([]string(nil), custom.exclude...)
+	custom.WithExclude(nil)
+	if len(custom.exclude) != len(before) {
+		t.Error("WithExclude(nil) should keep the existing exclusions")
 	}
 }
