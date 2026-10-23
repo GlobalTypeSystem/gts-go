@@ -10,7 +10,7 @@ import (
 	"log"
 
 	"github.com/GlobalTypeSystem/gts-go/gts"
-	"github.com/GlobalTypeSystem/gts-go/server"
+	"github.com/GlobalTypeSystem/gts-go/internal/server"
 )
 
 func main() {

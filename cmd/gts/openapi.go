@@ -6,7 +6,7 @@ Released under Apache License 2.0
 package main
 
 import (
-	"github.com/GlobalTypeSystem/gts-go/server"
+	"github.com/GlobalTypeSystem/gts-go/internal/server"
 )
 
 var cmdOpenAPI = &Command{

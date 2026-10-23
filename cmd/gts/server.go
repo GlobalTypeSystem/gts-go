@@ -8,7 +8,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/GlobalTypeSystem/gts-go/server"
+	"github.com/GlobalTypeSystem/gts-go/internal/server"
 )
 
 var cmdServer = &Command{
