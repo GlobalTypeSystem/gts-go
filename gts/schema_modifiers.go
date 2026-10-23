@@ -14,30 +14,40 @@ const (
 	KeyXGtsAbstract = "x-gts-abstract"
 )
 
-// ValidateSchemaModifiers checks that x-gts-final and x-gts-abstract are well-formed:
-// boolean type, not both true, and not placed inside allOf entries at any depth.
+// allowedXGtsKeywords is the set of GTS extension keywords an implementation
+// supports. Any other x-gts-* keyword at a schema position is rejected (ADR-0008
+// §11.0): the removed x-gts-ref and any future/unknown keyword follow the same
+// unknown-keyword lifecycle.
+var allowedXGtsKeywords = map[string]bool{
+	KeyXGtsFinal:        true,
+	KeyXGtsAbstract:     true,
+	KeyXGtsTraits:       true,
+	KeyXGtsTraitsSchema: true,
+	KeyXGtsTypeRef:      true,
+	KeyXGtsInstanceRef:  true,
+	KeyXGtsPatternRef:   true,
+}
+
+// ValidateSchemaExtensions rejects unknown x-gts-* keywords found at schema
+// positions. The traversal is position-aware: it descends only into subschema
+// keywords (and the root trait schema), so a keyword-shaped *property name* or a
+// keyword-shaped key inside literal data (const/enum/default/examples) is not
+// treated as a keyword and is allowed (README §9.6.3).
 func ValidateSchemaExtensions(content map[string]any) error {
-	allowed := map[string]bool{KeyXGtsFinal: true, KeyXGtsAbstract: true, KeyXGtsTraits: true, KeyXGtsTraitsSchema: true, KeyXGtsRef: true}
-	var walk func(any) error
-	walk = func(value any) error {
-		switch node := value.(type) {
-		case map[string]any:
-			for key, child := range node {
-				if IsXGtsExtension(key) && !allowed[key] {
-					return fmt.Errorf("unknown GTS extension keyword: %s", key)
-				}
-				if err := walk(child); err != nil {
-					return err
-				}
-			}
-		case []any:
-			for _, child := range node {
-				if err := walk(child); err != nil {
-					return err
-				}
+	var walk func(node map[string]any) error
+	walk = func(node map[string]any) error {
+		for key := range node {
+			if IsXGtsExtension(key) && !allowedXGtsKeywords[key] {
+				return fmt.Errorf("unknown GTS extension keyword: %s", key)
 			}
 		}
-		return nil
+		var walkErr error
+		visitSchemaChildren(node, "", func(child map[string]any, _ string) {
+			if walkErr == nil {
+				walkErr = walk(child)
+			}
+		})
+		return walkErr
 	}
 	return walk(content)
 }

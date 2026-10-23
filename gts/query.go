@@ -183,28 +183,10 @@ func (s *GtsStore) matchesIDPattern(entityID *gtsid.ID, basePattern string, isWi
 		return false
 	}
 
-	// Use the existing gtsid.Match function
-	matchResult := gtsid.Match(entityID.ID, basePattern)
-	if !matchResult.Match {
-		return false
-	}
-
-	// For ~* query patterns, exclude entities that are themselves base types
-	// (same segment count as the pattern minus the wildcard). The ~* query
-	// semantically finds derived/instance entities, not the type itself.
-	if strings.HasSuffix(basePattern, gtsid.TypeWildcardSuffix) {
-		patternID, err := gtsid.ValidateWildcard(basePattern)
-		if err == nil {
-			// The pattern has N segments where the last is the bare wildcard.
-			// Only include entities that have more segments than N-1 (the base type).
-			baseSegCount := len(patternID.Segments) - 1 // exclude the wildcard segment
-			if len(entityID.Segments) <= baseSegCount {
-				return false
-			}
-		}
-	}
-
-	return true
+	// A pattern selects the matching type roots, their derived types, and their
+	// instances alike (README §10): a `~*` chain wildcard includes the type root
+	// itself, so no entity matched by the pattern is excluded here.
+	return gtsid.Match(entityID.ID, basePattern).Match
 }
 
 // matchesFilters checks if entity content matches all filter criteria

@@ -5,48 +5,42 @@ Released under Apache License 2.0
 
 package gtsid
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
-// ── match.go — validateWildcardBase branches ────────────────────────────────
+// ── match.go — ValidateWildcard ─────────────────────────────────────────────
 
-func TestValidateWildcardBase_EmptyBase(t *testing.T) {
-	_, err := validateWildcardBase("")
-	if err == nil {
-		t.Fatal("expected error for empty base")
+func TestValidateWildcard_Base(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		valid   bool
+	}{
+		{"empty", "", false},
+		{"no prefix", "notgts.x.test.*", false},
+		{"uppercase", "gts.X.test.*", false},
+		{"hyphen", "gts.x.my-package.*", false},
+		{"leading whitespace", " gts.x.core.*", false},
+		{"trailing whitespace", "gts.x.core.* ", false},
+		{"wildcard glued to a name", "gts.x.co*", false},
+		{"namespace level", "gts.x.core.ns.*", true},
+		{"global", "gts.*", true},
 	}
-}
-
-func TestValidateWildcardBase_NoPrefix(t *testing.T) {
-	_, err := validateWildcardBase("notgts.x.test")
-	if err == nil {
-		t.Fatal("expected error for missing gts. prefix")
-	}
-}
-
-func TestValidateWildcardBase_Uppercase(t *testing.T) {
-	_, err := validateWildcardBase("gts.X.test")
-	if err == nil {
-		t.Fatal("expected error for uppercase")
-	}
-}
-
-func TestValidateWildcardBase_Hyphen(t *testing.T) {
-	_, err := validateWildcardBase("gts.x.my-package")
-	if err == nil {
-		t.Fatal("expected error for hyphen")
-	}
-}
-
-func TestValidateWildcardBase_ValidBase(t *testing.T) {
-	_, err := validateWildcardBase("gts.x.core.ns")
-	if err != nil {
-		t.Errorf("expected valid: %v", err)
-	}
-}
-
-func TestValidateWildcardBase_GlobalPattern(t *testing.T) {
-	_, err := validateWildcardBase("gts")
-	if err != nil {
-		t.Errorf("expected valid for bare 'gts': %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ValidateWildcard(tt.pattern)
+			if tt.valid {
+				if err != nil {
+					t.Errorf("ValidateWildcard(%q): unexpected error %v", tt.pattern, err)
+				}
+				return
+			}
+			var wildcardErr *InvalidWildcardError
+			if !errors.As(err, &wildcardErr) {
+				t.Errorf("ValidateWildcard(%q): want *InvalidWildcardError, got %T (%v)", tt.pattern, err, err)
+			}
+		})
 	}
 }

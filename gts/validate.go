@@ -16,6 +16,11 @@ import (
 	"golang.org/x/text/message"
 )
 
+// gtsRegexpEngine adapts the GTS regex profile to jsonschema.Regexp.
+func gtsRegexpEngine(s string) (jsonschema.Regexp, error) {
+	return jsonschemaRegexpEngine(s)
+}
+
 // checkOnDemandSubschemas compiles inactive subschemas to catch unsupported
 // regexes behind their $refs, using jsonschema/v6's reference resolution.
 // The compiled result is discarded; only the error matters.
@@ -276,15 +281,23 @@ func (s *GtsStore) validateInstanceLocalScoped(instanceID string, mode GtsRefVal
 	}
 }
 
-// xGtsRefExt is the compiled form of an x-gts-ref keyword for a single schema node.
-// Validate enforces the GTS pattern constraint so that oneOf/anyOf/allOf branches
-// correctly pass or fail based on whether the value matches the pattern. The
-// /$id self-reference is resolved against selectedTypeID (the type being
-// validated) so it participates in combinator resolution like any other pattern;
-// registry existence still stays with the separate XGtsRefValidator pass.
+// xGtsRefEntry is one compiled reference keyword on a schema node.
+type xGtsRefEntry struct {
+	keyword  string
+	kind     refKind
+	operand  *gtsid.ID
+	spelling string
+}
+
+// xGtsRefExt is the compiled form of the GTS reference keywords for a single
+// schema node. Validate enforces the structural constraint (kind + matching or
+// coverage) so that oneOf/anyOf/allOf/not branches correctly pass or fail based
+// on the candidate; registry existence stays with the separate XGtsRefValidator
+// pass. The /$id operand is resolved against selectedTypeID (the type being
+// validated) at compile time so it participates in combinator resolution like
+// any other operand.
 type xGtsRefExt struct {
-	pattern        string
-	selectedTypeID string
+	entries []xGtsRefEntry
 }
 
 func (e *xGtsRefExt) Validate(ctx *jsonschema.ValidatorContext, v any) {
@@ -292,46 +305,54 @@ func (e *xGtsRefExt) Validate(ctx *jsonschema.ValidatorContext, v any) {
 	if !ok {
 		return
 	}
-	// Resolve /$id to the selected type here so a /$id branch matches only that
-	// type rather than every value. Without a selected type we cannot resolve it,
-	// so defer to the separate XGtsRefValidator pass.
-	if IsXGtsRefSelf(e.pattern) && e.selectedTypeID == "" {
-		return
-	}
-	validator := NewXGtsRefValidator(nil, GtsRefValidationNone)
-	if err := validator.validateRefValue(str, e.pattern, "", e.selectedTypeID); err != nil {
-		ctx.AddError(&xGtsRefErrorKind{err.Reason})
+	for _, entry := range e.entries {
+		if reason := refCandidateViolation(entry.kind, str, entry.operand, entry.spelling); reason != "" {
+			ctx.AddError(&xGtsRefErrorKind{keyword: entry.keyword, reason: reason})
+		}
 	}
 }
 
-// xGtsRefErrorKind implements jsonschema.ErrorKind for x-gts-ref validation errors.
-type xGtsRefErrorKind struct{ reason string }
+// xGtsRefErrorKind implements jsonschema.ErrorKind for GTS reference errors.
+type xGtsRefErrorKind struct{ keyword, reason string }
 
-func (k *xGtsRefErrorKind) KeywordPath() []string                     { return []string{"x-gts-ref"} }
+func (k *xGtsRefErrorKind) KeywordPath() []string                     { return []string{k.keyword} }
 func (k *xGtsRefErrorKind) LocalizedString(_ *message.Printer) string { return k.reason }
 
-// newXGtsRefVocabulary registers x-gts-ref as a proper vocabulary with the JSON schema
-// compiler. This is the correct fix for the oneOf/anyOf/allOf problem: branches like
-// {"x-gts-ref": "gts.x.foo~"} are no longer empty match-all schemas — they carry a
-// real constraint that the library evaluates during combinator resolution.
+// newXGtsRefVocabulary registers the GTS reference keywords (x-gts-type-ref,
+// x-gts-instance-ref, x-gts-pattern-ref) as a proper vocabulary with the JSON
+// Schema compiler, so a branch like {"x-gts-type-ref": "gts.x.foo~"} carries a
+// real constraint the library evaluates during combinator resolution instead of
+// being an empty match-all schema. An invalid operand fails compilation so a
+// `not` branch cannot invert it into success (ADR-0007/0008).
 //
 // selectedTypeID is the bare GTS id of the type being validated; it lets a
-// "/$id" self-reference resolve during combinator resolution instead of matching
-// unconditionally. It may be empty (e.g. schema meta-validation), in which case
-// "/$id" is deferred to the separate XGtsRefValidator pass.
+// "/$id" operand resolve during combinator resolution. It may be empty (e.g.
+// schema meta-validation), in which case a "/$id" operand is deferred to the
+// separate XGtsRefValidator pass rather than treated as a schema error.
 func newXGtsRefVocabulary(selectedTypeID string) *jsonschema.Vocabulary {
 	return &jsonschema.Vocabulary{
 		URL: "https://globaltypesystem.io/vocab/x-gts-ref",
 		Compile: func(_ *jsonschema.CompilerContext, obj map[string]any) (jsonschema.SchemaExt, error) {
-			raw, ok := obj["x-gts-ref"]
-			if !ok {
+			var entries []xGtsRefEntry
+			for _, keyword := range refKeywords {
+				operand, has := obj[keyword]
+				if !has {
+					continue
+				}
+				kind, _ := refKindOf(keyword)
+				operandID, spelling, err := resolveRefOperand(kind, operand, selectedTypeID)
+				if err != nil {
+					if opStr, ok := operand.(string); ok && IsXGtsRefSelf(opStr) && selectedTypeID == "" {
+						continue
+					}
+					return nil, err
+				}
+				entries = append(entries, xGtsRefEntry{keyword: keyword, kind: kind, operand: operandID, spelling: spelling})
+			}
+			if len(entries) == 0 {
 				return nil, nil
 			}
-			pattern, ok := raw.(string)
-			if !ok {
-				return nil, fmt.Errorf("x-gts-ref must be a string")
-			}
-			return &xGtsRefExt{pattern: pattern, selectedTypeID: selectedTypeID}, nil
+			return &xGtsRefExt{entries: entries}, nil
 		},
 	}
 }
@@ -441,6 +462,27 @@ func (s *GtsStore) validateJSONSchemaScoped(schema map[string]any, session strin
 	}
 	if err := checkOnDemandSubschemas(dialect, schemaID, addResources); err != nil {
 		return fmt.Errorf("JSON Schema validation failed: %v", err)
+	}
+	// The standard compiler does not descend into x-gts-traits-schema (an
+	// unknown keyword), so its regular expressions are profile-checked here.
+	if dialect, err := schemaDialect(schema); err == nil {
+		if err := checkTraitSchemaRegexProfile(schema, dialect); err != nil {
+			return fmt.Errorf("JSON Schema validation failed: %v", err)
+		}
+	}
+	// Reject unknown x-gts-* keywords at schema positions (the removed x-gts-ref
+	// and any other unsupported extension keyword), on every schema-validation
+	// path (ADR-0008 §11.0).
+	if err := ValidateSchemaExtensions(schema); err != nil {
+		return fmt.Errorf("JSON Schema validation failed: %v", err)
+	}
+	// Validate the GTS reference-keyword operands (schema-level validity). This
+	// runs on every schema-validation path (registration, transient validate-json
+	// and transitive validation), independently of registry lookup; an invalid
+	// operand is a schema error (ADR-0007/0008).
+	refValidator := NewXGtsRefValidator(nil, GtsRefValidationNone)
+	if refErrors := refValidator.ValidateSchema(schema, ""); len(refErrors) > 0 {
+		return fmt.Errorf("JSON Schema validation failed: %s", refErrors[0].Error())
 	}
 	return nil
 }
@@ -583,11 +625,15 @@ func (s *GtsStore) compileSchema(schemaID string, normalizedSchema, rawSchema ma
 
 	// Create a custom compiler with GTS reference resolution.
 	compiler := jsonschema.NewCompiler()
+	// Compile regular expressions under the GTS profile (README §11.0.1).
 	compiler.UseRegexpEngine(jsonschemaRegexpEngine)
-	// Register x-gts-ref as a proper vocabulary so the library treats it as a real
-	// keyword with validation semantics. This prevents oneOf/anyOf/allOf branches
-	// containing only x-gts-ref from being treated as empty match-all schemas.
+	// Register the GTS reference keywords as a proper vocabulary so the library
+	// treats them as real keywords with validation semantics during
+	// oneOf/anyOf/allOf/not combinator resolution. AssertVocabs makes the
+	// vocabulary active for draft/2019-09 and draft/2020-12 as well, which
+	// otherwise require a $vocabulary declaration to enable custom keywords.
 	compiler.RegisterVocabulary(newXGtsRefVocabulary(gtsid.NormalizeID(schemaID)))
+	compiler.AssertVocabs()
 	// Assert JSON Schema format keywords (uuid, email, date-time, …) so format
 	// violations are reported as validation errors (gts-spec OP#6).
 	compiler.AssertFormat()

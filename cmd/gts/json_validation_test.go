@@ -218,7 +218,7 @@ func TestSchemaErrorsOrderedByDepthThenGtsID(t *testing.T) {
 		"$id": "gts://gts.cli.core.test.base.v1~cli.core.test.leaf.v1~",
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object",
-		"properties": { "ref": { "x-gts-ref": 42 } }
+		"properties": { "ref": { "x-gts-type-ref": 42 } }
 	}`
 	writeTestFile(t, dir, "a_leaf.schema.json", invalidLeaf)
 

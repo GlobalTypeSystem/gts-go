@@ -419,8 +419,10 @@ func TestQuery_UseCase1_DerivedFromV10(t *testing.T) {
 		t.Errorf("Expected no error, got: %s", result.Error)
 	}
 
-	if result.Count != 1 {
-		t.Errorf("Expected count 1 (only derived from v1.0), got: %d", result.Count)
+	// A `~*` chain wildcard selects the matching type root and everything
+	// derived from it (README §10): the v1.0 root plus its one derived type.
+	if result.Count != 2 {
+		t.Errorf("Expected count 2 (v1.0 root and its derived), got: %d", result.Count)
 	}
 }
 
@@ -449,8 +451,10 @@ func TestQuery_UseCase3_DerivedFromV1AnyMinor(t *testing.T) {
 		t.Errorf("Expected no error, got: %s", result.Error)
 	}
 
-	if result.Count != 2 {
-		t.Errorf("Expected count 2 (derived from v1.0 and v1.1), got: %d", result.Count)
+	// `v1~*` matches any minor of major 1: the v1.0 and v1.1 roots plus the two
+	// types derived from them (README §10).
+	if result.Count != 4 {
+		t.Errorf("Expected count 4 (v1.0/v1.1 roots and their derived), got: %d", result.Count)
 	}
 }
 

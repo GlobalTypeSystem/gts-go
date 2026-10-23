@@ -613,7 +613,7 @@ func (s *GtsStore) validateSchemaTraitsScoped(schemaID string, mode GtsRefValida
 	// resolve to a registered entity — regardless of whether a descendant may
 	// later override the value.
 	xGtsRefValidator := NewXGtsRefValidatorScoped(s, mode, session)
-	for _, err := range xGtsRefValidator.ValidateSchema(effectiveTraitSchema, "") {
+	for _, err := range xGtsRefValidator.ValidateSchema(effectiveTraitSchema, "", schemaID) {
 		errs = append(errs, err.Error())
 	}
 	for _, err := range xGtsRefValidator.ValidateSchemaRefExistence(effectiveTraitSchema, "", schemaID) {
@@ -789,7 +789,7 @@ func (v *dependencyValidationState) validateType(schemaID string) (err error) {
 		if ref.ID == schemaID || gtsid.HasWildcard(ref.ID) || isJSONSchemaURL(ref.ID) {
 			continue
 		}
-		if strings.Contains(ref.SourcePath, "$ref") && !strings.Contains(ref.SourcePath, "x-gts-ref") {
+		if ref.isSchemaRef() {
 			if dependencyErr := v.validateType(ref.ID); dependencyErr != nil {
 				return fmt.Errorf("referenced type '%s' is invalid: %w", ref.ID, dependencyErr)
 			}

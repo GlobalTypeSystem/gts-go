@@ -780,8 +780,9 @@ func (s *GtsStore) validateEntityGtsReferences(entity *JsonEntity) error {
 			continue
 		}
 
-		// Skip wildcard patterns — they are x-gts-ref constraints, not concrete entity IDs
-		if gtsid.HasWildcard(ref.ID) {
+		// Skip wildcard patterns and x-gts-pattern-ref operands — they name
+		// selection sets, not entities that must be registered (ADR-0007).
+		if gtsid.HasWildcard(ref.ID) || ref.isPatternRef() {
 			continue
 		}
 
@@ -794,7 +795,7 @@ func (s *GtsStore) validateEntityGtsReferences(entity *JsonEntity) error {
 
 		// Additional validation for type-schema references
 		if entity.IsTypeSchema {
-			if strings.Contains(ref.SourcePath, "$ref") {
+			if ref.isSchemaRef() {
 				// This is a type-schema reference - the referenced entity should be a type-schema
 				if !referencedEntity.IsTypeSchema {
 					errors = append(errors, fmt.Sprintf("type-schema reference points to non-type-schema entity: %s (at %s)", ref.ID, ref.SourcePath))

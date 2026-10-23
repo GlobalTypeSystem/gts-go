@@ -661,7 +661,10 @@ func (s *Server) handleMatchIDPattern(w http.ResponseWriter, r *http.Request) {
 	candidate := s.getQueryParam(r, "candidate")
 	pattern := s.getQueryParam(r, "pattern")
 
-	if candidate == "" || pattern == "" {
+	// An empty candidate or pattern is not a missing parameter but an invalid
+	// GTS identifier pattern: Match reports it as a non-match with an error
+	// (README §10). Only a request missing both is a client error.
+	if candidate == "" && pattern == "" {
 		s.writeError(w, http.StatusBadRequest, "Missing candidate or pattern parameter")
 		return
 	}

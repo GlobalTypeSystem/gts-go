@@ -29,8 +29,8 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 				"type": "object",
 				"properties": map[string]interface{}{
 					"capability": map[string]interface{}{
-						"type":      "string",
-						"x-gts-ref": "gts.x.test.ns.capability.v1~",
+						"type":           "string",
+						"x-gts-type-ref": "gts.x.test.ns.capability.v1~",
 					},
 				},
 			},
@@ -43,8 +43,8 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 				"type": "object",
 				"properties": map[string]interface{}{
 					"type": map[string]interface{}{
-						"type":      "string",
-						"x-gts-ref": "/$id",
+						"type":           "string",
+						"x-gts-type-ref": "/$id",
 					},
 				},
 			},
@@ -57,8 +57,8 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 				"type": "object",
 				"properties": map[string]interface{}{
 					"capability": map[string]interface{}{
-						"type":      "string",
-						"x-gts-ref": "gts.x.test.*",
+						"type":           "string",
+						"x-gts-type-ref": "gts.x.test.*",
 					},
 				},
 			},
@@ -71,13 +71,13 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 				"type": "object",
 				"properties": map[string]interface{}{
 					"capability": map[string]interface{}{
-						"type":      "string",
-						"x-gts-ref": "gts.x.y.z",
+						"type":           "string",
+						"x-gts-type-ref": "gts.x.y.z",
 					},
 				},
 			},
 			shouldFail:    true,
-			errorContains: "Invalid GTS identifier: gts.x.y.z",
+			errorContains: "gts.x.y.z",
 		},
 		{
 			name: "invalid non-GTS pattern",
@@ -86,13 +86,13 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 				"type": "object",
 				"properties": map[string]interface{}{
 					"capability": map[string]interface{}{
-						"type":      "string",
-						"x-gts-ref": "a.b.c",
+						"type":           "string",
+						"x-gts-type-ref": "a.b.c",
 					},
 				},
 			},
 			shouldFail:    true,
-			errorContains: "must be a GTS identifier, wildcard, or '/$id'",
+			errorContains: "expected a GTS identifier",
 		},
 		{
 			name: "unsupported pointer",
@@ -101,13 +101,13 @@ func TestXGtsRefValidator_ValidateSchema_BasicPatterns(t *testing.T) {
 				"type": "object",
 				"properties": map[string]interface{}{
 					"capability": map[string]interface{}{
-						"type":      "string",
-						"x-gts-ref": "/nonexistent",
+						"type":           "string",
+						"x-gts-type-ref": "/nonexistent",
 					},
 				},
 			},
 			shouldFail:    true,
-			errorContains: "must be a GTS identifier, wildcard, or '/$id'",
+			errorContains: "expected a GTS identifier",
 		},
 	}
 
@@ -157,7 +157,7 @@ func TestXGtsRefValidator_ValidateSchemaRefExistenceTraversesTupleItems(t *testi
 	schema := map[string]any{
 		"type": "array",
 		"items": []any{
-			map[string]any{"type": "string", "x-gts-ref": constraintID},
+			map[string]any{"type": "string", "x-gts-type-ref": constraintID},
 		},
 	}
 	validator := NewXGtsRefValidator(NewGtsStore(nil))
@@ -177,8 +177,8 @@ func TestXGtsRefValidator_ValidateInstanceTraversesTupleAdditionalItems(t *testi
 				"type":  "array",
 				"items": []any{map[string]any{"type": "string"}},
 				"additionalItems": map[string]any{
-					"type":      "string",
-					"x-gts-ref": constraintID,
+					"type":               "string",
+					"x-gts-instance-ref": constraintID,
 				},
 			},
 		},
@@ -202,8 +202,8 @@ func TestXGtsRefValidator_ValidateInstanceTraversesPrefixItems(t *testing.T) {
 				"type":        "array",
 				"prefixItems": []any{map[string]any{"type": "string"}},
 				"items": map[string]any{
-					"type":      "string",
-					"x-gts-ref": constraintID,
+					"type":               "string",
+					"x-gts-instance-ref": constraintID,
 				},
 			},
 		},
@@ -221,12 +221,12 @@ func TestXGtsRefValidator_ValidateInstanceTraversesPrefixItems(t *testing.T) {
 func TestXGtsRefValidator_ValidateSchemaRejectsUnsupportedPointer(t *testing.T) {
 	schema := map[string]any{
 		"properties": map[string]any{
-			"target": map[string]any{"x-gts-ref": "/properties/constraintType"},
+			"target": map[string]any{"x-gts-type-ref": "/properties/constraintType"},
 		},
 	}
 
 	errors := NewXGtsRefValidator(nil).ValidateSchema(schema, "")
-	if len(errors) != 1 || !strings.Contains(errors[0].Error(), "must be a GTS identifier") {
+	if len(errors) != 1 || !strings.Contains(errors[0].Error(), "expected a GTS identifier") {
 		t.Fatalf("errors = %v", errors)
 	}
 }
@@ -237,7 +237,7 @@ func TestXGtsRefValidator_ValidateSchemaRefExistenceAcceptsInstanceTarget(t *tes
 	store.byID[constraintID] = &JsonEntity{IsTypeSchema: false}
 
 	errors := NewXGtsRefValidator(store).ValidateSchemaRefExistence(map[string]any{
-		"x-gts-ref": constraintID,
+		"x-gts-type-ref": constraintID,
 	}, "")
 	if len(errors) != 0 {
 		t.Fatalf("errors = %v", errors)
@@ -256,8 +256,8 @@ func TestXGtsRefValidator_ValidateInstance_PrefixValidation(t *testing.T) {
 		"required": []interface{}{"id", "description"},
 		"properties": map[string]interface{}{
 			"id": map[string]interface{}{
-				"type":      "string",
-				"x-gts-ref": "/$id",
+				"type":           "string",
+				"x-gts-type-ref": "/$id",
 			},
 			"description": map[string]interface{}{
 				"type": "string",
@@ -285,8 +285,8 @@ func TestXGtsRefValidator_ValidateInstance_PrefixValidation(t *testing.T) {
 		"required": []interface{}{"type", "id", "capabilities"},
 		"properties": map[string]interface{}{
 			"type": map[string]interface{}{
-				"type":      "string",
-				"x-gts-ref": "/$id",
+				"type":           "string",
+				"x-gts-type-ref": "/$id",
 			},
 			"id": map[string]interface{}{
 				"type": "string",
@@ -294,8 +294,8 @@ func TestXGtsRefValidator_ValidateInstance_PrefixValidation(t *testing.T) {
 			"capabilities": map[string]interface{}{
 				"type": "array",
 				"items": map[string]interface{}{
-					"type":      "string",
-					"x-gts-ref": "gts.x.testref.ns.capability.v1~",
+					"type":               "string",
+					"x-gts-instance-ref": "gts.x.testref.ns.capability.v1~",
 				},
 				"minItems":    0,
 				"uniqueItems": true,
@@ -398,7 +398,23 @@ func TestIsXGtsRefSelf(t *testing.T) {
 }
 
 func TestXGtsRefValidator_ValidateGtsPattern(t *testing.T) {
-	validator := NewXGtsRefValidator(nil) // No store to avoid entity existence checks
+	// matchKindBlind reproduces the old kind-blind x-gts-ref matching on top of
+	// the new primitives: a value is accepted when it is a valid GTS identifier
+	// selected by the pattern, regardless of whether it is a type or instance.
+	matchKindBlind := func(value, pattern, field string) *XGtsRefValidationError {
+		op, err := gtsid.ParsePattern(pattern)
+		if err != nil {
+			return &XGtsRefValidationError{FieldPath: field, Value: value, RefPattern: pattern, Reason: err.Error()}
+		}
+		id, err := gtsid.New(value)
+		if err != nil || gtsid.HasWildcard(value) {
+			return &XGtsRefValidationError{FieldPath: field, Value: value, RefPattern: pattern, Reason: "not a valid GTS identifier"}
+		}
+		if !gtsid.MatchesPattern(id, op) {
+			return &XGtsRefValidationError{FieldPath: field, Value: value, RefPattern: pattern, Reason: "does not match pattern"}
+		}
+		return nil
+	}
 
 	tests := []struct {
 		name          string
@@ -449,7 +465,7 @@ func TestXGtsRefValidator_ValidateGtsPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validator.validateGtsPattern(tt.value, tt.pattern, "test_field")
+			err := matchKindBlind(tt.value, tt.pattern, "test_field")
 
 			if tt.shouldFail {
 				if err == nil {
@@ -490,12 +506,12 @@ func TestGtsStore_ValidateSchemaWithXGtsRef(t *testing.T) {
 		"type":    "object",
 		"properties": map[string]interface{}{
 			"type": map[string]interface{}{
-				"type":      "string",
-				"x-gts-ref": "/$id",
+				"type":           "string",
+				"x-gts-type-ref": "/$id",
 			},
 			"capability": map[string]interface{}{
-				"type":      "string",
-				"x-gts-ref": "gts.x.test.ns.capability.v1~",
+				"type":           "string",
+				"x-gts-type-ref": "gts.x.test.ns.capability.v1~",
 			},
 		},
 	}
@@ -541,12 +557,12 @@ func TestGtsStore_ValidateInstanceWithXGtsRef(t *testing.T) {
 		"type":    "object",
 		"properties": map[string]interface{}{
 			"type": map[string]interface{}{
-				"type":      "string",
-				"x-gts-ref": "/$id",
+				"type":           "string",
+				"x-gts-type-ref": "/$id",
 			},
 			"capability": map[string]interface{}{
-				"type":      "string",
-				"x-gts-ref": "gts.x.test.ns.capability.v1~",
+				"type":               "string",
+				"x-gts-instance-ref": "gts.x.test.ns.capability.v1~",
 			},
 		},
 	}
@@ -590,8 +606,8 @@ func TestXGtsRefValidator_ValidateInstance_DollarIdWithGtsURIPrefix(t *testing.T
 		"type":    "object",
 		"properties": map[string]interface{}{
 			"id": map[string]interface{}{
-				"type":      "string",
-				"x-gts-ref": "/$id",
+				"type":               "string",
+				"x-gts-instance-ref": "/$id",
 			},
 		},
 	}
@@ -669,8 +685,8 @@ func TestXGtsRefValidator_ValidateSchema_DollarIdWithGtsURIPrefix(t *testing.T) 
 		"type":    "object",
 		"properties": map[string]interface{}{
 			"type": map[string]interface{}{
-				"type":      "string",
-				"x-gts-ref": "/$id",
+				"type":           "string",
+				"x-gts-type-ref": "/$id",
 			},
 		},
 	}
@@ -718,5 +734,50 @@ func TestStripGtsURIPrefix(t *testing.T) {
 				t.Errorf("Expected '%s', got '%s'", tt.expected, result)
 			}
 		})
+	}
+}
+
+func TestXGtsRefValidator_ValidateSchemaRefExistenceWildcardIsKindAgnostic(t *testing.T) {
+	// A wildcard operand's registry presence is satisfied by a matching entity
+	// of *either* kind (ADR-0008 "regardless of kind"); the candidate's kind is
+	// enforced separately. A registered type thus satisfies the operand lookup
+	// of both keywords, even x-gts-instance-ref.
+	store := NewGtsStore(nil)
+	const typeID = "gts.x.testref.ns.kind.v1~"
+	store.byID[typeID] = &JsonEntity{IsTypeSchema: true}
+
+	for _, keyword := range []string{KeyXGtsTypeRef, KeyXGtsInstanceRef} {
+		t.Run(keyword, func(t *testing.T) {
+			errors := NewXGtsRefValidator(store).ValidateSchemaRefExistence(map[string]any{
+				keyword: typeID + "*",
+			}, "")
+			if len(errors) != 0 {
+				t.Fatalf("a registered type must satisfy the wildcard operand lookup, errors = %v", errors)
+			}
+		})
+	}
+
+	// With nothing registered the wildcard operand has no match and is rejected.
+	empty := NewGtsStore(nil)
+	if errors := NewXGtsRefValidator(empty).ValidateSchemaRefExistence(map[string]any{
+		KeyXGtsTypeRef: typeID + "*",
+	}, ""); len(errors) == 0 {
+		t.Fatal("an unmatched wildcard operand must be reported")
+	}
+}
+
+func TestGtsStore_ValidateSchemaPatternRefDoesNotRequireRegisteredTarget(t *testing.T) {
+	store := NewGtsStore(nil)
+	const schemaID = "gts.x.testref.ns.patterned.v1~"
+	mustRegister(t, store, map[string]any{
+		"$id":  "gts://" + schemaID,
+		"type": "object",
+		"properties": map[string]any{
+			"scope": map[string]any{"type": "string", KeyXGtsPatternRef: "gts.x.testref.ns.unregistered.v1~"},
+		},
+	})
+
+	if err := store.ValidateSchema(schemaID); err != nil {
+		t.Fatalf("x-gts-pattern-ref operand must not be looked up in the registry: %v", err)
 	}
 }

@@ -186,7 +186,7 @@ func (s *GtsStore) detectChainDialectMismatch(schemaID string, gid *gtsid.ID, se
 			return err
 		}
 		for _, ref := range entity.GtsRefs {
-			if ref.ID == currentID || !strings.Contains(ref.SourcePath, "$ref") || strings.Contains(ref.SourcePath, "x-gts-ref") {
+			if ref.ID == currentID || !ref.isSchemaRef() {
 				continue
 			}
 			target := s.getScoped(ref.ID, session)
@@ -297,6 +297,11 @@ func (s *GtsStore) validateSchemaChainScoped(schemaID string, session string) *V
 			}
 		}
 
+		// Resolve each side's "/$id" GTS reference operands to its own type ID so
+		// the derivation scope comparison sees concrete, per-schema operands.
+		resolveSelfRefOperands(baseContent, gtsid.NormalizeID(baseID))
+		resolveSelfRefOperands(derivedContent, gtsid.NormalizeID(derivedID))
+
 		baseEff := extractEffectiveSchema(baseContent)
 		derivedEff := extractEffectiveSchema(derivedContent)
 
@@ -356,7 +361,7 @@ func extractEffectiveSchemaInto(schema map[string]any, eff *effectiveSchema) {
 	if props, ok := schema["properties"].(map[string]any); ok {
 		eff.propertiesSet = true
 		for k, v := range props {
-			eff.properties[k] = v
+			eff.properties[k] = mergeEffectiveProperty(eff.properties[k], v)
 		}
 	}
 	if req, ok := schema["required"].([]any); ok {
@@ -541,6 +546,7 @@ func comparePropertyConstraints(baseProp, derivedProp map[string]any, propName s
 	errors = append(errors, checkEnumCompatibility(baseProp, derivedProp, propName)...)
 	errors = append(errors, checkItemsCompatibility(baseProp, derivedProp, propName)...)
 	errors = append(errors, checkLooseningKeywords(baseProp, derivedProp, propName)...)
+	errors = append(errors, checkRefScopeCompatibility(baseProp, derivedProp, propName)...)
 
 	baseType, _ := baseProp["type"].(string)
 	derivedType, _ := derivedProp["type"].(string)
@@ -1207,7 +1213,10 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 						anyMerged = true
 						if props, ok := resolvedMap["properties"].(map[string]any); ok {
 							for k, pv := range props {
-								mergedProps[k] = pv
+								// GTS reference keywords conjoin (narrower wins) so a
+								// wider overlay cannot widen an inherited reference
+								// scope; other keywords are rightmost-wins.
+								mergedProps[k] = mergeEffectiveProperty(mergedProps[k], pv)
 							}
 						}
 						if req, ok := resolvedMap["required"].([]any); ok {
@@ -1235,6 +1244,24 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 								// additionalProperties (a sibling of allOf, copied
 								// below) is honored for OP#12.
 								continue
+							}
+							if isRefKeyword(k) {
+								// Reference keywords conjoin across allOf branches
+								// (narrower wins), so a wider branch cannot mask a
+								// narrower one (README §9.6.1). Incomparable operands
+								// are kept as an allOf conjunction rather than dropping
+								// one, which would widen the effective scope.
+								if prev, ok := mergedOther[k]; ok {
+									if narrower, comparable := narrowerRefOperand(k, prev, val); comparable {
+										mergedOther[k] = narrower
+									} else {
+										delete(mergedOther, k)
+										resolvedAllOf = append(resolvedAllOf,
+											map[string]any{k: prev},
+											map[string]any{k: val})
+									}
+									continue
+								}
 							}
 							mergedOther[k] = val
 						}
@@ -1265,7 +1292,7 @@ func (s *GtsStore) resolveRefsInner(schema any, visited map[string]bool, cycleFo
 				}
 				if parentProps, ok := v["properties"].(map[string]any); ok {
 					for k, pv := range parentProps { // parent props overlay allOf props
-						mergedProps[k] = pv
+						mergedProps[k] = mergeEffectiveProperty(mergedProps[k], pv)
 					}
 				}
 				if len(mergedProps) > 0 {

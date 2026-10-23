@@ -161,7 +161,7 @@ func (v *GtsJsonValidator) collectJSONFiles() []string {
 func isGtsMarker(text string) bool {
 	return strings.Contains(text, gtsid.Prefix) ||
 		strings.Contains(text, gtsid.URIPrefix) ||
-		strings.Contains(text, gts.KeyXGtsRef)
+		strings.Contains(text, gts.XGtsExtPrefix)
 }
 
 func (v *GtsJsonValidator) readFile(filePath string) {
