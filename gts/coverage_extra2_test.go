@@ -44,16 +44,16 @@ func TestMergeRFC7396Recursive_DepthLimit(t *testing.T) {
 
 func TestXGtsRefExt_Validate_NonString(t *testing.T) {
 	// The Validate method should silently return for non-string values
-	ext := &xGtsRefExt{pattern: "gts.x.*"}
+	ext := &xGtsRefExt{}
 	// Using nil context is not possible, so we test through the full flow instead
 	// via ValidateInstance which triggers the vocabulary
 	_ = ext // ensure compiled
 }
 
 func TestXGtsRefErrorKind(t *testing.T) {
-	ek := &xGtsRefErrorKind{reason: "test error"}
+	ek := &xGtsRefErrorKind{keyword: KeyXGtsTypeRef, reason: "test error"}
 	kp := ek.KeywordPath()
-	if len(kp) != 1 || kp[0] != "x-gts-ref" {
+	if len(kp) != 1 || kp[0] != KeyXGtsTypeRef {
 		t.Errorf("KeywordPath: %v", kp)
 	}
 	ls := ek.LocalizedString(nil)
@@ -140,10 +140,10 @@ func TestGtsStore_ValidateInstanceWithXGtsRef_NoTypeID(t *testing.T) {
 	}
 }
 
-// ── match.go — validateWildcardBase ─────────────────────────────────────────
+// ── match.go — wildcard patterns ────────────────────────────────────────────
 
 func TestMatchIDPattern_WildcardBase(t *testing.T) {
-	// Test various wildcard patterns to cover validateWildcardBase branches
+	// Test matching against wildcard patterns at each segment level
 	tests := []struct {
 		candidate string
 		pattern   string
@@ -534,8 +534,8 @@ func TestGtsStore_ValidateInstanceWithXGtsRef_SchemaNotTypeSchema(t *testing.T) 
 func TestNewXGtsRefVocabulary_Compile(t *testing.T) {
 	vocab := newXGtsRefVocabulary("")
 
-	// Compile with x-gts-ref present
-	ext, err := vocab.Compile(nil, map[string]any{"x-gts-ref": "gts.x.test.*"})
+	// Compile with a reference keyword present
+	ext, err := vocab.Compile(nil, map[string]any{"x-gts-type-ref": "gts.x.test.*"})
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -543,19 +543,19 @@ func TestNewXGtsRefVocabulary_Compile(t *testing.T) {
 		t.Error("expected non-nil extension")
 	}
 
-	// Compile without x-gts-ref
+	// Compile without a reference keyword
 	ext2, err := vocab.Compile(nil, map[string]any{"type": "string"})
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
 	if ext2 != nil {
-		t.Error("expected nil extension when no x-gts-ref")
+		t.Error("expected nil extension when no reference keyword")
 	}
 
-	// Compile with non-string x-gts-ref
-	_, err = vocab.Compile(nil, map[string]any{"x-gts-ref": 42})
+	// Compile with a non-string operand
+	_, err = vocab.Compile(nil, map[string]any{"x-gts-type-ref": 42})
 	if err == nil {
-		t.Fatal("expected error for non-string x-gts-ref")
+		t.Fatal("expected error for non-string operand")
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -35,6 +36,26 @@ type regexEngineFailure struct{ err error }
 
 func (f regexEngineFailure) Error() string { return f.err.Error() }
 func (f regexEngineFailure) Unwrap() error { return f.err }
+
+// RegexProfileError reports that an expression is outside the profile or its
+// support bounds.
+type RegexProfileError struct {
+	Reason string
+}
+
+func (e *RegexProfileError) Error() string { return e.Reason }
+
+// RegexProfileSupported reports whether expression is supported, as
+// format: "regex" asserts.
+func RegexProfileSupported(expression string) bool {
+	return CheckRegexProfile(expression) == nil
+}
+
+// CheckRegexProfile checks that expression is in the profile and within its
+// bounds, returning why it is not otherwise.
+func CheckRegexProfile(expression string) error {
+	return checkRegexProfile(expression)
+}
 
 // compileRegexProfile checks profile membership and compiles source unchanged.
 // An engine failure is returned separately from a profile membership error.
@@ -433,4 +454,203 @@ func (p *regexProfileParser) parseClassAtom() (r rune, isSet, ok bool) {
 		p.pos++
 		return c, false, true
 	}
+}
+
+// checkTraitSchemaRegexProfile checks every regular expression reachable inside
+// a type schema's root x-gts-traits-schema against the GTS regex profile
+// (README §11.0.1, ADR-0006). The standard JSON Schema compiler treats
+// x-gts-traits-schema as an unknown keyword and does not descend into it, so
+// its pattern / patternProperties - and the local "#/..." $ref targets it
+// reaches - are profile-checked here. dialect is the host document dialect
+// ("draft-07", "2019-09" or "2020-12"); it selects which keywords hold
+// subschemas. Literal data (default, const, enum, examples, …) is never
+// descended into, so regex-looking strings there are not checked.
+func checkTraitSchemaRegexProfile(doc map[string]any, dialect string) error {
+	traits, ok := doc[KeyXGtsTraitsSchema].(map[string]any)
+	if !ok {
+		return nil
+	}
+	w := &regexProfileWalk{doc: doc, dialect: dialect, seenRefs: map[string]bool{}}
+	return w.node(traits, KeyXGtsTraitsSchema, 0)
+}
+
+type regexProfileWalk struct {
+	doc      map[string]any
+	dialect  string
+	seenRefs map[string]bool
+}
+
+// holdsKind classifies how a keyword holds subschemas for the given dialect,
+// mirroring the GTS regex profile schema walk of gts-rust (schema_regex.rs).
+type holdsKind int
+
+const (
+	holdsNone holdsKind = iota
+	holdsSchema
+	holdsArray
+	holdsMap
+	holdsSchemaOrArray
+	holdsDependencies
+)
+
+func (w *regexProfileWalk) holds(keyword string) holdsKind {
+	legacy := w.dialect == "draft-07"
+	modern := !legacy
+	since2020 := w.dialect == "2020-12"
+	switch keyword {
+	case "not", "additionalProperties", "propertyNames", "contains", "if", "then", "else":
+		return holdsSchema
+	case "allOf", "anyOf", "oneOf":
+		return holdsArray
+	case "properties", "patternProperties":
+		return holdsMap
+	case "items":
+		if since2020 {
+			return holdsSchema
+		}
+		return holdsSchemaOrArray
+	case "additionalItems":
+		if !since2020 {
+			return holdsSchema
+		}
+	case "prefixItems":
+		if since2020 {
+			return holdsArray
+		}
+	case "definitions":
+		if legacy {
+			return holdsMap
+		}
+	case "dependencies":
+		if legacy {
+			return holdsDependencies
+		}
+	case "$defs", "dependentSchemas":
+		if modern {
+			return holdsMap
+		}
+	case "unevaluatedItems", "unevaluatedProperties", "contentSchema":
+		if modern {
+			return holdsSchema
+		}
+	}
+	return holdsNone
+}
+
+func (w *regexProfileWalk) node(value any, location string, depth int) error {
+	node, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if depth >= maxRefScopeDepth {
+		return fmt.Errorf("trait schema nesting exceeds limit %d at '%s'", maxRefScopeDepth, location)
+	}
+
+	if pattern, ok := node["pattern"].(string); ok {
+		if err := w.expression(pattern, location+"/pattern"); err != nil {
+			return err
+		}
+	}
+	if patterns, ok := node["patternProperties"].(map[string]any); ok {
+		for expression := range patterns {
+			if err := w.expression(expression, location+"/patternProperties/"+expression); err != nil {
+				return err
+			}
+		}
+	}
+
+	// A local "#/..." $ref makes its target a schema position, even when the
+	// referencing branch is never evaluated. External (gts://) refs are left
+	// to validator compilation.
+	if ref, ok := node["$ref"].(string); ok && strings.HasPrefix(ref, "#") {
+		if !w.seenRefs[ref] {
+			w.seenRefs[ref] = true
+			if target := resolveLocalPointer(w.doc, ref); target != nil {
+				if err := w.node(target, ref, depth+1); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	for keyword, child := range node {
+		kind := w.holds(keyword)
+		if kind == holdsNone {
+			continue
+		}
+		at := location + "/" + keyword
+		switch kind {
+		case holdsSchema:
+			if err := w.node(child, at, depth+1); err != nil {
+				return err
+			}
+		case holdsSchemaOrArray:
+			switch c := child.(type) {
+			case map[string]any:
+				if err := w.node(c, at, depth+1); err != nil {
+					return err
+				}
+			case []any:
+				for i, item := range c {
+					if err := w.node(item, fmt.Sprintf("%s/%d", at, i), depth+1); err != nil {
+						return err
+					}
+				}
+			}
+		case holdsArray:
+			if items, ok := child.([]any); ok {
+				for i, item := range items {
+					if err := w.node(item, fmt.Sprintf("%s/%d", at, i), depth+1); err != nil {
+						return err
+					}
+				}
+			}
+		case holdsMap, holdsDependencies:
+			if members, ok := child.(map[string]any); ok {
+				for name, member := range members {
+					// Draft-07 dependencies may also hold a property-name list.
+					if err := w.node(member, at+"/"+name, depth+1); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (w *regexProfileWalk) expression(expression, location string) error {
+	if err := CheckRegexProfile(expression); err != nil {
+		return fmt.Errorf("unsupported regular expression at '%s': %s "+
+			"(GTS regular-expression profile, README section 11.0.1)", location, err)
+	}
+	return nil
+}
+
+// resolveLocalPointer resolves a same-document JSON Pointer ("#", "#/a/b") to
+// the object it names, or nil if it does not name an object.
+func resolveLocalPointer(doc map[string]any, ref string) map[string]any {
+	pointer := strings.TrimPrefix(ref, "#")
+	if pointer == "" {
+		return doc
+	}
+	if !strings.HasPrefix(pointer, "/") {
+		return nil
+	}
+	var current any = doc
+	for _, raw := range strings.Split(pointer[1:], "/") {
+		segment := strings.ReplaceAll(strings.ReplaceAll(raw, "~1", "/"), "~0", "~")
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil
+		}
+		current, ok = obj[segment]
+		if !ok {
+			return nil
+		}
+	}
+	if obj, ok := current.(map[string]any); ok {
+		return obj
+	}
+	return nil
 }

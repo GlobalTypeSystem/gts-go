@@ -7,13 +7,80 @@ package gts
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/GlobalTypeSystem/gts-go/gtsid"
 )
 
-// XGtsRefValidationError represents a validation error for x-gts-ref constraints
+// This file implements the GTS entity- and pattern-reference keywords
+// (README §9.6, ADR-0007, ADR-0008):
+//
+//   - x-gts-type-ref     the candidate MUST be a GTS Type Identifier
+//   - x-gts-instance-ref the candidate MUST be a GTS Instance Identifier
+//   - x-gts-pattern-ref  the candidate MUST be a GTS identifier pattern whose
+//                        selection set is covered by the operand
+//
+// The former kind-blind x-gts-ref keyword was removed in GTS 0.16; it is now
+// handled like any other unknown x-gts-* keyword (rejected on validation).
+//
+// Operand (schema) validity and candidate (value) validity are two concerns:
+// an invalid operand is a schema error (cannot be inverted by `not`); a value
+// that does not satisfy the constraint is an ordinary validation failure that
+// composition keywords may invert. Registry lookup applies only to the two
+// entity-reference keywords; x-gts-pattern-ref never consults the registry.
+
+// refKind is the identifier kind (or pattern) a reference keyword requires.
+type refKind int
+
+const (
+	refKindType refKind = iota
+	refKindInstance
+	refKindPattern
+)
+
+func refKindOf(keyword string) (refKind, bool) {
+	switch keyword {
+	case KeyXGtsTypeRef:
+		return refKindType, true
+	case KeyXGtsInstanceRef:
+		return refKindInstance, true
+	case KeyXGtsPatternRef:
+		return refKindPattern, true
+	}
+	return 0, false
+}
+
+// refKeywords are the three GTS reference keywords, in a stable order.
+var refKeywords = []string{KeyXGtsTypeRef, KeyXGtsInstanceRef, KeyXGtsPatternRef}
+
+func (k refKind) keyword() string {
+	switch k {
+	case refKindType:
+		return KeyXGtsTypeRef
+	case refKindInstance:
+		return KeyXGtsInstanceRef
+	default:
+		return KeyXGtsPatternRef
+	}
+}
+
+func (k refKind) noun() string {
+	if k == refKindType {
+		return "GTS Type Identifier"
+	}
+	return "GTS Instance Identifier"
+}
+
+func (k refKind) otherNoun() string {
+	if k == refKindType {
+		return "GTS Instance Identifier"
+	}
+	return "GTS Type Identifier"
+}
+
+// XGtsRefValidationError represents a validation error for a GTS reference
+// constraint (x-gts-type-ref, x-gts-instance-ref or x-gts-pattern-ref).
 type XGtsRefValidationError struct {
+	Keyword    string
 	FieldPath  string
 	Value      any
 	RefPattern string
@@ -21,7 +88,7 @@ type XGtsRefValidationError struct {
 }
 
 func (e *XGtsRefValidationError) Error() string {
-	return fmt.Sprintf("x-gts-ref validation failed for field '%s': %s", e.FieldPath, e.Reason)
+	return fmt.Sprintf("GTS reference validation failed for field '%s': %s", e.FieldPath, e.Reason)
 }
 
 func invalidJSONRefErrors(path string, err error) []*XGtsRefValidationError {
@@ -31,7 +98,69 @@ func invalidJSONRefErrors(path string, err error) []*XGtsRefValidationError {
 	}}
 }
 
-// XGtsRefValidator validates x-gts-ref constraints in GTS schemas
+// resolveRefOperand validates a keyword operand and returns the parsed pattern
+// it denotes, together with the spelling actually used (with /$id resolved), or
+// an error describing the schema defect. selectedTypeID is the leaf type that
+// "/$id" names (bare, no gts://), or "" when there is none.
+func resolveRefOperand(kind refKind, operand any, selectedTypeID string) (*gtsid.ID, string, error) {
+	spelling, ok := operand.(string)
+	if !ok {
+		return nil, "", fmt.Errorf("%s operand must be a string, got %T", kind.keyword(), operand)
+	}
+	if IsXGtsRefSelf(spelling) {
+		if selectedTypeID == "" {
+			return nil, "", fmt.Errorf("%s operand '%s' has no selected GTS Type Schema '$id' to resolve to", kind.keyword(), XGtsRefSelf)
+		}
+		id, err := gtsid.New(selectedTypeID)
+		if err != nil || !id.IsType() {
+			return nil, "", fmt.Errorf("%s operand '%s' resolves to '%s', which is not a concrete GTS Type Identifier", kind.keyword(), XGtsRefSelf, selectedTypeID)
+		}
+		return id, selectedTypeID, nil
+	}
+	pattern, err := gtsid.ParsePattern(spelling)
+	if err != nil {
+		return nil, "", fmt.Errorf("%s operand '%s': %v; expected a GTS identifier, a wildcard pattern or '%s'", kind.keyword(), spelling, err, XGtsRefSelf)
+	}
+	if kind == refKindType && !gtsid.HasWildcard(spelling) && !gtsid.IsTypeID(spelling) {
+		return nil, "", fmt.Errorf("%s operand '%s' is a GTS Instance Identifier, which selects no GTS Type Identifiers", kind.keyword(), spelling)
+	}
+	return pattern, spelling, nil
+}
+
+// refCandidateViolation checks a string candidate against a resolved operand and
+// returns a human-readable reason when the structural constraint is violated, or
+// "" when it is satisfied. It performs no registry lookup. For the entity
+// reference keywords the candidate must be a concrete identifier of the required
+// kind; for x-gts-pattern-ref it must be a pattern the operand covers.
+func refCandidateViolation(kind refKind, value string, operand *gtsid.ID, spelling string) string {
+	if kind == refKindPattern {
+		valuePattern, err := gtsid.ParsePattern(value)
+		if err != nil {
+			return fmt.Sprintf("'%s' is not a valid GTS identifier pattern: %v", value, err)
+		}
+		if !gtsid.Covers(operand, valuePattern) {
+			return fmt.Sprintf("'%s' selects GTS identifiers outside '%s'", value, spelling)
+		}
+		return ""
+	}
+
+	if gtsid.HasWildcard(value) {
+		return fmt.Sprintf("Value '%s' is not a valid GTS identifier", value)
+	}
+	id, err := gtsid.New(value)
+	if err != nil {
+		return fmt.Sprintf("Value '%s' is not a valid GTS identifier", value)
+	}
+	if (kind == refKindType) != id.IsType() {
+		return fmt.Sprintf("Value '%s' is a %s, but %s requires a %s", value, kind.otherNoun(), kind.keyword(), kind.noun())
+	}
+	if !gtsid.MatchesPattern(id, operand) {
+		return fmt.Sprintf("Value '%s' does not match pattern '%s'", value, spelling)
+	}
+	return ""
+}
+
+// XGtsRefValidator validates GTS reference constraints in GTS schemas.
 type XGtsRefValidator struct {
 	store                      *GtsStore
 	mode                       GtsRefValidationMode
@@ -79,7 +208,19 @@ func (v *XGtsRefValidator) ReferencedWildcardPatterns() []string {
 	return patterns
 }
 
-// ValidateInstance validates an instance against x-gts-ref constraints in schema
+// selectedTypeIDFor returns the leaf type "/$id" names for the given schema.
+func selectedTypeIDFor(schema map[string]any, override []string) string {
+	if len(override) > 0 {
+		return gtsid.NormalizeID(override[0])
+	}
+	if schemaID, ok := schema["$id"].(string); ok {
+		return gtsid.NormalizeID(schemaID)
+	}
+	return ""
+}
+
+// ValidateInstance validates an instance against the reference constraints in
+// schema.
 func (v *XGtsRefValidator) ValidateInstance(instance map[string]any, schema map[string]any, instancePath string, selectedTypeIDs ...string) []*XGtsRefValidationError {
 	if err := validateJSONContent(instance); err != nil {
 		return invalidJSONRefErrors(instancePath, err)
@@ -87,40 +228,42 @@ func (v *XGtsRefValidator) ValidateInstance(instance map[string]any, schema map[
 	if err := validateJSONContent(schema); err != nil {
 		return invalidJSONRefErrors(instancePath, err)
 	}
-	selectedTypeID := ""
-	if len(selectedTypeIDs) > 0 {
-		selectedTypeID = gtsid.NormalizeID(selectedTypeIDs[0])
-	} else if schemaID, ok := schema["$id"].(string); ok {
-		selectedTypeID = gtsid.NormalizeID(schemaID)
-	}
+	selectedTypeID := selectedTypeIDFor(schema, selectedTypeIDs)
 	var errors []*XGtsRefValidationError
 	v.visitInstance(instance, schema, instancePath, selectedTypeID, &errors)
 	return errors
 }
 
-// ValidateSchema validates x-gts-ref fields in a schema definition
-func (v *XGtsRefValidator) ValidateSchema(schema map[string]any, schemaPath string) []*XGtsRefValidationError {
+// ValidateSchema validates the reference-keyword operands in a schema
+// definition (schema-level validity, ADR-0007/0008).
+func (v *XGtsRefValidator) ValidateSchema(schema map[string]any, schemaPath string, selectedTypeIDs ...string) []*XGtsRefValidationError {
 	if err := validateJSONContent(schema); err != nil {
 		return invalidJSONRefErrors(schemaPath, err)
 	}
-
+	selectedTypeID := selectedTypeIDFor(schema, selectedTypeIDs)
 	var errors []*XGtsRefValidationError
-	v.visitSchema(schema, schemaPath, &errors)
+	v.visitSchema(schema, schemaPath, selectedTypeID, &errors)
 	return errors
 }
 
-// visitInstance recursively visits instance nodes and validates x-gts-ref constraints
+// visitInstance recursively visits instance nodes and validates reference
+// constraints found in the corresponding schema node.
 func (v *XGtsRefValidator) visitInstance(instance any, schema map[string]any, path, selectedTypeID string, errors *[]*XGtsRefValidationError) {
 	if schema == nil {
 		return
 	}
 
-	// Check for x-gts-ref constraint
-	if xGtsRef, hasRef := schema["x-gts-ref"]; hasRef {
-		if strInstance, ok := instance.(string); ok {
-			if err := v.validateRefValue(strInstance, xGtsRef, path, selectedTypeID); err != nil {
-				*errors = append(*errors, err)
-			}
+	for _, keyword := range refKeywords {
+		operand, has := schema[keyword]
+		if !has {
+			continue
+		}
+		strInstance, ok := instance.(string)
+		if !ok {
+			continue
+		}
+		if err := v.validateRefValue(keyword, strInstance, operand, path, selectedTypeID); err != nil {
+			*errors = append(*errors, err)
 		}
 	}
 
@@ -233,117 +376,65 @@ func visitSchemaChildren(schema map[string]any, path string, visit func(map[stri
 	}
 }
 
-// visitSchema recursively visits schema nodes
-func (v *XGtsRefValidator) visitSchema(schema map[string]any, path string, errors *[]*XGtsRefValidationError) {
+// visitSchema recursively visits schema nodes, validating reference operands.
+func (v *XGtsRefValidator) visitSchema(schema map[string]any, path, selectedTypeID string, errors *[]*XGtsRefValidationError) {
 	if schema == nil {
 		return
 	}
 
-	// Check for x-gts-ref field
-	if xGtsRef, hasRef := schema["x-gts-ref"]; hasRef {
-		refPath := "x-gts-ref"
-		if path != "" {
-			refPath = path + "/x-gts-ref"
+	for _, keyword := range refKeywords {
+		operand, has := schema[keyword]
+		if !has {
+			continue
 		}
-		if err := v.validateRefPattern(xGtsRef, refPath); err != nil {
+		refPath := keyword
+		if path != "" {
+			refPath = path + "/" + keyword
+		}
+		if err := v.validateRefOperand(keyword, operand, refPath, selectedTypeID); err != nil {
 			*errors = append(*errors, err)
 		}
 	}
 
 	visitSchemaChildren(schema, path, func(child map[string]any, childPath string) {
-		v.visitSchema(child, childPath, errors)
+		v.visitSchema(child, childPath, selectedTypeID, errors)
 	})
 }
 
-// validateRefValue validates an instance value against its x-gts-ref constraint
-func (v *XGtsRefValidator) validateRefValue(value string, refPattern any, fieldPath, selectedTypeID string) *XGtsRefValidationError {
-	refPatternStr, ok := refPattern.(string)
-	if !ok {
-		return &XGtsRefValidationError{
-			FieldPath:  fieldPath,
-			Value:      value,
-			RefPattern: fmt.Sprintf("%v", refPattern),
-			Reason:     fmt.Sprintf("Value must be a string, got %T", refPattern),
+// validateRefValue validates an instance value against a reference constraint.
+func (v *XGtsRefValidator) validateRefValue(keyword string, value string, operand any, fieldPath, selectedTypeID string) *XGtsRefValidationError {
+	kind, _ := refKindOf(keyword)
+	operandID, spelling, err := resolveRefOperand(kind, operand, selectedTypeID)
+	if err != nil {
+		return &XGtsRefValidationError{Keyword: keyword, FieldPath: fieldPath, Value: value, RefPattern: fmt.Sprintf("%v", operand), Reason: err.Error()}
+	}
+	if reason := refCandidateViolation(kind, value, operandID, spelling); reason != "" {
+		return &XGtsRefValidationError{Keyword: keyword, FieldPath: fieldPath, Value: value, RefPattern: spelling, Reason: reason}
+	}
+	// Entity references may additionally require the candidate to be registered
+	// (and, under any-valid, itself valid). Pattern references never consult the
+	// registry.
+	if kind != refKindPattern && v.store != nil && v.mode != GtsRefValidationNone {
+		if v.store.getScoped(value, v.session) == nil {
+			return &XGtsRefValidationError{Keyword: keyword, FieldPath: fieldPath, Value: value, RefPattern: spelling, Reason: fmt.Sprintf("Referenced entity '%s' not found in registry", value)}
 		}
-	}
-
-	if IsXGtsRefSelf(refPatternStr) {
-		if selectedTypeID == "" {
-			return &XGtsRefValidationError{
-				FieldPath: fieldPath, Value: value, RefPattern: refPatternStr,
-				Reason: "Cannot resolve /$id without a selected GTS Type Schema",
-			}
-		}
-		refPatternStr = selectedTypeID
-	}
-
-	// Validate against GTS pattern
-	return v.validateGtsPattern(value, refPatternStr, fieldPath)
-}
-
-// validateRefPattern validates an x-gts-ref pattern in a schema definition
-func (v *XGtsRefValidator) validateRefPattern(refPattern any, fieldPath string) *XGtsRefValidationError {
-	refPatternStr, ok := refPattern.(string)
-	if !ok {
-		return &XGtsRefValidationError{
-			FieldPath:  fieldPath,
-			Value:      refPattern,
-			RefPattern: "",
-			Reason:     fmt.Sprintf("x-gts-ref value must be a string, got %T", refPattern),
-		}
-	}
-
-	// Case 1: Absolute GTS pattern
-	if gtsid.HasPrefix(refPatternStr) {
-		return v.validateGtsIDOrPattern(refPatternStr, fieldPath)
-	}
-
-	if IsXGtsRefSelf(refPatternStr) {
-		return nil
-	}
-
-	return &XGtsRefValidationError{
-		FieldPath:  fieldPath,
-		Value:      refPattern,
-		RefPattern: refPatternStr,
-		Reason:     fmt.Sprintf("Invalid x-gts-ref value: '%s' must be a GTS identifier, wildcard, or '%s'", refPatternStr, XGtsRefSelf),
-	}
-}
-
-// validateGtsIDOrPattern validates a GTS ID or pattern in schema definition
-func (v *XGtsRefValidator) validateGtsIDOrPattern(pattern, fieldPath string) *XGtsRefValidationError {
-	if pattern == gtsid.Prefix+gtsid.WildcardMarker {
-		return nil // Valid wildcard
-	}
-
-	if gtsid.HasWildcard(pattern) {
-		// Wildcard pattern - validate prefix
-		prefix := strings.TrimSuffix(pattern, gtsid.WildcardMarker)
-		if !gtsid.HasPrefix(prefix) {
-			return &XGtsRefValidationError{
-				FieldPath:  fieldPath,
-				Value:      pattern,
-				RefPattern: pattern,
-				Reason:     fmt.Sprintf("Invalid GTS wildcard pattern: %s", pattern),
-			}
-		}
-		return nil
-	}
-
-	// Specific GTS ID
-	if !gtsid.IsValid(pattern) {
-		return &XGtsRefValidationError{
-			FieldPath:  fieldPath,
-			Value:      pattern,
-			RefPattern: pattern,
-			Reason:     fmt.Sprintf("Invalid GTS identifier: %s", pattern),
-		}
+		v.referencedIDs[value] = struct{}{}
 	}
 	return nil
 }
 
-// ValidateSchemaRefExistence checks concrete, wildcard, and /$id constraints
-// against the registry when the selected mode requires it.
+// validateRefOperand validates a reference-keyword operand in a schema.
+func (v *XGtsRefValidator) validateRefOperand(keyword string, operand any, fieldPath, selectedTypeID string) *XGtsRefValidationError {
+	kind, _ := refKindOf(keyword)
+	if _, _, err := resolveRefOperand(kind, operand, selectedTypeID); err != nil {
+		return &XGtsRefValidationError{Keyword: keyword, FieldPath: fieldPath, Value: operand, RefPattern: fmt.Sprintf("%v", operand), Reason: err.Error()}
+	}
+	return nil
+}
+
+// ValidateSchemaRefExistence checks that each entity-reference operand resolves
+// to a registered (and, under any-valid, valid) entity when the mode requires
+// it. x-gts-pattern-ref operands are never looked up (ADR-0007).
 func (v *XGtsRefValidator) ValidateSchemaRefExistence(schema map[string]any, schemaPath string, selectedTypeIDs ...string) []*XGtsRefValidationError {
 	if err := validateJSONContent(schema); err != nil {
 		return invalidJSONRefErrors(schemaPath, err)
@@ -352,132 +443,79 @@ func (v *XGtsRefValidator) ValidateSchemaRefExistence(schema map[string]any, sch
 	if v.store == nil || v.mode == GtsRefValidationNone {
 		return errors
 	}
-	selectedTypeID := ""
-	if len(selectedTypeIDs) > 0 {
-		selectedTypeID = gtsid.NormalizeID(selectedTypeIDs[0])
-	} else if schemaID, ok := schema["$id"].(string); ok {
-		selectedTypeID = gtsid.NormalizeID(schemaID)
-	}
+	selectedTypeID := selectedTypeIDFor(schema, selectedTypeIDs)
 	v.visitSchemaRefExistence(schema, schemaPath, selectedTypeID, &errors)
 	return errors
 }
 
-// visitSchemaRefExistence recursively checks concrete x-gts-ref targets exist.
+// visitSchemaRefExistence recursively checks concrete entity-reference operands.
 func (v *XGtsRefValidator) visitSchemaRefExistence(schema map[string]any, path, selectedTypeID string, errors *[]*XGtsRefValidationError) {
 	if schema == nil {
 		return
 	}
 
-	if xGtsRef, hasRef := schema["x-gts-ref"]; hasRef {
-		if refStr, ok := xGtsRef.(string); ok {
-			targetID := refStr
-			if IsXGtsRefSelf(refStr) {
-				targetID = selectedTypeID
-			}
-			if gtsid.HasPrefix(targetID) {
-				refPath := "x-gts-ref"
-				if path != "" {
-					refPath = path + "/x-gts-ref"
-				}
-				if gtsid.HasWildcard(targetID) {
-					matched := false
-					// The scan only reads entity IDs and never calls back into
-					// the store, so it can run under the read lock via
-					// forEachEntity (stopping at the first match).
-					v.store.forEachEntity(func(entityID string, _ *JsonEntity) bool {
-						if gtsid.Match(entityID, targetID).Match {
-							matched = true
-							return false
+	for _, keyword := range []string{KeyXGtsTypeRef, KeyXGtsInstanceRef} {
+		operand, has := schema[keyword]
+		if !has {
+			continue
+		}
+		operandStr, ok := operand.(string)
+		if !ok {
+			continue
+		}
+		targetID := operandStr
+		if IsXGtsRefSelf(operandStr) {
+			targetID = selectedTypeID
+		}
+		if !gtsid.HasPrefix(targetID) {
+			continue
+		}
+		refPath := keyword
+		if path != "" {
+			refPath = path + "/" + keyword
+		}
+		if gtsid.HasWildcard(targetID) {
+			// Wildcard operand lookup is kind-agnostic: a registered entity of
+			// either kind satisfies it (ADR-0008 "regardless of kind"). The
+			// candidate's kind is enforced separately, when the field value is
+			// validated. A `~*` pattern therefore counts its type root as a
+			// match for x-gts-instance-ref operand presence too.
+			matched := false
+			if pattern, err := gtsid.ParsePattern(targetID); err == nil {
+				v.store.forEachEntity(func(entityID string, entity *JsonEntity) bool {
+					id := entity.GtsID
+					if id == nil {
+						var err error
+						if id, err = gtsid.New(entityID); err != nil {
+							return true
 						}
-						return true
-					})
-					if !matched {
-						*errors = append(*errors, &XGtsRefValidationError{
-							FieldPath: refPath, Value: refStr, RefPattern: targetID,
-							Reason: fmt.Sprintf("x-gts-ref wildcard constraint '%s' has no registered match", targetID),
-						})
-					} else {
-						v.referencedWildcardPatterns[targetID] = struct{}{}
 					}
-				} else if v.store.getScoped(targetID, v.session) == nil {
-					*errors = append(*errors, &XGtsRefValidationError{
-						FieldPath: refPath, Value: refStr, RefPattern: targetID,
-						Reason: fmt.Sprintf("x-gts-ref constraint '%s' is not registered", targetID),
-					})
-				} else {
-					v.referencedIDs[targetID] = struct{}{}
-				}
+					if gtsid.MatchesPattern(id, pattern) {
+						matched = true
+						return false
+					}
+					return true
+				})
 			}
+			if !matched {
+				*errors = append(*errors, &XGtsRefValidationError{
+					Keyword: keyword, FieldPath: refPath, Value: operandStr, RefPattern: targetID,
+					Reason: fmt.Sprintf("%s wildcard constraint '%s' has no registered match", keyword, targetID),
+				})
+			} else {
+				v.referencedWildcardPatterns[targetID] = struct{}{}
+			}
+		} else if v.store.getScoped(targetID, v.session) == nil {
+			*errors = append(*errors, &XGtsRefValidationError{
+				Keyword: keyword, FieldPath: refPath, Value: operandStr, RefPattern: targetID,
+				Reason: fmt.Sprintf("%s constraint '%s' is not registered", keyword, targetID),
+			})
+		} else {
+			v.referencedIDs[targetID] = struct{}{}
 		}
 	}
 
 	visitSchemaChildren(schema, path, func(child map[string]any, childPath string) {
 		v.visitSchemaRefExistence(child, childPath, selectedTypeID, errors)
 	})
-}
-
-// validateGtsPattern validates value matches a GTS pattern
-func (v *XGtsRefValidator) validateGtsPattern(value, pattern, fieldPath string) *XGtsRefValidationError {
-	// Validate it's a valid GTS ID
-	if !gtsid.IsValid(value) {
-		return &XGtsRefValidationError{
-			FieldPath:  fieldPath,
-			Value:      value,
-			RefPattern: pattern,
-			Reason:     fmt.Sprintf("Value '%s' is not a valid GTS identifier", value),
-		}
-	}
-
-	// Check pattern match
-	if pattern == gtsid.Prefix+gtsid.WildcardMarker {
-		// Any valid GTS ID matches
-	} else if strings.HasSuffix(pattern, gtsid.WildcardMarker) {
-		prefix := pattern[:len(pattern)-1]
-		if !strings.HasPrefix(value, prefix) {
-			return &XGtsRefValidationError{
-				FieldPath:  fieldPath,
-				Value:      value,
-				RefPattern: pattern,
-				Reason:     fmt.Sprintf("Value '%s' does not match pattern '%s'", value, pattern),
-			}
-		}
-	} else if !strings.HasPrefix(value, pattern) || !matchesAtSegmentBoundary(value, pattern) {
-		// Prefix matching alone ignores segment boundaries: an exact constraint such as
-		// "gts.a.b.c.d.v1~x.y.z.w.v1" would otherwise also accept "…w.v12" or "…w.v1.5".
-		return &XGtsRefValidationError{
-			FieldPath:  fieldPath,
-			Value:      value,
-			RefPattern: pattern,
-			Reason:     fmt.Sprintf("Value '%s' does not match pattern '%s'", value, pattern),
-		}
-	}
-
-	// The referenced value must resolve to a registered entity when a store is
-	// available and existence enforcement is enabled. Existence is enforced
-	// uniformly for all constraint forms, including the bare "gts.*" wildcard
-	// (gts-spec §9.6).
-	if v.store != nil && v.mode != GtsRefValidationNone {
-		if v.store.getScoped(value, v.session) == nil {
-			return &XGtsRefValidationError{
-				FieldPath:  fieldPath,
-				Value:      value,
-				RefPattern: pattern,
-				Reason:     fmt.Sprintf("Referenced entity '%s' not found in registry", value),
-			}
-		}
-		v.referencedIDs[value] = struct{}{}
-	}
-
-	return nil
-}
-
-// matchesAtSegmentBoundary reports whether value, already known to be
-// prefixed by an exact (non-wildcard) pattern, matches it on a segment
-// boundary. Type patterns (ending with '~') admit derived identifiers; any
-// other (exact) pattern requires a full match or a '~' boundary immediately
-// after the pattern, so "…w.v1" does not spuriously accept "…w.v12"/"…w.v1.5".
-func matchesAtSegmentBoundary(value, pattern string) bool {
-	return len(value) == len(pattern) ||
-		strings.HasSuffix(pattern, gtsid.TypeMarker) ||
-		value[len(pattern)] == gtsid.TypeMarker[0]
 }

@@ -174,7 +174,7 @@ func TestValidatedRegistrationFailureIsNotStored(t *testing.T) {
 	s := NewServer(store, "", 0, 0)
 	const id = "gts.x.server.ns.rejected.v1~"
 	const target = "gts.x.server.ns.missing.v1~"
-	body := `{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://` + id + `","type":"object","properties":{"ref":{"type":"string","x-gts-ref":"` + target + `"}}}`
+	body := `{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://` + id + `","type":"object","properties":{"ref":{"type":"string","x-gts-type-ref":"` + target + `"}}}`
 
 	status, response := entityRequest(t, s, http.MethodPost, "/entities?validate=true", body)
 	errorText, _ := response["error"].(string)
@@ -191,7 +191,7 @@ func TestRejectedRevalidationPreservesStoredSchema(t *testing.T) {
 	s := NewServer(store, "", 0, 0)
 	const id = "gts.x.server.ns.preserved.v1~"
 	const target = "gts.x.server.ns.missing.v1~"
-	body := `{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://` + id + `","type":"object","properties":{"ref":{"type":"string","x-gts-ref":"` + target + `"}}}`
+	body := `{"$schema":"http://json-schema.org/draft-07/schema#","$id":"gts://` + id + `","type":"object","properties":{"ref":{"type":"string","x-gts-type-ref":"` + target + `"}}}`
 
 	if status, _ := entityRequest(t, s, http.MethodPost, "/entities", body); status != http.StatusOK {
 		t.Fatalf("initial registration status = %d", status)
@@ -372,8 +372,8 @@ func TestAddSchemasValidateDoesNotCommitDependentOfDiscarded(t *testing.T) {
 	// A (index 0) is invalid: its x-gts-ref target is never registered.
 	// B (index 1) is structurally valid but x-gts-refs A.
 	_, resp := do(http.MethodPost, "/type-schemas?validate=true&gts-ref-validation=any-present", `[`+
-		`{`+d7+`,"$id":"gts://gts.x.dep._.a.v1~","type":"object","properties":{"r":{"type":"string","x-gts-ref":"gts.x.dep._.missing.v1~"}}},`+
-		`{`+d7+`,"$id":"gts://gts.x.dep._.b.v1~","type":"object","properties":{"x":{"type":"string","x-gts-ref":"gts.x.dep._.a.v1~"}}}]`)
+		`{`+d7+`,"$id":"gts://gts.x.dep._.a.v1~","type":"object","properties":{"r":{"type":"string","x-gts-type-ref":"gts.x.dep._.missing.v1~"}}},`+
+		`{`+d7+`,"$id":"gts://gts.x.dep._.b.v1~","type":"object","properties":{"x":{"type":"string","x-gts-type-ref":"gts.x.dep._.a.v1~"}}}]`)
 	if resp["ok"] != false || itemOK(resp, 0) || itemOK(resp, 1) {
 		t.Fatalf("neither the invalid A nor its dependent B may be committed, got %v", resp)
 	}

@@ -155,6 +155,11 @@ func (s *GtsStore) CheckCompatibility(oldTypeID, newTypeID string) *Compatibilit
 		return inconclusive(unknownDirectionReason, nil)
 	}
 
+	// Each side's "/$id" GTS reference operand names its own type (README
+	// §9.6.1), so resolve them before the scopes are compared.
+	resolveSelfRefOperands(oldResolved, gtsid.NormalizeID(oldTypeID))
+	resolveSelfRefOperands(newResolved, gtsid.NormalizeID(newTypeID))
+
 	oldLowered, oldOK := lowerUnevaluatedProperties(oldResolved)
 	newLowered, newOK := lowerUnevaluatedProperties(newResolved)
 	if !oldOK || !newOK {
@@ -339,7 +344,10 @@ func sanitizeSchema(schema any) any {
 			if nonAssertionKeywords[key] {
 				continue
 			}
-			if IsXGtsExtension(key) {
+			if IsXGtsExtension(key) && !isRefKeyword(key) {
+				// GTS reference keywords constrain the accepted-instance set and
+				// are compared by the inclusion checker (README §9.6.1); other
+				// x-gts-* keywords are annotations and are dropped.
 				continue
 			}
 			if key == "type" && dropType {
@@ -406,6 +414,17 @@ func checkInclusion(subset, superset map[string]any, depth int) *bool {
 	// Stop descending past the recursion cap and report "unknown" rather than
 	// guessing a verdict for a tree deeper than the checker walks.
 	if depth >= maxCompatRecursionDepth {
+		return nil
+	}
+
+	// GTS reference keywords restrict a string-valued property to a scope. A
+	// proved exclusion fails inclusion; an undecidable relation makes this node
+	// undecidable; inclusion (or no reference constraint) defers to the checks
+	// below.
+	switch refScopeRelation(superset, subset) {
+	case relExcluded:
+		return boolPtr(false)
+	case relUnknown:
 		return nil
 	}
 

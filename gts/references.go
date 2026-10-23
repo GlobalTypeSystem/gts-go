@@ -18,6 +18,26 @@ type GtsReference struct {
 	SourcePath string
 }
 
+// sourceKeyword returns the object key the reference string was found under:
+// the last element of SourcePath (e.g. "$ref" or "x-gts-type-ref").
+func (r *GtsReference) sourceKeyword() string {
+	return r.SourcePath[strings.LastIndexByte(r.SourcePath, '.')+1:]
+}
+
+// isSchemaRef reports whether the reference is a JSON Schema $ref (or the
+// escaped $$ref form) target, as opposed to an ID in a GTS reference keyword
+// operand or in literal data.
+func (r *GtsReference) isSchemaRef() bool {
+	k := r.sourceKeyword()
+	return k == "$ref" || k == "$$ref"
+}
+
+// isPatternRef reports whether the reference is an x-gts-pattern-ref operand,
+// which names a selection set and never requires a registered entity.
+func (r *GtsReference) isPatternRef() bool {
+	return r.sourceKeyword() == KeyXGtsPatternRef
+}
+
 // extractGtsReferences walks through JSON content and extracts all GTS ID references
 // see gts-python _extract_gts_ids_with_paths method
 func extractGtsReferences(content any) []*GtsReference {

@@ -489,6 +489,22 @@ func TestValidateWithSchemaLoadsReferencedSchemasOnDemand(t *testing.T) {
 	}
 }
 
+func TestGtsRegexpEngine(t *testing.T) {
+	// A profile-conformant expression compiles and matches with RE2 reference
+	// semantics (unanchored search).
+	matcher, err := gtsRegexpEngine("^[a-z]+$")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matcher.MatchString("valid") || matcher.MatchString("X") {
+		t.Error("profile matching failed")
+	}
+	// Lookaround is outside the GTS regex profile and is rejected at compile.
+	if _, err := gtsRegexpEngine("^(?!x).*$"); err == nil {
+		t.Error("expected lookahead to be rejected by the GTS regex profile")
+	}
+}
+
 // TestCompileSchema_GenerationGuard verifies the compiled-schema cache rejects an
 // entry left over from before an invalidation, closing the race where a compile
 // that ran concurrently with a store mutation publishes a stale result.

@@ -1203,8 +1203,8 @@ func TestValidateSchemaTraits_RejectsInvalidRelativeRefTargets(t *testing.T) {
 				"type": "object",
 				"properties": map[string]any{
 					"topicRef": map[string]any{
-						"type":      "string",
-						"x-gts-ref": "/x-gts-traits-schema/" + tt.property,
+						"type":           "string",
+						"x-gts-type-ref": "/x-gts-traits-schema/" + tt.property,
 					},
 				},
 			}

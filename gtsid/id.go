@@ -81,6 +81,13 @@ type ID struct {
 	Segments []*Segment
 }
 
+// ParseOptions is retained for backwards compatibility.
+// ParsePattern now handles wildcard patterns without options.
+type ParseOptions struct {
+	AllowSingleSegment bool
+	DetectUUIDTail     bool
+}
+
 // New creates and validates a new (concrete) GTS identifier.
 func New(id string) (*ID, error) {
 	return parseGtsID(id)

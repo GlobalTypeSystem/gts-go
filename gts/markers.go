@@ -28,11 +28,24 @@ const (
 	HTTPSPrefix = "https://"
 
 	// XGtsExtPrefix is the shared prefix of every GTS JSON Schema extension
-	// keyword (x-gts-ref, x-gts-final, x-gts-traits, …).
+	// keyword (x-gts-type-ref, x-gts-final, x-gts-traits, …).
 	XGtsExtPrefix = "x-gts-"
 
-	// KeyXGtsRef is the x-gts-ref extension keyword.
+	// KeyXGtsRef is the removed, kind-blind reference keyword. As of GTS 0.16
+	// (ADR-0008) it is no longer a supported GTS keyword: implementations treat
+	// it like any other unknown x-gts-* keyword and reject it. The constant is
+	// retained only so code can refer to its spelling.
 	KeyXGtsRef = "x-gts-ref"
+
+	// KeyXGtsTypeRef constrains a string to a GTS Type Identifier selected by
+	// its operand (README §9.6.1, ADR-0008).
+	KeyXGtsTypeRef = "x-gts-type-ref"
+	// KeyXGtsInstanceRef constrains a string to a GTS Instance Identifier
+	// selected by its operand (README §9.6.1, ADR-0008).
+	KeyXGtsInstanceRef = "x-gts-instance-ref"
+	// KeyXGtsPatternRef constrains a string to a GTS identifier pattern whose
+	// selection set is covered by its operand (README §9.6.2, ADR-0007).
+	KeyXGtsPatternRef = "x-gts-pattern-ref"
 )
 
 // IsXGtsExtension reports whether a JSON Schema keyword is a GTS extension.
