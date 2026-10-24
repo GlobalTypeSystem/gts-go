@@ -4,13 +4,11 @@
 
 A minimal, idiomatic Go library for working with **GTS** ([Global Type System](https://github.com/gts-spec/gts-spec)) identifiers and JSON/JSON Schema artifacts.
 
-Supported GTS spec version: `0.15.0`
+Supported GTS spec version: `0.17.0`
 
-Regular expressions follow the GTS 0.15
-[safe regular-expression profile](#regular-expressions) (spec README §11.0.1,
-ADR-0006), a breaking change from the full ECMA-262 support of 0.14.
-The conformance image is pinned to the released `v0.15.0` in
-[`.gts-spec-version`](.gts-spec-version).
+Regular expressions follow the GTS safe regular-expression profile
+(spec README §11.0.1, ADR-0006). The conformance image is pinned to the
+released `v0.17.0` in [`.gts-spec-version`](.gts-spec-version).
 
 ## Roadmap
 
@@ -40,17 +38,17 @@ Other GTS spec [Reference Implementation](https://github.com/globaltypesystem/gt
 - [x] **In-memory entities registry** - simple GTS entities registry with optional GTS references validation on entity registration
 - [x] **CLI** - command-line interface for all GTS operations
 - [x] **Web server** - a non-production web-server with REST API for the operations processing and testing
-- [x] **x-gts-ref support** - to support special GTS entity reference annotation in schemas
+- [x] **GTS reference keywords** - to support x-gts-type-ref, x-gts-instance-ref, and x-gts-pattern-ref annotations in schemas
 - [x] **YAML support** - to support YAML files (*.yml, *.yaml) as input files
 - [ ] **TypeSpec support** - add [typespec.io](https://typespec.io/) files (*.tsp) support
-- [ ] **UUID for instances** - to support UUID as ID in JSON instances
+- [x] **UUID for instances** - to support UUID as ID in JSON instances
 
 Technical Backlog:
 
-- [ ] **Code coverage** - target is 90%
-- [ ] **Documentation** - add documentation for all the features
-- [ ] **Interface** - export publicly available interface and keep cli and others private
-- [ ] **Final code cleanup** - remove unused code, denormalize, add critical comments, etc.
+- [x] **Code coverage** - target is 90%
+- [x] **Documentation** - add documentation for all the features
+- [x] **Interface** - export publicly available interface and keep cli and others private
+- [x] **Final code cleanup** - remove unused code, denormalize, add critical comments, etc.
 
 ## Regular expressions
 
@@ -66,26 +64,44 @@ Technical Backlog:
 go get github.com/GlobalTypeSystem/gts-go
 ```
 
+## Public API
+
+The library exposes exactly two importable packages. Everything else
+(`cmd/*` and `internal/server`) is implementation detail and is not part of
+the public contract:
+
+- [`gtsid`](gtsid) — the GTS identifier grammar: parsing, validation, wildcard
+  matching and UUID derivation. Zero dependencies on the rest of the module.
+- [`gts`](gts) — everything that operates on JSON/JSON Schema artifacts:
+  extraction, the in-memory registry (`GtsStore`), instance/schema validation,
+  compatibility checking, version casting, queries and attribute access.
+
+Both packages carry package-level GoDoc describing the entry point for each GTS
+operation (OP#1–OP#13); run `go doc ./gts` or `go doc ./gtsid` for details.
+
 ## Usage
 
 ### Library
 
-Import the GTS package in your Go code:
+Import the GTS packages in your Go code:
 
 ```go
-import "github.com/GlobalTypeSystem/gts-go/gts"
+import (
+    "github.com/GlobalTypeSystem/gts-go/gts"
+    "github.com/GlobalTypeSystem/gts-go/gtsid"
+)
 ```
 
 #### OP#1 - ID Validation
 
 ```go
 // Validate a GTS ID
-if gts.IsValidGtsID("gts.vendor.pkg.ns.type.v1~") {
+if gtsid.IsValid("gts.vendor.pkg.ns.type.v1~") {
     fmt.Println("Valid GTS ID")
 }
 
 // Get detailed validation result
-result := gts.ValidateGtsID("gts.vendor.pkg.ns.type.v1~")
+result := gtsid.Validate("gts.vendor.pkg.ns.type.v1~")
 if result.Valid {
     fmt.Printf("Valid: %s\n", result.ID)
 } else {
@@ -98,20 +114,22 @@ if result.Valid {
 ```go
 // Extract GTS ID from JSON content
 content := map[string]any{
-    "id": "gts.vendor.pkg.ns.type.v1.0",
-    "name":  "My Entity",
+    "id":   "gts.vendor.pkg.ns.type.v1.0",
+    "name": "My Entity",
 }
 
 result := gts.ExtractID(content, nil)
 fmt.Printf("ID: %s\n", result.ID)
-fmt.Printf("Schema ID: %s\n", result.SchemaID)
+if result.TypeID != nil {
+    fmt.Printf("Type ID: %s\n", *result.TypeID)
+}
 ```
 
 #### OP#3 - ID Parsing
 
 ```go
 // Parse a GTS ID into segments
-result := gts.ParseGtsID("gts.vendor.pkg.ns.type.v1~")
+result := gtsid.Parse("gts.vendor.pkg.ns.type.v1~")
 if result.OK {
     for _, seg := range result.Segments {
         fmt.Printf("Vendor: %s, Package: %s, Type: %s, Version: %d\n",
@@ -124,7 +142,7 @@ if result.OK {
 
 ```go
 // Match GTS ID against a pattern
-result := gts.MatchIDPattern(
+result := gtsid.Match(
     "gts.vendor.pkg.ns.type.v1.0",
     "gts.vendor.pkg.*",
 )
@@ -137,7 +155,7 @@ if result.Match {
 
 ```go
 // Generate deterministic UUID from GTS ID
-result := gts.IDToUUID("gts.vendor.pkg.ns.type.v1~")
+result := gtsid.IDToUUID("gts.vendor.pkg.ns.type.v1~")
 fmt.Printf("UUID: %s\n", result.UUID)
 ```
 
@@ -214,37 +232,37 @@ gts <command> -h
 # OP#1 - Validate a GTS ID
 gts validate-id -id gts.vendor.pkg.ns.type.v1~
 
-# OP#2 - Parse a GTS ID into components
+# OP#3 - Parse a GTS ID into components
 gts parse-id -id gts.vendor.pkg.ns.type.v1.0
 
-# OP#3 - Match ID against pattern
+# OP#4 - Match ID against pattern
 gts match-id -pattern "gts.vendor.pkg.*" -candidate gts.vendor.pkg.ns.type.v1.0
 
-# OP#4 - Generate UUID from GTS ID
+# OP#5 - Generate UUID from GTS ID
 gts uuid -id gts.vendor.pkg.ns.type.v1~
 
 # Operations that require loading files (use -path flag)
 
-# OP#5 - Validate instance against schema
+# OP#6 - Validate instance against schema
 gts -path ./examples validate -id gts.vendor.pkg.ns.type.v1.0
 
-# OP#6 - Resolve relationships
+# OP#7 - Resolve relationships
 gts -path ./examples relationships -id gts.vendor.pkg.ns.type.v1~
 
-# OP#7 - Check schema compatibility
+# OP#8 - Check schema compatibility
 gts -path ./examples compatibility \
   -old gts.vendor.pkg.ns.type.v1~ \
   -new gts.vendor.pkg.ns.type.v2~
 
-# OP#8 - Cast instance to different schema version
+# OP#9 - Cast instance to different schema version
 gts -path ./examples cast \
   -from gts.vendor.pkg.ns.type.v1.0 \
   -to gts.vendor.pkg.ns.type.v2~
 
-# OP#9 - Query entities
+# OP#10 - Query entities
 gts -path ./examples query -expr "gts.vendor.pkg.*" -limit 10
 
-# OP#10 - Get attribute value
+# OP#11 - Get attribute value
 gts -path ./examples attr -path gts.vendor.pkg.ns.type.v1.0@name
 
 # OP#12 - Validate a derived schema against its chain
@@ -297,10 +315,6 @@ You can load entities from multiple directories by separating paths with commas:
 ```bash
 gts -path ./schemas,./instances list
 ```
-
-### Library
-
-TODO - See ...
 
 ### Web Server
 

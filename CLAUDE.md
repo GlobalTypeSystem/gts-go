@@ -59,7 +59,7 @@ make gts-spec-tests-run PORT=8001 TEST=test_op12_type_derivation_validation.py
 - The spec is no longer a git submodule. To bump the conformance target,
   edit `.gts-spec-version` and run `make gts-spec-tests` — the new image
   is pulled on demand.
-- Handlers in `server/` stay thin — logic goes in `gts/` where it is
+- Handlers in `internal/server/` stay thin — logic goes in `gts/` where it is
   unit-testable. New REST behavior usually already has coverage in the
   gts-spec test suite; iterating on a single test via
   `make gts-spec-tests TEST=...` is the fastest signal.

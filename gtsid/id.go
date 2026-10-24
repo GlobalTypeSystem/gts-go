@@ -90,7 +90,14 @@ type ParseOptions struct {
 
 // New creates and validates a new (concrete) GTS identifier.
 func New(id string) (*ID, error) {
-	return parseGtsID(id)
+	parsed, err := parseGtsID(id)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.IsWildcard() {
+		return nil, &InvalidIDError{GtsID: id, Cause: "Wildcard patterns are not concrete identifiers"}
+	}
+	return parsed, nil
 }
 
 // hasSurroundingWhitespace reports whether s has leading or trailing
@@ -241,7 +248,7 @@ func parseSegment(num, offset int, segment string) (*Segment, error) {
 	seg := &Segment{
 		Num:        num,
 		Offset:     offset,
-		Segment:    strings.TrimSpace(segment),
+		Segment:    segment,
 		VerMajor:   0,
 		VerMinor:   nil,
 		IsType:     false,
